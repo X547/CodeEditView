@@ -23,6 +23,7 @@ class EditorCore;
 class GutterView;
 class KeyMap;
 struct DrawContext;
+struct InputMethodState;
 struct MouseState;
 struct PageInfo;
 struct RowData;
@@ -40,6 +41,7 @@ private:
 	std::unique_ptr<CodeEdit::KeyMap> fKeyMap;
 	std::unique_ptr<BMessageRunner> fCaretRunner;
 	std::unique_ptr<CodeEdit::MouseState> fMouse;
+	std::unique_ptr<CodeEdit::InputMethodState> fInputMethod;
 	// Per code point: advance and horizontal center of the glyph's ink.
 	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
 	CodeEditScrollView *fScrollView {};
@@ -85,6 +87,13 @@ private:
 	void SetDropOffset(std::optional<size_t> offset);
 	void HandleDragOver(BPoint where, uint32 transit);
 	void HandleDrop(BMessage *message);
+
+	bool SpliceInputMethod(CodeEdit::RowData &data, size_t caret);
+	void HandleInputMethodEvent(BMessage *message);
+	void HandleInputMethodChanged(BMessage *message);
+	void SendInputMethodLocation();
+	void InvalidateInputMethodRow();
+	void CommitInputMethod();
 
 public:
 	explicit CodeEditView(const char *name, CodeEdit::TextModel *model = nullptr);

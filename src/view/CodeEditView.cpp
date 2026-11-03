@@ -8,6 +8,7 @@
 
 #include <Clipboard.h>
 #include <Cursor.h>
+#include <Input.h>
 #include <MenuItem.h>
 #include <MessageRunner.h>
 #include <PopUpMenu.h>
@@ -58,6 +59,20 @@ struct DrawContext {
 	uint32_t caretColumn {};
 	bool drawCaret {};
 	std::optional<CaretPosition> dropCaret;
+	std::optional<size_t> preeditRow;
+	// Byte offset of the input method text in the spliced row text.
+	size_t preeditStart {};
+};
+
+
+struct InputMethodState {
+	BMessenger method;
+	bool composing {};
+	std::string text;
+	// Byte ranges within text.
+	int32 selectionStart {};
+	int32 selectionEnd {};
+	std::vector<std::pair<int32, int32>> clauses;
 };
 
 
@@ -110,10 +125,11 @@ static BReference<TextModel> ModelReference(TextModel *model)
 
 
 CodeEditView::CodeEditView(const char *name, CodeEdit::TextModel *model):
-	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE),
+	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE | B_INPUT_METHOD_AWARE),
 	fCore(std::make_unique<CodeEdit::EditorCore>(CodeEdit::ModelReference(model))),
 	fKeyMap(std::make_unique<CodeEdit::KeyMap>(CodeEdit::KeyMap::Default())),
-	fMouse(std::make_unique<CodeEdit::MouseState>())
+	fMouse(std::make_unique<CodeEdit::MouseState>()),
+	fInputMethod(std::make_unique<CodeEdit::InputMethodState>())
 {
 	SetViewColor(B_TRANSPARENT_COLOR);
 	SetEditorFont(*be_fixed_font);
@@ -236,7 +252,19 @@ void CodeEditView::Draw(BRect updateRect)
 
 	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / fLineHeight)));
 	const size_t lastRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.bottom / fLineHeight)));
-	const std::vector<RowData> rows = fCore->Rows(firstRow, lastRow - firstRow + 1);
+	std::vector<RowData> rows = fCore->Rows(firstRow, lastRow - firstRow + 1);
+
+	// The uncommitted input method text is shown inside the caret row.
+	if (caret.row >= firstRow && caret.row < firstRow + rows.size()) {
+		RowData &data = rows[caret.row - firstRow];
+		if (SpliceInputMethod(data, selection.caret)) {
+			const InputMethodState &input = *fInputMethod;
+			context.preeditRow = caret.row;
+			context.preeditStart = selection.caret - data.lineStart;
+			context.caretColumn = data.layout.ColumnOfOffset(context.preeditStart + input.selectionStart);
+			context.drawCaret = context.drawCaret && input.selectionStart == input.selectionEnd;
+		}
+	}
 
 	SetDrawingMode(B_OP_OVER);
 	for (size_t i = 0; i < rows.size(); i++) {
@@ -352,6 +380,28 @@ void CodeEditView::DrawRow(
 	flush();
 
 	const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
+	if (context.preeditRow == row) {
+		// Thin underline per clause (or the whole text), thick under the
+		// clause being converted.
+		const InputMethodState &input = *fInputMethod;
+		auto underline = [&](int32 start, int32 end, float thickness) {
+			const float left = data.layout.ColumnOfOffset(context.preeditStart + start) * fCellWidth;
+			const float right = data.layout.ColumnOfOffset(context.preeditStart + end) * fCellWidth - 2;
+			if (right > left) {
+				FillRect(BRect(left + 1, bottom - thickness + 1, right, bottom));
+			}
+		};
+		SetHighColor(context.text);
+		if (input.clauses.empty()) {
+			underline(0, static_cast<int32>(input.text.size()), caretWidth);
+		}
+		for (const auto &[start, end] : input.clauses) {
+			underline(start, end, caretWidth);
+		}
+		if (input.selectionEnd > input.selectionStart) {
+			underline(input.selectionStart, input.selectionEnd, 2 * caretWidth);
+		}
+	}
 	if (isCaretRow && context.drawCaret) {
 		const float x = context.caretColumn * fCellWidth;
 		SetHighColor(context.text);
@@ -569,6 +619,8 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 {
 	using namespace CodeEdit;
 
+	CommitInputMethod();
+
 	const bool keepContext = CaretInContextArea();
 	const BRect bounds = Bounds();
 	const PageInfo page = CurrentPage();
@@ -700,6 +752,7 @@ void CodeEditView::Copy()
 
 void CodeEditView::Cut()
 {
+	CommitInputMethod();
 	Copy();
 	fCore->DeleteSelection();
 	ApplyDirty();
@@ -710,6 +763,7 @@ void CodeEditView::Cut()
 
 void CodeEditView::Paste()
 {
+	CommitInputMethod();
 	std::string text;
 	if (!be_clipboard->Lock()) {
 		return;
@@ -729,6 +783,170 @@ void CodeEditView::Paste()
 }
 
 
+//#pragma mark - Input method
+
+// Inserts the uncommitted input method text at the caret into a row for
+// display. It never enters the model, so other views do not see it.
+bool CodeEditView::SpliceInputMethod(CodeEdit::RowData &data, size_t caret)
+{
+	const CodeEdit::InputMethodState &input = *fInputMethod;
+	if (!input.composing || input.text.empty()) {
+		return false;
+	}
+	if (caret < data.lineStart || caret > data.lineStart + data.text.size()) {
+		return false;
+	}
+	data.text.insert(caret - data.lineStart, input.text);
+	data.layout = CodeEdit::LineLayout(data.text, fCore->GetLayoutOptions());
+	return true;
+}
+
+
+void CodeEditView::InvalidateInputMethodRow()
+{
+	const size_t row = fCore->PositionOfOffset(fCore->GetSelection().caret).row;
+	InvalidateRows(row, row);
+}
+
+
+void CodeEditView::HandleInputMethodEvent(BMessage *message)
+{
+	CodeEdit::InputMethodState &input = *fInputMethod;
+	int32 opcode;
+	if (message->FindInt32("be:opcode", &opcode) != B_OK) {
+		return;
+	}
+	switch (opcode) {
+		case B_INPUT_METHOD_STARTED: {
+			BMessenger method;
+			if (message->FindMessenger("be:reply_to", &method) == B_OK) {
+				input = {};
+				input.method = method;
+			}
+			break;
+		}
+		case B_INPUT_METHOD_STOPPED:
+			InvalidateInputMethodRow();
+			input = {};
+			break;
+		case B_INPUT_METHOD_CHANGED:
+			HandleInputMethodChanged(message);
+			break;
+		case B_INPUT_METHOD_LOCATION_REQUEST:
+			SendInputMethodLocation();
+			break;
+		default:
+			break;
+	}
+}
+
+
+void CodeEditView::HandleInputMethodChanged(BMessage *message)
+{
+	CodeEdit::InputMethodState &input = *fInputMethod;
+	const char *string = nullptr;
+	if (message->FindString("be:string", &string) != B_OK || string == nullptr) {
+		return;
+	}
+
+	if (!input.composing) {
+		// Composing replaces the selection, like typing.
+		fCore->DeleteSelection();
+		ApplyDirty();
+		input.composing = true;
+	}
+	InvalidateInputMethodRow();
+
+	if (message->GetBool("be:confirmed", false)) {
+		const std::string text = string;
+		input.composing = false;
+		input.text.clear();
+		input.clauses.clear();
+		fCore->InsertText(text);
+		ApplyDirty();
+		ScrollToCaret(false);
+		RestartCaretBlink();
+		return;
+	}
+
+	input.text = string;
+	const int32 length = static_cast<int32>(input.text.size());
+	input.selectionStart = std::clamp(message->GetInt32("be:selection", 0, length), 0, length);
+	input.selectionEnd = std::clamp(message->GetInt32("be:selection", 1, length), input.selectionStart, length);
+	input.clauses.clear();
+	int32 clauseStart;
+	int32 clauseEnd;
+	for (int32 i = 0; message->FindInt32("be:clause_start", i, &clauseStart) == B_OK
+			&& message->FindInt32("be:clause_end", i, &clauseEnd) == B_OK; i++) {
+		clauseStart = std::clamp(clauseStart, 0, length);
+		input.clauses.emplace_back(clauseStart, std::clamp(clauseEnd, clauseStart, length));
+	}
+
+	InvalidateInputMethodRow();
+	ScrollToCaret(false);
+	RestartCaretBlink();
+}
+
+
+// Replies with the screen position of each character of the input method
+// text, used to place the candidate window.
+void CodeEditView::SendInputMethodLocation()
+{
+	CodeEdit::InputMethodState &input = *fInputMethod;
+	if (!input.method.IsValid()) {
+		return;
+	}
+	const size_t caret = fCore->GetSelection().caret;
+	const CodeEdit::CaretPosition position = fCore->PositionOfOffset(caret);
+	std::vector<CodeEdit::RowData> rows = fCore->Rows(position.row, 1);
+
+	BMessage reply(B_INPUT_METHOD_EVENT);
+	reply.AddInt32("be:opcode", B_INPUT_METHOD_LOCATION_REQUEST);
+	const float top = position.row * fLineHeight;
+	if (rows.empty() || !SpliceInputMethod(rows.front(), caret)) {
+		reply.AddPoint("be:location_reply", ConvertToScreen(BPoint(position.column * fCellWidth, top)));
+		reply.AddFloat("be:height_reply", fLineHeight);
+	} else {
+		const CodeEdit::RowData &data = rows.front();
+		const size_t start = caret - data.lineStart;
+		for (size_t i = 0; i < input.text.size(); i++) {
+			if ((static_cast<uint8>(input.text[i]) & 0xc0) == 0x80) {
+				continue;
+			}
+			const float x = data.layout.ColumnOfOffset(start + i) * fCellWidth;
+			reply.AddPoint("be:location_reply", ConvertToScreen(BPoint(x, top)));
+			reply.AddFloat("be:height_reply", fLineHeight);
+		}
+	}
+	input.method.SendMessage(&reply);
+}
+
+
+// Ends an active composition by committing its current text, e.g. when the
+// user clicks elsewhere, and tells the input method to stop.
+void CodeEditView::CommitInputMethod()
+{
+	CodeEdit::InputMethodState &input = *fInputMethod;
+	if (!input.composing) {
+		return;
+	}
+	const std::string text = input.text;
+	const BMessenger method = input.method;
+	InvalidateInputMethodRow();
+	input = {};
+
+	if (method.IsValid()) {
+		BMessage message(B_INPUT_METHOD_EVENT);
+		message.AddInt32("be:opcode", B_INPUT_METHOD_STOPPED);
+		method.SendMessage(&message);
+	}
+	fCore->InsertText(text);
+	if (Window() != nullptr) {
+		ApplyDirty();
+	}
+}
+
+
 //#pragma mark - BView hooks
 
 void CodeEditView::AttachedToWindow()
@@ -742,6 +960,7 @@ void CodeEditView::AttachedToWindow()
 
 void CodeEditView::DetachedFromWindow()
 {
+	CommitInputMethod();
 	fCaretRunner.reset();
 	StopAutoScroll();
 	fCore->Detach();
@@ -758,6 +977,7 @@ void CodeEditView::FrameResized(float width, float height)
 
 void CodeEditView::KeyDown(const char *bytes, int32 numBytes)
 {
+	CommitInputMethod();
 	BMessage *message = Window()->CurrentMessage();
 	const uint8 firstByte = static_cast<uint8>(bytes[0]);
 	const uint32 modifiers = message != nullptr ? message->GetInt32("modifiers", 0) : ::modifiers();
@@ -853,6 +1073,8 @@ void CodeEditView::UpdateCursor(BPoint where)
 void CodeEditView::MouseDown(BPoint where)
 {
 	using namespace CodeEdit;
+
+	CommitInputMethod();
 
 	MakeFocus(true);
 	BMessage *message = Window()->CurrentMessage();
@@ -1167,6 +1389,8 @@ void CodeEditView::HandleDrop(BMessage *message)
 {
 	using namespace CodeEdit;
 
+	CommitInputMethod();
+
 	SetDropOffset(std::nullopt);
 	StopAutoScroll();
 
@@ -1218,6 +1442,9 @@ void CodeEditView::HandleDrop(BMessage *message)
 
 void CodeEditView::MakeFocus(bool focus)
 {
+	if (!focus) {
+		CommitInputMethod();
+	}
 	BView::MakeFocus(focus);
 	RestartCaretBlink();
 	Invalidate();
@@ -1241,6 +1468,9 @@ void CodeEditView::MessageReceived(BMessage *message)
 	switch (message->what) {
 		case kMsgAutoScroll:
 			AutoScrollTick();
+			break;
+		case B_INPUT_METHOD_EVENT:
+			HandleInputMethodEvent(message);
 			break;
 		case kMsgDropMove:
 		case kMsgDropCopy: {

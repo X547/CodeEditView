@@ -160,6 +160,7 @@ public:
 	void Sync();
 
 	const EditorSettings &Settings() const {return fSettings;}
+	const LayoutOptions &GetLayoutOptions() const {return fLayoutOptions;}
 	void SetSettings(const EditorSettings &settings);
 
 	// Queries.

@@ -84,6 +84,7 @@ struct MouseState {
 	bigtime_t lastAutoScroll {};
 	BPoint scrollRemainder;
 	std::optional<bool> arrowCursor;
+	bool inScrollTracking {};
 };
 
 
@@ -468,6 +469,20 @@ void CodeEditView::ScrollTo(BPoint where)
 		fGutter->ScrollTo(BPoint(0, where.y));
 	}
 	fCore->SetScrollAnchor(fCore->RowStartOffset(TopRow()));
+
+	// Scrolling (e.g. by the mouse wheel) moves the text under a stationary
+	// pointer without MouseMoved(); follow it while tracking.
+	if (fMouse->inScrollTracking) {
+		return;
+	}
+	fMouse->inScrollTracking = true;
+	const BPoint pointer = Bounds().LeftTop() + fMouse->trackPoint;
+	if (fMouse->mode == CodeEdit::TrackMode::Select) {
+		TrackSelection(pointer);
+	} else if (fMouse->dropOffset.has_value()) {
+		SetDropOffset(OffsetAtPoint(ClampToBounds(pointer)));
+	}
+	fMouse->inScrollTracking = false;
 }
 
 
@@ -1050,15 +1065,9 @@ void CodeEditView::AutoScrollTick()
 	const float dy = truncf(remainder.y);
 	remainder.x -= dx;
 	remainder.y -= dy;
+	// ScrollTo() updates the selection or drop position.
 	if (dx != 0 || dy != 0) {
 		ScrollToClamped(bounds.left + dx, bounds.top + dy);
-	}
-
-	const BPoint where = Bounds().LeftTop() + fMouse->trackPoint;
-	if (selecting) {
-		TrackSelection(where);
-	} else {
-		SetDropOffset(OffsetAtPoint(ClampToBounds(where)));
 	}
 }
 

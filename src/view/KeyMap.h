@@ -43,6 +43,9 @@ enum class EditorCommand {
 	ShrinkSelection,
 	MoveToPreviousDefinition,
 	MoveToNextDefinition,
+	ToggleFold,
+	FoldAll,
+	UnfoldAll,
 };
 
 

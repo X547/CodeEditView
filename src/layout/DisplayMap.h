@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <utility>
+#include <vector>
+
 #include "RowIndex.h"
 
 
@@ -19,8 +22,8 @@ struct DisplayRow {
 };
 
 
-// Maps model lines to display rows. Currently one row per line; word wrap and
-// folds change the per-line row counts.
+// Maps model lines to display rows: one row per line, none for lines hidden
+// by folds. Word wrap will add continuation rows.
 class DisplayMap {
 private:
 	RowIndex fRows;
@@ -28,6 +31,8 @@ private:
 public:
 	void Reset(size_t lineCount);
 	void ApplyEdit(const EditRecord &edit);
+	// Inclusive line ranges without display rows (folded lines).
+	void SetHiddenLines(const std::vector<std::pair<size_t, size_t>> &ranges);
 
 	size_t LineCount() const {return fRows.LineCount();}
 	size_t RowCount() const {return fRows.TotalRows();}

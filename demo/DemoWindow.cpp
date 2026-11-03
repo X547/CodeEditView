@@ -63,6 +63,10 @@ DemoWindow::DemoWindow(DemoDocument *document):
 		.End()
 		.AddMenu("View")
 			.AddItem("Split view", kMsgToggleSplit, 'T', B_SHIFT_KEY)
+			.AddSeparator()
+			.AddItem("Fold/unfold", CodeEdit::kMsgToggleFold, '.')
+			.AddItem("Fold all", CodeEdit::kMsgFoldAll)
+			.AddItem("Unfold all", CodeEdit::kMsgUnfoldAll)
 		.End();
 
 	CodeEditScrollView *pane = CreatePane();
@@ -188,6 +192,9 @@ void DemoWindow::MessageReceived(BMessage *message)
 			Save();
 			break;
 		}
+		case CodeEdit::kMsgToggleFold:
+		case CodeEdit::kMsgFoldAll:
+		case CodeEdit::kMsgUnfoldAll:
 		case B_UNDO:
 		case B_REDO:
 		case B_CUT:

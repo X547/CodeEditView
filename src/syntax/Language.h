@@ -23,6 +23,7 @@ private:
 	const TSLanguage *fLanguage;
 	TSQuery *fHighlights;
 	TSQuery *fNavigation;
+	TSQuery *fFolds;
 	std::vector<HighlightStyle> fCaptureStyles;
 
 	// Text predicates of a highlight pattern: the captured text must be one
@@ -37,7 +38,13 @@ private:
 	void ParsePredicates();
 
 public:
-	Language(const char *name, const TSLanguage *language, std::string_view highlights, std::string_view navigation);
+	Language(
+		const char *name,
+		const TSLanguage *language,
+		std::string_view highlights,
+		std::string_view navigation,
+		std::string_view folds
+	);
 	~Language();
 
 	Language(const Language &other) = delete;
@@ -51,6 +58,8 @@ public:
 	const TSQuery *Highlights() const {return fHighlights;}
 	// Captures "definition" nodes for previous/next definition navigation.
 	const TSQuery *Navigation() const {return fNavigation;}
+	// Captures "fold" nodes: candidate ranges for folding.
+	const TSQuery *Folds() const {return fFolds;}
 	HighlightStyle CaptureStyle(uint32_t captureIndex) const {return fCaptureStyles[captureIndex];}
 	bool MatchesPredicates(const TSQueryMatch &match, const Rope &text) const;
 };

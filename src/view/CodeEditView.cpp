@@ -32,6 +32,7 @@ static constexpr uint32 kMsgKeyBinding = 'CEkb';
 
 static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
+static constexpr uint32 kFoldPlaceholderCells = 3;
 
 // Auto-scrolling runs at about 60 Hz; the scroll distance of a tick depends on
 // the elapsed time, so late ticks do not slow it down.
@@ -62,6 +63,7 @@ struct DrawContext {
 	std::optional<CaretPosition> dropCaret;
 	std::optional<BracketPair> brackets;
 	rgb_color bracket;
+	std::vector<size_t> foldedHeaders;
 	std::optional<size_t> preeditRow;
 	// Byte offset of the input method text in the spliced row text.
 	size_t preeditStart {};
@@ -268,6 +270,9 @@ void CodeEditView::Draw(BRect updateRect)
 		context.dropCaret = fCore->PositionOfOffset(*fMouse->dropOffset);
 	}
 	context.brackets = fCore->BracketMatch();
+	for (const FoldRange &fold : fCore->Folds()) {
+		context.foldedHeaders.push_back(fold.headerLine);
+	}
 	context.bracket = mix_color(context.background, ui_color(B_KEYBOARD_NAVIGATION_COLOR), 56);
 
 	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / fLineHeight)));
@@ -420,6 +425,16 @@ void CodeEditView::DrawRow(
 	flush();
 
 	const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
+	if (std::binary_search(context.foldedHeaders.begin(), context.foldedHeaders.end(), data.line)) {
+		// Placeholder for the folded lines after the header text.
+		const float left = (data.layout.Width() + 1) * fCellWidth;
+		const BRect box(left, top + 1, left + kFoldPlaceholderCells * fCellWidth - 1, bottom - 1);
+		SetHighColor(mix_color(context.background, context.placeholder, 48));
+		FillRoundRect(box, 2, 2);
+		SetHighColor(context.placeholder);
+		StrokeRoundRect(box, 2, 2);
+		DrawString("...", BPoint(left + (box.Width() + 1 - StringWidth("...")) / 2, baseline));
+	}
 	if (context.preeditRow == row) {
 		// Thin underline per clause (or the whole text), thick under the
 		// clause being converted.
@@ -777,6 +792,15 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 			break;
 		case EditorCommand::MoveToNextDefinition:
 			fCore->MoveToDefinition(true);
+			break;
+		case EditorCommand::ToggleFold:
+			fCore->ToggleFold();
+			break;
+		case EditorCommand::FoldAll:
+			fCore->FoldAll();
+			break;
+		case EditorCommand::UnfoldAll:
+			fCore->UnfoldAll();
 			break;
 		default:
 			break;
@@ -1200,6 +1224,21 @@ void CodeEditView::MouseDown(BPoint where)
 		return;
 	}
 
+	// A click past the end of a folded header line (on the placeholder)
+	// unfolds it.
+	if (!extend && clicks == 1) {
+		const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fLineHeight)));
+		const std::vector<DisplayRow> rows = fCore->DisplayRows(row, 1);
+		if (!rows.empty() && fCore->HitTestCell(row, where.x / fCellWidth).pastLineEnd
+			&& fCore->IsFolded(rows.front().line)) {
+			fCore->Unfold(rows.front().line);
+			fMouse->mode = TrackMode::None;
+			ApplyDirty();
+			RestartCaretBlink();
+			return;
+		}
+	}
+
 	TextRange range {offset, offset};
 	SelectionUnit unit = SelectionUnit::Character;
 	if (extend) {
@@ -1570,6 +1609,15 @@ void CodeEditView::MessageReceived(BMessage *message)
 	switch (message->what) {
 		case kMsgAutoScroll:
 			AutoScrollTick();
+			break;
+		case CodeEdit::kMsgToggleFold:
+			ExecuteCommand(CodeEdit::EditorCommand::ToggleFold, false);
+			break;
+		case CodeEdit::kMsgFoldAll:
+			ExecuteCommand(CodeEdit::EditorCommand::FoldAll, false);
+			break;
+		case CodeEdit::kMsgUnfoldAll:
+			ExecuteCommand(CodeEdit::EditorCommand::UnfoldAll, false);
 			break;
 		case kMsgKeyBinding:
 			ExecuteCommand(

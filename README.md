@@ -63,6 +63,12 @@ Alt is the Command key, Win is the Option key.
 | Alt + Z, Alt + Shift + Z | Undo, redo |
 | Alt + B, Alt + Shift + B | Expand / shrink selection by syntax (inside brackets first) |
 | Alt + Up/Down | Previous / next function or type definition |
+| Alt + . | Fold the selected lines, or fold/unfold the block at the caret |
+
+Folding: the triangles in the gutter fold and unfold blocks; clicking the
+`...` placeholder after a folded line unfolds it. Folds belong to each view.
+The view also accepts `CodeEdit::kMsgToggleFold`, `kMsgFoldAll` and
+`kMsgUnfoldAll` messages.
 
 Mouse: double click selects a word, or the contents of a bracket pair when
 clicking a bracket; triple click selects a line.

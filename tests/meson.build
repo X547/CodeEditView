@@ -4,6 +4,7 @@ codeEditTests = executable(
 	'CodeEditTests',
 	files(
 		'EditorCoreTest.cpp',
+		'FoldTest.cpp',
 		'LineLayoutTest.cpp',
 		'RopeTest.cpp',
 		'RowIndexTest.cpp',

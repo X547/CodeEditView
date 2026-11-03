@@ -39,6 +39,30 @@ static constexpr const char *kCppNavigation = R"scm(
 )scm";
 
 
+static constexpr const char *kCFolds = R"scm(
+(compound_statement) @fold
+(field_declaration_list) @fold
+(enumerator_list) @fold
+(initializer_list) @fold
+(case_statement) @fold
+(comment) @fold
+(preproc_if) @fold
+(preproc_ifdef) @fold
+)scm";
+
+static constexpr const char *kCppFolds = R"scm(
+(compound_statement) @fold
+(field_declaration_list) @fold
+(enumerator_list) @fold
+(initializer_list) @fold
+(case_statement) @fold
+(comment) @fold
+(preproc_if) @fold
+(preproc_ifdef) @fold
+(declaration_list) @fold
+)scm";
+
+
 struct FileExtension {
 	std::string_view extension;
 	const char *language;
@@ -59,11 +83,18 @@ static constexpr FileExtension kFileExtensions[] = {
 };
 
 
-Language::Language(const char *name, const TSLanguage *language, std::string_view highlights, std::string_view navigation):
+Language::Language(
+	const char *name,
+	const TSLanguage *language,
+	std::string_view highlights,
+	std::string_view navigation,
+	std::string_view folds
+):
 	fName(name),
 	fLanguage(language),
 	fHighlights(CompileQuery(language, highlights, "highlights")),
-	fNavigation(CompileQuery(language, navigation, "navigation"))
+	fNavigation(CompileQuery(language, navigation, "navigation")),
+	fFolds(CompileQuery(language, folds, "folds"))
 {
 	const uint32_t count = ts_query_capture_count(fHighlights);
 	fCaptureStyles.reserve(count);
@@ -138,6 +169,7 @@ Language::~Language()
 {
 	ts_query_delete(fHighlights);
 	ts_query_delete(fNavigation);
+	ts_query_delete(fFolds);
 }
 
 
@@ -158,8 +190,8 @@ TSQuery *Language::CompileQuery(const TSLanguage *language, std::string_view sou
 
 const std::vector<const Language*> &Language::All()
 {
-	static const Language sC("c", tree_sitter_c(), kCHighlights, kCNavigation);
-	static const Language sCpp("cpp", tree_sitter_cpp(), kCppHighlights, kCppNavigation);
+	static const Language sC("c", tree_sitter_c(), kCHighlights, kCNavigation, kCFolds);
+	static const Language sCpp("cpp", tree_sitter_cpp(), kCppHighlights, kCppNavigation, kCppFolds);
 	static const std::vector<const Language*> sAll = {&sC, &sCpp};
 	return sAll;
 }

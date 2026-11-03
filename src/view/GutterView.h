@@ -9,7 +9,8 @@ class CodeEditView;
 namespace CodeEdit {
 
 
-// Line numbers beside a CodeEditView; scrolls vertically with it.
+// Line numbers and fold markers beside a CodeEditView; scrolls vertically
+// with it. Clicking a marker toggles the fold.
 class GutterView: public BView {
 private:
 	CodeEditView *fEditView;
@@ -20,6 +21,7 @@ public:
 	float PreferredWidth();
 
 	void Draw(BRect updateRect) final;
+	void MouseDown(BPoint where) final;
 };
 
 

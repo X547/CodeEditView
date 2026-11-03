@@ -19,6 +19,17 @@ void DisplayMap::ApplyEdit(const EditRecord &edit)
 }
 
 
+void DisplayMap::SetHiddenLines(const std::vector<std::pair<size_t, size_t>> &ranges)
+{
+	fRows.Reset(fRows.LineCount());
+	for (const auto &[first, last] : ranges) {
+		for (size_t line = first; line <= last && line < fRows.LineCount(); line++) {
+			fRows.SetRows(line, 0);
+		}
+	}
+}
+
+
 DisplayRow DisplayMap::RowAt(size_t row) const
 {
 	const auto [line, subRow] = fRows.LineOfRow(row);

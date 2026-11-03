@@ -68,6 +68,7 @@ KeyMap KeyMap::Default()
 		{'b',           B_COMMAND_KEY | B_SHIFT_KEY, EditorCommand::ShrinkSelection},
 		{B_UP_ARROW,    B_COMMAND_KEY,  EditorCommand::MoveToPreviousDefinition},
 		{B_DOWN_ARROW,  B_COMMAND_KEY,  EditorCommand::MoveToNextDefinition},
+		{'.',           B_COMMAND_KEY,  EditorCommand::ToggleFold},
 	};
 	for (const KeyBinding &binding : kOthers) {
 		keyMap.Add(binding);

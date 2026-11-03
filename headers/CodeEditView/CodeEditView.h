@@ -21,6 +21,12 @@ class CodeEditScrollView;
 namespace CodeEdit {
 
 
+// Commands the view accepts as messages, e.g. from menu items.
+constexpr uint32 kMsgToggleFold = 'CEtf';
+constexpr uint32 kMsgFoldAll = 'CEfa';
+constexpr uint32 kMsgUnfoldAll = 'CEua';
+
+
 class EditorCore;
 class GutterView;
 class KeyMap;

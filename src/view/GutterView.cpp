@@ -15,6 +15,9 @@ namespace CodeEdit {
 
 
 static constexpr int kMinDigits = 3;
+// Cells: padding before the number, and the fold marker column after it.
+static constexpr int kLeadingCells = 1;
+static constexpr int kFoldCells = 2;
 
 
 GutterView::GutterView(CodeEditView *editView):
@@ -35,7 +38,7 @@ float GutterView::PreferredWidth()
 		digits++;
 	}
 	digits = std::max(digits, kMinDigits);
-	return ceilf((digits + 2) * fEditView->fCellWidth);
+	return ceilf((kLeadingCells + digits + kFoldCells) * fEditView->fCellWidth);
 }
 
 
@@ -56,22 +59,67 @@ void GutterView::Draw(BRect updateRect)
 	const std::vector<DisplayRow> rows = core.DisplayRows(firstRow, lastRow - firstRow + 1);
 	const size_t caretRow = core.PositionOfOffset(core.GetSelection().caret).row;
 
+	std::vector<FoldMarker> markers;
+	if (!rows.empty()) {
+		markers = core.FoldMarkers(rows.front().line, rows.back().line);
+	}
+
 	SetDrawingMode(B_OP_OVER);
 	const rgb_color numberColor = mix_color(background, text, 110);
+	const float foldLeft = bounds.right - kFoldCells * cellWidth;
 	for (size_t i = 0; i < rows.size(); i++) {
 		if (rows[i].subRow != 0) {
 			continue;
 		}
 		const size_t row = firstRow + i;
+		const float top = row * lineHeight;
 		char number[32];
 		snprintf(number, sizeof(number), "%zu", rows[i].line + 1);
-		const float x = bounds.right - cellWidth - StringWidth(number);
+		const float x = foldLeft - StringWidth(number);
 		SetHighColor(row == caretRow ? text : numberColor);
-		DrawString(number, BPoint(x, row * lineHeight + fEditView->fAscent));
+		DrawString(number, BPoint(x, top + fEditView->fAscent));
+
+		const auto marker = std::find_if(markers.begin(), markers.end(), [&](const FoldMarker &entry) {
+			return entry.line == rows[i].line;
+		});
+		if (marker == markers.end()) {
+			continue;
+		}
+		// A triangle pointing right when folded, down when expanded.
+		const float size = std::max(3.0f, floorf(std::min(cellWidth, lineHeight / 2)));
+		const float centerX = foldLeft + kFoldCells * cellWidth / 2;
+		const float centerY = top + lineHeight / 2;
+		SetHighColor(marker->folded ? text : numberColor);
+		if (marker->folded) {
+			FillTriangle(
+				BPoint(centerX - size / 2, centerY - size / 2 - 1),
+				BPoint(centerX - size / 2, centerY + size / 2 + 1),
+				BPoint(centerX + size / 2, centerY)
+			);
+		} else {
+			FillTriangle(
+				BPoint(centerX - size / 2 - 1, centerY - size / 2),
+				BPoint(centerX + size / 2 + 1, centerY - size / 2),
+				BPoint(centerX, centerY + size / 2)
+			);
+		}
 	}
 
 	SetHighColor(mix_color(background, text, 48));
 	StrokeLine(BPoint(bounds.right, updateRect.top), BPoint(bounds.right, updateRect.bottom));
+}
+
+
+void GutterView::MouseDown(BPoint where)
+{
+	EditorCore &core = *fEditView->fCore;
+	const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fEditView->fLineHeight)));
+	const std::vector<DisplayRow> rows = core.DisplayRows(row, 1);
+	if (rows.empty() || rows.front().subRow != 0) {
+		return;
+	}
+	core.ToggleFoldAtLine(rows.front().line);
+	fEditView->ApplyDirty();
 }
 
 

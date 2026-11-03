@@ -131,6 +131,7 @@ void EditorCore::ResetFromModel()
 		fMaxColumns = std::max(fMaxColumns, LineLayout(LineText(line), fLayoutOptions).Width());
 	}
 
+	fFolds.clear();
 	fSelection = ClampSelection(fSelection);
 	fScrollAnchor = std::min(fScrollAnchor, text.Length());
 	fGoalColumn.reset();
@@ -157,8 +158,10 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	}
 
 	const Rope &text = fModel->Text();
+	bool foldsRemoved = false;
 	for (const EditRecord &edit : changes.edits) {
 		fDisplayMap.ApplyEdit(edit);
+		foldsRemoved = AdjustFolds(edit) || foldsRemoved;
 		fSelection = MapSelection(fSelection, edit);
 		fScrollAnchor = edit.MapOffset(fScrollAnchor, Gravity::Left);
 		if (edit.oldEnd.line == edit.newEnd.line) {
@@ -184,6 +187,9 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		}
 	}
 
+	if (foldsRemoved) {
+		ApplyFolds();
+	}
 	fSelection = ClampSelection(fSelection);
 }
 
@@ -338,6 +344,16 @@ void EditorCore::AddSelectionDirty(const Selection &selection)
 
 void EditorCore::SetSelectionLocked(const Selection &selection)
 {
+	if (!fFolds.empty()) {
+		const Rope &text = fModel->Text();
+		const size_t anchorLine = text.LineOfOffset(selection.anchor);
+		const size_t caretLine = text.LineOfOffset(selection.caret);
+		const bool anchorUnfolded = UnfoldLines(anchorLine, anchorLine);
+		const bool caretUnfolded = UnfoldLines(caretLine, caretLine);
+		if (anchorUnfolded || caretUnfolded) {
+			ApplyFolds();
+		}
+	}
 	if (selection == fSelection) {
 		return;
 	}
@@ -799,6 +815,27 @@ void EditorCore::Move(Movement movement, bool extend, const PageInfo &page)
 			break;
 	}
 
+	// Horizontal movement jumps over folded lines; other movements into
+	// them unfold (in SetSelectionLocked()).
+	if (const std::optional<FoldRange> fold = HidingFold(text.LineOfOffset(newCaret))) {
+		switch (movement) {
+			case Movement::CharacterLeft:
+			case Movement::CharacterRight:
+			case Movement::WordLeft:
+			case Movement::WordRight:
+			case Movement::SubwordLeft:
+			case Movement::SubwordRight:
+				if (newCaret > caret) {
+					newCaret = fold->lastLine < text.NewlineCount() ? text.LineStart(fold->lastLine + 1) : text.Length();
+				} else {
+					newCaret = text.LineEnd(fold->headerLine);
+				}
+				break;
+			default:
+				break;
+		}
+	}
+
 	fGoalColumn = goalColumn;
 	fModel->BreakUndoCoalescing();
 	SetSelectionLocked({extend ? fSelection.anchor : newCaret, newCaret});
@@ -1124,6 +1161,346 @@ void EditorCore::MoveToDefinition(bool forward)
 	fGoalColumn.reset();
 	fModel->BreakUndoCoalescing();
 	SetSelectionLocked(ClampSelection({*target, *target}));
+}
+
+
+//#pragma mark - Folding
+
+void EditorCore::ApplyFolds()
+{
+	std::vector<std::pair<size_t, size_t>> hidden;
+	for (const FoldRange &fold : fFolds) {
+		hidden.emplace_back(fold.headerLine + 1, fold.lastLine);
+	}
+	fDisplayMap.SetHiddenLines(hidden);
+	fDirty.AddAll();
+	fDirty.scrollRangeChanged = true;
+	fDirty.marksChanged = true;
+}
+
+
+// Keeps folds valid across an edit: folds after it shift, edits within a
+// header line keep the fold, other edits touching a fold remove it.
+bool EditorCore::AdjustFolds(const EditRecord &edit)
+{
+	const size_t first = edit.start.line;
+	const size_t oldLast = edit.oldEnd.line;
+	const size_t newLast = edit.newEnd.line;
+	bool removed = false;
+	for (auto it = fFolds.begin(); it != fFolds.end();) {
+		FoldRange &fold = *it;
+		if (oldLast < fold.headerLine) {
+			fold.headerLine = fold.headerLine - oldLast + newLast;
+			fold.lastLine = fold.lastLine - oldLast + newLast;
+		} else if (first > fold.lastLine) {
+			// After the fold.
+		} else if (first == fold.headerLine && oldLast == fold.headerLine && newLast == fold.headerLine) {
+			// Within the header line.
+		} else {
+			it = fFolds.erase(it);
+			removed = true;
+			continue;
+		}
+		++it;
+	}
+	return removed;
+}
+
+
+// The outermost fold hiding a line.
+std::optional<FoldRange> EditorCore::HidingFold(size_t line) const
+{
+	for (const FoldRange &fold : fFolds) {
+		if (fold.headerLine < line && line <= fold.lastLine) {
+			return fold;
+		}
+	}
+	return std::nullopt;
+}
+
+
+bool EditorCore::UnfoldLines(size_t first, size_t last)
+{
+	const size_t count = std::erase_if(fFolds, [first, last](const FoldRange &fold) {
+		return first <= fold.lastLine && last > fold.headerLine;
+	});
+	return count > 0;
+}
+
+
+bool EditorCore::IsFoldedLocked(size_t headerLine) const
+{
+	return std::any_of(fFolds.begin(), fFolds.end(), [headerLine](const FoldRange &fold) {
+		return fold.headerLine == headerLine;
+	});
+}
+
+
+void EditorCore::AddFold(const FoldRange &fold)
+{
+	const Rope &text = fModel->Text();
+	if (fold.lastLine <= fold.headerLine || fold.lastLine > text.NewlineCount()) {
+		return;
+	}
+	std::erase_if(fFolds, [&fold](const FoldRange &other) {
+		return other.headerLine == fold.headerLine;
+	});
+	fFolds.insert(
+		std::upper_bound(fFolds.begin(), fFolds.end(), fold, [](const FoldRange &a, const FoldRange &b) {
+			return a.headerLine < b.headerLine;
+		}),
+		fold
+	);
+	ApplyFolds();
+
+	// A hidden caret moves to the end of the header line.
+	for (const size_t offset : {fSelection.anchor, fSelection.caret}) {
+		if (const std::optional<FoldRange> hiding = HidingFold(text.LineOfOffset(offset))) {
+			const size_t headerEnd = text.LineEnd(hiding->headerLine);
+			fGoalColumn.reset();
+			SetSelectionLocked({headerEnd, headerEnd});
+			break;
+		}
+	}
+}
+
+
+size_t EditorCore::FirstNonBlank(size_t line) const
+{
+	const Rope &text = fModel->Text();
+	size_t offset = text.LineStart(line);
+	const size_t end = text.LineEnd(line);
+	while (offset < end && (text.ByteAt(offset) == ' ' || text.ByteAt(offset) == '\t')) {
+		offset++;
+	}
+	return offset;
+}
+
+
+// Fold candidates from the syntax tree, merged per header line (the largest
+// range wins). If a node ends with a token that starts its last line, like
+// a closing brace or #endif, that line stays visible.
+std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange)
+{
+	std::vector<FoldRange> candidates;
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax == nullptr || syntax->Tree() == nullptr) {
+		return candidates;
+	}
+	const Rope &text = fModel->Text();
+	lastLine = std::min(lastLine, text.NewlineCount());
+	if (firstLine > lastLine) {
+		return candidates;
+	}
+
+	TSQueryCursor *cursor = fQueryCursor.Get();
+	ts_query_cursor_set_byte_range(
+		cursor,
+		static_cast<uint32_t>(text.LineStart(firstLine)),
+		static_cast<uint32_t>(text.LineEnd(lastLine))
+	);
+	ts_query_cursor_exec(cursor, syntax->GetLanguage().Folds(), ts_tree_root_node(syntax->Tree()));
+	TSQueryMatch match;
+	uint32_t captureIndex;
+	while (ts_query_cursor_next_capture(cursor, &match, &captureIndex)) {
+		const TSNode node = match.captures[captureIndex].node;
+		const size_t start = ts_node_start_byte(node);
+		const size_t end = ts_node_end_byte(node);
+		if (end <= start) {
+			continue;
+		}
+		const size_t header = text.LineOfOffset(start);
+		if (headersInRange && (header < firstLine || header > lastLine)) {
+			continue;
+		}
+		const size_t endLine = text.LineOfOffset(end - 1);
+		size_t last = endLine;
+		const uint32_t childCount = ts_node_child_count(node);
+		if (childCount > 0) {
+			const TSNode closing = ts_node_child(node, childCount - 1);
+			if (!ts_node_is_named(closing) && ts_node_start_byte(closing) == FirstNonBlank(endLine)) {
+				last = endLine - 1;
+			}
+		}
+		if (last > header) {
+			candidates.push_back({header, last});
+		}
+	}
+
+	std::sort(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
+		return a.headerLine != b.headerLine ? a.headerLine < b.headerLine : a.lastLine > b.lastLine;
+	});
+	candidates.erase(
+		std::unique(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
+			return a.headerLine == b.headerLine;
+		}),
+		candidates.end()
+	);
+	return candidates;
+}
+
+
+std::vector<FoldRange> EditorCore::FoldCandidates(size_t firstLine, size_t lastLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return FoldCandidatesLocked(firstLine, lastLine, true);
+}
+
+
+std::vector<FoldMarker> EditorCore::FoldMarkers(size_t firstLine, size_t lastLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	std::vector<FoldMarker> markers;
+	for (const FoldRange &candidate : FoldCandidatesLocked(firstLine, lastLine, true)) {
+		markers.push_back({candidate.headerLine, false});
+	}
+	for (const FoldRange &fold : fFolds) {
+		if (fold.headerLine < firstLine || fold.headerLine > lastLine) {
+			continue;
+		}
+		const auto it = std::find_if(markers.begin(), markers.end(), [&fold](const FoldMarker &marker) {
+			return marker.line == fold.headerLine;
+		});
+		if (it != markers.end()) {
+			it->folded = true;
+		} else {
+			markers.push_back({fold.headerLine, true});
+		}
+	}
+	std::sort(markers.begin(), markers.end(), [](const FoldMarker &a, const FoldMarker &b) {
+		return a.line < b.line;
+	});
+	return markers;
+}
+
+
+std::vector<FoldRange> EditorCore::Folds()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return fFolds;
+}
+
+
+bool EditorCore::IsFolded(size_t headerLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return IsFoldedLocked(headerLine);
+}
+
+
+void EditorCore::Fold(const FoldRange &fold)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	AddFold(fold);
+}
+
+
+void EditorCore::Unfold(size_t headerLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const size_t count = std::erase_if(fFolds, [headerLine](const FoldRange &fold) {
+		return fold.headerLine == headerLine;
+	});
+	if (count > 0) {
+		ApplyFolds();
+	}
+}
+
+
+void EditorCore::ToggleFoldAtLine(size_t line)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (IsFoldedLocked(line)) {
+		std::erase_if(fFolds, [line](const FoldRange &fold) {
+			return fold.headerLine == line;
+		});
+		ApplyFolds();
+		return;
+	}
+	const std::vector<FoldRange> candidates = FoldCandidatesLocked(line, line, true);
+	if (!candidates.empty()) {
+		AddFold(candidates.front());
+	}
+}
+
+
+void EditorCore::ToggleFold()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t start = std::min(fSelection.anchor, fSelection.caret);
+	const size_t end = std::max(fSelection.anchor, fSelection.caret);
+	const size_t startLine = text.LineOfOffset(start);
+	size_t endLine = text.LineOfOffset(end);
+	if (endLine > startLine && end == text.LineStart(endLine)) {
+		endLine--;
+	}
+	if (endLine > startLine) {
+		AddFold({startLine, endLine});
+		return;
+	}
+
+	if (IsFoldedLocked(startLine)) {
+		std::erase_if(fFolds, [startLine](const FoldRange &fold) {
+			return fold.headerLine == startLine;
+		});
+		ApplyFolds();
+		return;
+	}
+	// The candidate starting on the caret line, else the innermost one
+	// containing it.
+	std::optional<FoldRange> target;
+	for (const FoldRange &candidate : FoldCandidatesLocked(startLine, startLine, false)) {
+		if (candidate.headerLine == startLine) {
+			target = candidate;
+			break;
+		}
+		if (candidate.headerLine < startLine && startLine <= candidate.lastLine
+			&& (!target.has_value() || candidate.headerLine > target->headerLine)) {
+			target = candidate;
+		}
+	}
+	if (target.has_value()) {
+		AddFold(*target);
+	}
+}
+
+
+void EditorCore::FoldAll()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const std::vector<FoldRange> candidates = FoldCandidatesLocked(0, fModel->Text().NewlineCount(), true);
+	if (candidates.empty()) {
+		return;
+	}
+	fFolds = candidates;
+	ApplyFolds();
+	const Rope &text = fModel->Text();
+	if (const std::optional<FoldRange> hiding = HidingFold(text.LineOfOffset(fSelection.caret))) {
+		const size_t headerEnd = text.LineEnd(hiding->headerLine);
+		SetSelectionLocked({headerEnd, headerEnd});
+	}
+}
+
+
+void EditorCore::UnfoldAll()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (fFolds.empty()) {
+		return;
+	}
+	fFolds.clear();
+	ApplyFolds();
 }
 
 

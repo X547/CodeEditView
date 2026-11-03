@@ -1,0 +1,218 @@
+#include <stdint.h>
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <OS.h>
+
+#include <CodeEditView/TextModel.h>
+
+#include "view/EditorCore.h"
+
+
+namespace CodeEdit {
+
+
+static constexpr const char *kSample =
+	"void f()\n"        // 0
+	"{\n"               // 1
+	"\tint a = 1;\n"    // 2
+	"\tif (a) {\n"      // 3
+	"\t\ta++;\n"        // 4
+	"\t}\n"             // 5
+	"}\n"               // 6
+	"int g() { return 0; }\n"; // 7, then empty line 8
+
+
+static BReference<TextModel> MakeModel(std::string_view text, const char *language)
+{
+	BReference<TextModel> model(new TextModel(), true);
+	uint64_t revision;
+	{
+		ModelLock lock(*model);
+		model->SetText(text);
+		model->SetLanguage(language);
+		revision = model->SyntaxRevision();
+	}
+	if (language == nullptr) {
+		return model;
+	}
+	for (int i = 0; i < 500; i++) {
+		{
+			ModelLock lock(*model);
+			if (model->SyntaxRevision() > revision) {
+				break;
+			}
+		}
+		snooze(10000);
+	}
+	return model;
+}
+
+
+static size_t LineStart(TextModel &model, size_t line)
+{
+	ModelLock lock(model);
+	return model.Text().LineStart(line);
+}
+
+
+static size_t LineEnd(TextModel &model, size_t line)
+{
+	ModelLock lock(model);
+	return model.Text().LineEnd(line);
+}
+
+
+static size_t CaretLine(EditorCore &core)
+{
+	return core.CaretLocation().line;
+}
+
+
+TEST_CASE("fold candidates from the syntax tree")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	const std::vector<FoldRange> candidates = core.FoldCandidates(0, 8);
+	REQUIRE(candidates.size() == 2);
+	CHECK(candidates[0] == FoldRange {1, 5});
+	CHECK(candidates[1] == FoldRange {3, 4});
+	CHECK(core.FoldCandidates(3, 3).size() == 1);
+
+	CHECK(core.FoldMarkers(0, 8) == std::vector<FoldMarker> {{1, false}, {3, false}});
+	core.ToggleFoldAtLine(3);
+	CHECK(core.FoldMarkers(0, 8) == std::vector<FoldMarker> {{1, false}, {3, true}});
+	core.ToggleFoldAtLine(3);
+	CHECK(core.Folds().empty());
+	core.ToggleFoldAtLine(2);
+	CHECK(core.Folds().empty());
+}
+
+
+TEST_CASE("folded lines have no rows")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	CHECK(core.RowCount() == 9);
+	core.Fold({3, 4});
+	CHECK(core.RowCount() == 8);
+	CHECK(core.DisplayRows(4, 1).front().line == 5);
+	CHECK(core.PositionOfOffset(LineStart(*model, 5)).row == 4);
+
+	core.Fold({1, 5});
+	CHECK(core.RowCount() == 5);
+	CHECK(core.DisplayRows(2, 1).front().line == 6);
+	core.UnfoldAll();
+	CHECK(core.RowCount() == 9);
+}
+
+
+TEST_CASE("caret movement around folds")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	core.Fold({3, 4});
+
+	core.SetSelection({LineStart(*model, 5) + 1, LineStart(*model, 5) + 1});
+	core.Move(Movement::PreviousLine, false, {});
+	CHECK(CaretLine(core) == 3);
+	core.Move(Movement::NextLine, false, {});
+	CHECK(CaretLine(core) == 5);
+	CHECK(core.Folds().size() == 1);
+
+	core.SetSelection({LineEnd(*model, 3), LineEnd(*model, 3)});
+	core.Move(Movement::CharacterRight, false, {});
+	CHECK(core.GetSelection().caret == LineStart(*model, 5));
+	core.Move(Movement::CharacterLeft, false, {});
+	CHECK(core.GetSelection().caret == LineEnd(*model, 3));
+	core.Move(Movement::CharacterRight, true, {});
+	CHECK(core.GetSelection() == Selection {LineEnd(*model, 3), LineStart(*model, 5)});
+	CHECK(core.Folds().size() == 1);
+
+	// Placing the caret inside the fold unfolds it.
+	core.SetSelection({LineStart(*model, 4), LineStart(*model, 4)});
+	CHECK(core.Folds().empty());
+	CHECK(core.RowCount() == 9);
+}
+
+
+TEST_CASE("folds follow edits")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	EditorCore other(model);
+	core.Fold({3, 4});
+
+	other.SetSelection({0, 0});
+	other.InsertText("// x\n");
+	CHECK(core.Folds() == std::vector<FoldRange> {{4, 5}});
+	CHECK(core.RowCount() == 9);
+
+	other.SetSelection({LineEnd(*model, 4), LineEnd(*model, 4)});
+	other.InsertText(" // header");
+	CHECK(core.Folds() == std::vector<FoldRange> {{4, 5}});
+
+	other.SetSelection({LineStart(*model, 7), LineStart(*model, 7)});
+	other.InsertText("\n");
+	CHECK(core.Folds() == std::vector<FoldRange> {{4, 5}});
+
+	// Joining the header with the first hidden line removes the fold.
+	other.SetSelection({LineEnd(*model, 4), LineEnd(*model, 4)});
+	other.Delete(Deletion::CharacterRight);
+	CHECK(core.Folds().empty());
+	CHECK(core.RowCount() == other.RowCount());
+}
+
+
+TEST_CASE("toggle fold at the caret and manual folds")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+
+	core.SetSelection({LineStart(*model, 2) + 2, LineStart(*model, 2) + 2});
+	core.ToggleFold();
+	CHECK(core.Folds() == std::vector<FoldRange> {{1, 5}});
+	CHECK(core.GetSelection().caret == LineEnd(*model, 1));
+	core.ToggleFold();
+	CHECK(core.Folds().empty());
+
+	core.SetSelection({LineStart(*model, 3), LineStart(*model, 3)});
+	core.ToggleFold();
+	CHECK(core.Folds() == std::vector<FoldRange> {{3, 4}});
+
+	BReference<TextModel> plain = MakeModel("a\nb\nc\nd\ne\n", nullptr);
+	EditorCore plainCore(plain);
+	plainCore.SetSelection({LineStart(*plain, 1), LineStart(*plain, 4)});
+	plainCore.ToggleFold();
+	CHECK(plainCore.Folds() == std::vector<FoldRange> {{1, 3}});
+	CHECK(plainCore.RowCount() == 4);
+	plainCore.SetSelection({0, 0});
+	plainCore.ToggleFold();
+	CHECK(plainCore.Folds().size() == 1);
+}
+
+
+TEST_CASE("fold all and per-view folds")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	EditorCore other(model);
+
+	core.SetSelection({LineStart(*model, 4), LineStart(*model, 4)});
+	core.FoldAll();
+	CHECK(core.Folds().size() == 2);
+	CHECK(core.RowCount() == 5);
+	CHECK(CaretLine(core) == 1);
+	CHECK(other.RowCount() == 9);
+	CHECK(other.Folds().empty());
+
+	core.UnfoldAll();
+	CHECK(core.RowCount() == 9);
+}
+
+
+} // CodeEdit

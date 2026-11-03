@@ -72,6 +72,23 @@ struct CellHit {
 };
 
 
+// A fold hides the lines after its header line up to lastLine.
+struct FoldRange {
+	size_t headerLine {};
+	size_t lastLine {};
+
+	bool operator==(const FoldRange &other) const = default;
+};
+
+
+struct FoldMarker {
+	size_t line {};
+	bool folded {};
+
+	bool operator==(const FoldMarker &other) const = default;
+};
+
+
 // A bracket next to the caret and its partner.
 struct BracketPair {
 	size_t bracket {};
@@ -139,6 +156,8 @@ private:
 	std::vector<Selection> fExpandHistory;
 	std::optional<Selection> fExpandedSelection;
 	std::optional<BracketPair> fBracketMatch;
+	// Sorted by header line; may nest.
+	std::vector<FoldRange> fFolds;
 
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
@@ -161,6 +180,15 @@ private:
 	void ReplaceRange(size_t from, size_t to, std::string_view text, EditKind kind);
 	void ApplyUndoResult(const std::optional<UndoResult> &result, const ModelChanges &changes);
 	std::optional<TextRange> BalancedRangeAtLocked(size_t offset) const;
+
+	void ApplyFolds();
+	bool AdjustFolds(const EditRecord &edit);
+	std::optional<FoldRange> HidingFold(size_t line) const;
+	bool UnfoldLines(size_t first, size_t last);
+	void AddFold(const FoldRange &fold);
+	size_t FirstNonBlank(size_t line) const;
+	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange);
+	bool IsFoldedLocked(size_t headerLine) const;
 
 public:
 	explicit EditorCore(const BReference<TextModel> &model);
@@ -231,6 +259,21 @@ public:
 	// after the caret first, then the one before) and marks changed rows dirty.
 	void UpdateBracketMatch();
 	std::optional<BracketPair> BracketMatch() const {return fBracketMatch;}
+
+	// Folding. Candidates come from the syntax tree; folds of any line range
+	// can also be added manually.
+	std::vector<FoldRange> FoldCandidates(size_t firstLine, size_t lastLine);
+	std::vector<FoldMarker> FoldMarkers(size_t firstLine, size_t lastLine);
+	std::vector<FoldRange> Folds();
+	bool IsFolded(size_t headerLine);
+	void Fold(const FoldRange &fold);
+	void Unfold(size_t headerLine);
+	void ToggleFoldAtLine(size_t line);
+	// Folds a multi-line selection, otherwise toggles the fold at the caret
+	// line or folds the innermost candidate containing it.
+	void ToggleFold();
+	void FoldAll();
+	void UnfoldAll();
 
 	// Syntax navigation (no-ops without a syntax tree).
 	void ExpandSelection();

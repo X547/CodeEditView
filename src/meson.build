@@ -1,9 +1,14 @@
 codeEditViewSources = files(
 	'Version.cpp',
+	'layout/DisplayMap.cpp',
+	'layout/LineLayout.cpp',
+	'layout/RowIndex.cpp',
 	'model/EditRecord.cpp',
 	'model/Rope.cpp',
 	'model/TextModel.cpp',
 	'model/UndoStack.cpp',
+	'unicode/CharWidth.cpp',
+	'unicode/Utf8.cpp',
 	'view/CodeEditView.cpp',
 )
 

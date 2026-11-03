@@ -1,0 +1,315 @@
+#include <stdint.h>
+
+#include <algorithm>
+#include <string>
+#include <string_view>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <OS.h>
+
+#include <CodeEditView/Language.h>
+#include <CodeEditView/TextModel.h>
+
+#include "syntax/Language.h"
+#include "view/EditorCore.h"
+
+
+namespace CodeEdit {
+
+
+static constexpr const char *kSample =
+	"#include <stdio.h>\n"
+	"// note\n"
+	"int main(int argc, char **argv)\n"
+	"{\n"
+	"\tconst char *s = \"a(b\";\n"
+	"\treturn 'x' + 42;\n"
+	"}\n";
+
+
+static BReference<TextModel> MakeModel(std::string_view text, const char *language)
+{
+	BReference<TextModel> model(new TextModel(), true);
+	ModelLock lock(*model);
+	model->SetText(text);
+	model->SetLanguage(language);
+	return model;
+}
+
+
+static uint64_t SyntaxRevision(TextModel &model)
+{
+	ModelLock lock(model);
+	return model.SyntaxRevision();
+}
+
+
+// Waits for the background parser to publish a tree newer than revision.
+static bool WaitForSyntax(TextModel &model, uint64_t revision)
+{
+	for (int i = 0; i < 500; i++) {
+		if (SyntaxRevision(model) > revision) {
+			return true;
+		}
+		snooze(10000);
+	}
+	return false;
+}
+
+
+static BReference<TextModel> MakeParsedModel(std::string_view text, const char *language)
+{
+	BReference<TextModel> model(new TextModel(), true);
+	uint64_t revision;
+	{
+		ModelLock lock(*model);
+		model->SetText(text);
+		model->SetLanguage(language);
+		revision = model->SyntaxRevision();
+	}
+	REQUIRE(WaitForSyntax(*model, revision));
+	return model;
+}
+
+
+static size_t LineStart(TextModel &model, size_t line)
+{
+	ModelLock lock(model);
+	return model.Text().LineStart(line);
+}
+
+
+static HighlightStyle StyleAt(EditorCore &core, size_t row, size_t offset)
+{
+	const std::vector<RowData> rows = core.Rows(row, 1);
+	REQUIRE(rows.size() == 1);
+	if (rows.front().styles.empty()) {
+		return HighlightStyle::Default;
+	}
+	REQUIRE(offset < rows.front().styles.size());
+	return rows.front().styles[offset];
+}
+
+
+TEST_CASE("languages and capture styles")
+{
+	const std::vector<std::string> languages = AvailableLanguages();
+	CHECK(std::find(languages.begin(), languages.end(), "c") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "cpp") != languages.end());
+	for (const std::string &name : languages) {
+		const Language *language = Language::ForName(name);
+		REQUIRE(language != nullptr);
+		CHECK(language->Highlights() != nullptr);
+		CHECK(language->Navigation() != nullptr);
+	}
+	CHECK(Language::ForName("cobol") == nullptr);
+
+	CHECK(std::string_view(LanguageForPath("src/main.c")) == "c");
+	CHECK(std::string_view(LanguageForPath("/boot/x/View.CPP")) == "cpp");
+	CHECK(std::string_view(LanguageForPath("Header.h")) == "cpp");
+	CHECK(LanguageForPath("Makefile") == nullptr);
+	CHECK(LanguageForPath(".bashrc") == nullptr);
+	CHECK(LanguageForPath("dir.c/file") == nullptr);
+
+	CHECK(StyleForCapture("type.builtin") == HighlightStyle::BuiltinType);
+	CHECK(StyleForCapture("type.qualifier") == HighlightStyle::Type);
+	CHECK(StyleForCapture("keyword.control.flow") == HighlightStyle::Keyword);
+	CHECK(StyleForCapture("variable") == HighlightStyle::Default);
+}
+
+
+TEST_CASE("highlighting follows Pe styles")
+{
+	BReference<TextModel> model = MakeParsedModel(kSample, "cpp");
+	EditorCore core(model);
+	{
+		ModelLock lock(*model);
+		CHECK(std::string_view(model->LanguageName()) == "cpp");
+	}
+
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 0, 9) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 3) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 2, 4) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 2, 8) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 24) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 7) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 4, 15) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 4, 19) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 22) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 5, 12) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 5, 14) == HighlightStyle::Number);
+}
+
+
+TEST_CASE("highlight predicates")
+{
+	BReference<TextModel> model = MakeParsedModel("int x = static_cast<int>(y) + other<int>(z);\n", "cpp");
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 8) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 30) == HighlightStyle::Default);
+
+	BReference<TextModel> nested = MakeParsedModel(
+		"static const char *F(void *payload)\n"
+		"{\n"
+		"\tconst Rope &rope = *static_cast<const Rope*>(payload);\n"
+		"}\n",
+		"cpp"
+	);
+	EditorCore nestedCore(nested);
+	CHECK(StyleAt(nestedCore, 2, 21) == HighlightStyle::Keyword);
+	// The view highlights all visible rows in one query.
+	const std::vector<RowData> rows = nestedCore.Rows(0, 10);
+	REQUIRE(rows.size() == 5);
+	CHECK(rows[2].styles[21] == HighlightStyle::Keyword);
+}
+
+
+TEST_CASE("plain text after removing the language")
+{
+	BReference<TextModel> model = MakeParsedModel(kSample, "cpp");
+	EditorCore core(model);
+	CHECK_FALSE(core.Rows(0, 1).front().styles.empty());
+
+	{
+		ModelLock lock(*model);
+		model->SetLanguage(nullptr);
+	}
+	CHECK(core.Rows(0, 1).front().styles.empty());
+}
+
+
+TEST_CASE("highlighting updates incrementally")
+{
+	BReference<TextModel> model = MakeParsedModel(kSample, "cpp");
+	EditorCore core(model);
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Keyword);
+
+	const uint64_t revision = SyntaxRevision(*model);
+	core.SetSelection({LineStart(*model, 5) + 1, LineStart(*model, 5) + 1});
+	core.InsertText("// ");
+	REQUIRE(WaitForSyntax(*model, revision));
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Keyword);
+
+	const uint64_t undoRevision = SyntaxRevision(*model);
+	CHECK(core.Undo());
+	REQUIRE(WaitForSyntax(*model, undoRevision));
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Keyword);
+}
+
+
+TEST_CASE("brackets match by syntax")
+{
+	BReference<TextModel> model = MakeParsedModel(kSample, "cpp");
+	EditorCore core(model);
+	const size_t line2 = LineStart(*model, 2);
+	const size_t line4 = LineStart(*model, 4);
+
+	CHECK(core.BalancedRangeAt(line2 + 8) == TextRange {line2 + 9, line2 + 30});
+	CHECK(core.BalancedRangeAt(line2 + 30) == TextRange {line2 + 9, line2 + 30});
+	CHECK_FALSE(core.BalancedRangeAt(line4 + 19).has_value());
+	const size_t braceOpen = LineStart(*model, 3);
+	const size_t braceClose = LineStart(*model, 6);
+	CHECK(core.BalancedRangeAt(braceOpen) == TextRange {braceOpen + 1, braceClose});
+}
+
+
+static TextRange Range(const Selection &selection)
+{
+	return {std::min(selection.anchor, selection.caret), std::max(selection.anchor, selection.caret)};
+}
+
+
+TEST_CASE("expand and shrink selection by syntax node")
+{
+	BReference<TextModel> model = MakeParsedModel(kSample, "cpp");
+	EditorCore core(model);
+	const size_t line = LineStart(*model, 2);
+
+	core.SetSelection({line + 14, line + 14});
+	core.ExpandSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 13, line + 17});
+	core.ExpandSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 9, line + 17});
+	core.ExpandSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 9, line + 30});
+	core.ExpandSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 8, line + 31});
+
+	core.ShrinkSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 9, line + 30});
+	core.ShrinkSelection();
+	core.ShrinkSelection();
+	CHECK(Range(core.GetSelection()) == TextRange {line + 13, line + 17});
+	core.ShrinkSelection();
+	CHECK(core.GetSelection() == Selection {line + 14, line + 14});
+	core.ShrinkSelection();
+	CHECK(core.GetSelection() == Selection {line + 14, line + 14});
+
+	core.ExpandSelection();
+	core.SetSelection({0, 0});
+	core.ShrinkSelection();
+	CHECK(core.GetSelection() == Selection {0, 0});
+}
+
+
+TEST_CASE("move between definitions")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"int a() { return 1; }\n"
+		"struct S { int x; };\n"
+		"int b() { return 2; }\n",
+		"cpp"
+	);
+	EditorCore core(model);
+	const size_t line1 = LineStart(*model, 1);
+	const size_t line2 = LineStart(*model, 2);
+
+	core.SetSelection({0, 0});
+	core.MoveToDefinition(true);
+	CHECK(core.GetSelection().caret == line1);
+	core.MoveToDefinition(true);
+	CHECK(core.GetSelection().caret == line2);
+	core.MoveToDefinition(true);
+	CHECK(core.GetSelection().caret == line2);
+	core.MoveToDefinition(false);
+	CHECK(core.GetSelection().caret == line1);
+	core.MoveToDefinition(false);
+	CHECK(core.GetSelection().caret == 0);
+}
+
+
+TEST_CASE("switching languages and destroying a model while parsing")
+{
+	std::string large;
+	for (int i = 0; i < 20000; i++) {
+		large += "int f" + std::to_string(i) + "(int x) { return x * 2; }\n";
+	}
+
+	for (int i = 0; i < 3; i++) {
+		BReference<TextModel> model = MakeModel(large, "cpp");
+		ModelLock lock(*model);
+		model->SetLanguage("c");
+		model->Insert(0, "// x\n");
+		model->SetLanguage("cpp");
+	}
+
+	BReference<TextModel> model = MakeParsedModel(large, "c");
+	{
+		ModelLock lock(*model);
+		model->SetLanguage(nullptr);
+		CHECK(model->LanguageName() == nullptr);
+	}
+	EditorCore core(model);
+	CHECK(core.Rows(0, 1).front().styles.empty());
+}
+
+
+} // CodeEdit

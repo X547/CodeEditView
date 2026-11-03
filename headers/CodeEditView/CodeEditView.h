@@ -10,6 +10,7 @@
 
 #include <CodeEditView/EditorSettings.h>
 #include <CodeEditView/TextModel.h>
+#include <CodeEditView/Theme.h>
 
 
 class BMessageRunner;
@@ -44,6 +45,7 @@ private:
 	std::unique_ptr<CodeEdit::InputMethodState> fInputMethod;
 	// Per code point: advance and horizontal center of the glyph's ink.
 	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
+	CodeEdit::Theme fTheme = CodeEdit::Theme::Pe();
 	CodeEditScrollView *fScrollView {};
 	CodeEdit::GutterView *fGutter {};
 
@@ -104,6 +106,8 @@ public:
 	const CodeEdit::EditorSettings &Settings() const;
 	void SetSettings(const CodeEdit::EditorSettings &settings);
 	void SetEditorFont(const BFont &font);
+	const CodeEdit::Theme &GetTheme() const {return fTheme;}
+	void SetTheme(const CodeEdit::Theme &theme);
 
 	CodeEdit::Selection GetSelection();
 	void SetSelection(const CodeEdit::Selection &selection);

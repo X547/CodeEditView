@@ -14,6 +14,7 @@
 
 #include <Locker.h>
 #include <Messenger.h>
+#include <OS.h>
 #include <Referenceable.h>
 
 #include <CodeEditView/EditRecord.h>
@@ -26,6 +27,9 @@ class BPositionIO;
 namespace CodeEdit {
 
 
+class EditorCore;
+class SyntaxState;
+class SyntaxWorker;
 class UndoStack;
 
 
@@ -89,6 +93,8 @@ struct ModelChanges {
 	// Edits are not available (log trimmed); the observer must rebuild all state.
 	bool reset {};
 	bool marksChanged {};
+	// A new syntax tree changed the highlighting.
+	bool syntaxChanged {};
 	std::vector<EditRecord> edits;
 };
 
@@ -110,6 +116,7 @@ private:
 		bool notify {};
 		uint64_t revision {};
 		uint64_t marksRevision {};
+		uint64_t syntaxRevision {};
 		bool pending {};
 	};
 
@@ -144,6 +151,14 @@ private:
 	LineEnding fLineEnding = LineEnding::LF;
 	bool fHasBom {};
 
+	std::unique_ptr<SyntaxState> fSyntax;
+	uint64_t fSyntaxRevision {};
+	std::vector<thread_id> fRetiredWorkers;
+
+	friend class EditorCore;
+	friend class SyntaxState;
+	friend class SyntaxWorker;
+
 	void AssertLocked() const;
 	void CheckRange(size_t offset, size_t length) const;
 	EditRecord ApplyTextEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
@@ -153,6 +168,10 @@ private:
 	void ResetText(std::string_view text);
 	void TrimLog();
 	std::vector<Notification> CollectNotifications();
+
+	SyntaxState *Syntax() const {return fSyntax.get();}
+	void SyntaxChanged();
+	void RetireWorkerThread(thread_id thread);
 
 public:
 	TextModel();
@@ -208,6 +227,12 @@ public:
 	void SetLineEnding(LineEnding lineEnding);
 	bool HasBom() const;
 	void SetHasBom(bool hasBom);
+
+	// Syntax highlighting. The name is one of AvailableLanguages(); nullptr or
+	// an unknown name selects plain text.
+	void SetLanguage(const char *name);
+	const char *LanguageName() const;
+	uint64_t SyntaxRevision() const;
 };
 
 

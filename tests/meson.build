@@ -7,6 +7,7 @@ codeEditTests = executable(
 		'LineLayoutTest.cpp',
 		'RopeTest.cpp',
 		'RowIndexTest.cpp',
+		'SyntaxTest.cpp',
 		'TextModelTest.cpp',
 		'UnicodeTest.cpp',
 		'VersionTest.cpp',

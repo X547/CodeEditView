@@ -14,9 +14,11 @@
 
 #include <CodeEditView/EditorSettings.h>
 #include <CodeEditView/TextModel.h>
+#include <CodeEditView/Theme.h>
 
 #include "layout/DisplayMap.h"
 #include "layout/LineLayout.h"
+#include "syntax/Highlighter.h"
 
 
 namespace CodeEdit {
@@ -89,6 +91,8 @@ struct RowData {
 	std::string text;
 	bool hasNewline {};
 	LineLayout layout;
+	// Per byte of text; empty without syntax highlighting.
+	std::vector<HighlightStyle> styles;
 };
 
 
@@ -122,6 +126,9 @@ private:
 	uint32_t fMaxColumns {};
 	DirtyRows fDirty;
 	mutable std::unordered_map<size_t, LineLayout> fLayoutCache;
+	QueryCursor fQueryCursor;
+	std::vector<Selection> fExpandHistory;
+	std::optional<Selection> fExpandedSelection;
 
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
@@ -206,6 +213,11 @@ public:
 	void SetSelection(const Selection &selection);
 	bool Undo();
 	bool Redo();
+
+	// Syntax navigation (no-ops without a syntax tree).
+	void ExpandSelection();
+	void ShrinkSelection();
+	void MoveToDefinition(bool forward);
 
 	DirtyRows TakeDirty();
 };

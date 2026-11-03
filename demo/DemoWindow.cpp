@@ -13,6 +13,7 @@
 
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/Language.h>
 
 
 DemoDocument::DemoDocument():
@@ -178,6 +179,10 @@ void DemoWindow::MessageReceived(BMessage *message)
 			BPath path(&directory);
 			path.Append(name);
 			fDocument->path = path;
+			{
+				CodeEdit::ModelLock lock(*fDocument->model);
+				fDocument->model->SetLanguage(CodeEdit::LanguageForPath(path.Path()));
+			}
 			Save();
 			break;
 		}

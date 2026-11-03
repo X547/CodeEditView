@@ -10,6 +10,8 @@
 
 #include "UndoStack.h"
 #include "support/Assert.h"
+#include "syntax/Language.h"
+#include "syntax/SyntaxState.h"
 
 
 namespace CodeEdit {
@@ -84,7 +86,20 @@ TextModel::TextModel():
 }
 
 
-TextModel::~TextModel() = default;
+// Background parsing threads may still be waiting for the lock; they quit
+// once they get it.
+TextModel::~TextModel()
+{
+	fLock.Lock();
+	fSyntax.reset();
+	const std::vector<thread_id> workers = std::move(fRetiredWorkers);
+	fLock.Unlock();
+
+	for (const thread_id thread : workers) {
+		status_t result;
+		wait_for_thread(thread, &result);
+	}
+}
 
 
 void TextModel::AssertLocked() const
@@ -173,6 +188,9 @@ EditRecord TextModel::ApplyTextEdit(size_t offset, size_t length, std::string_vi
 
 	fText.Replace(offset, length, text);
 	edit.revision = ++fRevision;
+	if (fSyntax != nullptr) {
+		fSyntax->TextEdited(edit);
+	}
 	fLog.push_back(edit);
 	TrimLog();
 	return edit;
@@ -361,6 +379,7 @@ ObserverId TextModel::AddObserver()
 	Observer &observer = fObservers[id];
 	observer.revision = fRevision;
 	observer.marksRevision = fMarksRevision;
+	observer.syntaxRevision = fSyntaxRevision;
 	return id;
 }
 
@@ -419,6 +438,7 @@ ModelChanges TextModel::Sync(ObserverId id)
 	ModelChanges changes;
 	changes.revision = fRevision;
 	changes.marksChanged = observer.marksRevision != fMarksRevision;
+	changes.syntaxChanged = observer.syntaxRevision != fSyntaxRevision;
 	if (observer.revision != fRevision) {
 		if (fLog.empty() || fLog.front().revision > observer.revision + 1) {
 			changes.reset = true;
@@ -433,6 +453,7 @@ ModelChanges TextModel::Sync(ObserverId id)
 
 	observer.revision = fRevision;
 	observer.marksRevision = fMarksRevision;
+	observer.syntaxRevision = fSyntaxRevision;
 	observer.pending = false;
 	TrimLog();
 	return changes;
@@ -460,7 +481,8 @@ std::vector<TextModel::Notification> TextModel::CollectNotifications()
 		if (!observer.notify || observer.pending) {
 			continue;
 		}
-		if (observer.revision == fRevision && observer.marksRevision == fMarksRevision) {
+		if (observer.revision == fRevision && observer.marksRevision == fMarksRevision
+			&& observer.syntaxRevision == fSyntaxRevision) {
 			continue;
 		}
 		observer.pending = true;
@@ -704,6 +726,52 @@ void TextModel::SetHasBom(bool hasBom)
 {
 	AssertLocked();
 	fHasBom = hasBom;
+}
+
+
+//#pragma mark - Syntax
+
+void TextModel::SetLanguage(const char *name)
+{
+	AssertLocked();
+	const Language *language = name != nullptr ? Language::ForName(name) : nullptr;
+	const Language *current = fSyntax != nullptr ? &fSyntax->GetLanguage() : nullptr;
+	if (language == current) {
+		return;
+	}
+	fSyntax.reset();
+	if (language != nullptr) {
+		fSyntax = std::make_unique<SyntaxState>(*this, *language);
+	}
+	SyntaxChanged();
+}
+
+
+const char *TextModel::LanguageName() const
+{
+	AssertLocked();
+	return fSyntax != nullptr ? fSyntax->GetLanguage().Name() : nullptr;
+}
+
+
+uint64_t TextModel::SyntaxRevision() const
+{
+	AssertLocked();
+	return fSyntaxRevision;
+}
+
+
+void TextModel::SyntaxChanged()
+{
+	AssertLocked();
+	fSyntaxRevision++;
+}
+
+
+void TextModel::RetireWorkerThread(thread_id thread)
+{
+	AssertLocked();
+	fRetiredWorkers.push_back(thread);
 }
 
 

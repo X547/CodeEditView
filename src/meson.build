@@ -1,3 +1,20 @@
+embedText = files('../tools/embed_text.py')
+
+highlightQueries = [
+	custom_target(
+		'c-highlights',
+		input: files('syntax/queries/c-highlights.scm'),
+		output: 'CHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kCHighlights', '@INPUT@']
+	),
+	custom_target(
+		'cpp-highlights',
+		input: files('syntax/queries/c-highlights.scm', 'syntax/queries/cpp-highlights.scm'),
+		output: 'CppHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kCppHighlights', '@INPUT@']
+	),
+]
+
 codeEditViewSources = files(
 	'Version.cpp',
 	'layout/DisplayMap.cpp',
@@ -7,6 +24,11 @@ codeEditViewSources = files(
 	'model/Rope.cpp',
 	'model/TextModel.cpp',
 	'model/UndoStack.cpp',
+	'syntax/Highlighter.cpp',
+	'syntax/Language.cpp',
+	'syntax/SyntaxState.cpp',
+	'syntax/SyntaxWorker.cpp',
+	'syntax/Theme.cpp',
 	'unicode/CharWidth.cpp',
 	'unicode/Utf8.cpp',
 	'view/CodeEditScrollView.cpp',
@@ -20,8 +42,9 @@ codeEditViewSources = files(
 codeEditViewLib = shared_library(
 	'codeeditview',
 	codeEditViewSources,
+	highlightQueries,
 	include_directories: [publicInc, privateInc],
-	dependencies: [beDep, treeSitterDep],
+	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep],
 	version: meson.project_version(),
 	install: true
 )

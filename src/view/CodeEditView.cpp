@@ -185,6 +185,15 @@ void CodeEditView::SetEditorFont(const BFont &font)
 }
 
 
+void CodeEditView::SetTheme(const CodeEdit::Theme &theme)
+{
+	fTheme = theme;
+	if (Window() != nullptr) {
+		Invalidate();
+	}
+}
+
+
 CodeEdit::Selection CodeEditView::GetSelection()
 {
 	return fCore->GetSelection();
@@ -324,13 +333,22 @@ void CodeEditView::DrawRow(
 		runPoints.clear();
 	};
 
-	SetHighColor(context.text);
+	rgb_color currentColor = context.text;
+	SetHighColor(currentColor);
 	for (const Cluster &cluster : data.layout.Clusters()) {
 		if (cluster.EndColumn() < firstColumn) {
 			continue;
 		}
 		if (cluster.column > lastColumn) {
 			break;
+		}
+		if (cluster.kind == ClusterKind::Text) {
+			const rgb_color color = data.styles.empty() ? context.text : fTheme.Color(data.styles[cluster.offset]);
+			if (color != currentColor) {
+				flush();
+				SetHighColor(color);
+				currentColor = color;
+			}
 		}
 		const float x = cluster.column * fCellWidth;
 		const float cellsWidth = cluster.width * fCellWidth;
@@ -342,8 +360,8 @@ void CodeEditView::DrawRow(
 			case ClusterKind::InvalidByte: {
 				flush();
 				SetHighColor(context.placeholder);
+				currentColor = context.placeholder;
 				DrawString(PlaceholderText(cluster).c_str(), BPoint(x, baseline));
-				SetHighColor(context.text);
 				break;
 			}
 			case ClusterKind::Text: {
@@ -722,6 +740,18 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 			fCore->SelectAll();
 			scrollToCaret = false;
 			break;
+		case EditorCommand::ExpandSelection:
+			fCore->ExpandSelection();
+			break;
+		case EditorCommand::ShrinkSelection:
+			fCore->ShrinkSelection();
+			break;
+		case EditorCommand::MoveToPreviousDefinition:
+			fCore->MoveToDefinition(false);
+			break;
+		case EditorCommand::MoveToNextDefinition:
+			fCore->MoveToDefinition(true);
+			break;
 		default:
 			break;
 	}
@@ -795,6 +825,9 @@ bool CodeEditView::SpliceInputMethod(CodeEdit::RowData &data, size_t caret)
 	}
 	if (caret < data.lineStart || caret > data.lineStart + data.text.size()) {
 		return false;
+	}
+	if (!data.styles.empty()) {
+		data.styles.insert(data.styles.begin() + (caret - data.lineStart), input.text.size(), CodeEdit::HighlightStyle::Default);
 	}
 	data.text.insert(caret - data.lineStart, input.text);
 	data.layout = CodeEdit::LineLayout(data.text, fCore->GetLayoutOptions());

@@ -3,6 +3,8 @@
 #include <algorithm>
 
 #include "WordMotion.h"
+#include "syntax/Language.h"
+#include "syntax/SyntaxState.h"
 
 
 namespace CodeEdit {
@@ -146,6 +148,9 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	}
 	if (changes.marksChanged) {
 		fDirty.marksChanged = true;
+	}
+	if (changes.syntaxChanged) {
+		fDirty.AddAll();
 	}
 	if (changes.edits.empty()) {
 		return;
@@ -412,6 +417,18 @@ std::vector<RowData> EditorCore::Rows(size_t first, size_t count)
 		data.layout = LayoutOfLine(displayRow.line);
 		rows.push_back(std::move(data));
 	}
+
+	const SyntaxState *syntax = fModel->Syntax();
+	if (rows.empty() || syntax == nullptr || syntax->Tree() == nullptr) {
+		return rows;
+	}
+	const size_t start = rows.front().lineStart;
+	std::vector<HighlightStyle> styles(rows.back().lineStart + rows.back().text.size() - start);
+	Highlight(syntax->GetLanguage(), syntax->Tree(), text, fQueryCursor, start, styles);
+	for (RowData &data : rows) {
+		const auto first = styles.begin() + (data.lineStart - start);
+		data.styles.assign(first, first + data.text.size());
+	}
 	return rows;
 }
 
@@ -557,7 +574,14 @@ static char PartnerBracket(char ch)
 }
 
 
-// TODO: skip brackets in strings and comments once syntax trees are available.
+static bool IsNodeType(TSNode node, char ch)
+{
+	return !ts_node_is_named(node) && std::string_view(ts_node_type(node)) == std::string_view(&ch, 1);
+}
+
+
+// Without a syntax tree, brackets are matched by counting bytes; with a tree,
+// only bracket tokens match, so brackets in strings and comments are ignored.
 std::optional<TextRange> EditorCore::BalancedRangeAt(size_t offset)
 {
 	ModelLock lock(*fModel);
@@ -569,6 +593,40 @@ std::optional<TextRange> EditorCore::BalancedRangeAt(size_t offset)
 	const char bracket = text.ByteAt(offset);
 	const char partner = PartnerBracket(bracket);
 	if (partner == 0) {
+		return std::nullopt;
+	}
+
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax != nullptr && syntax->Tree() != nullptr) {
+		const uint32_t start = static_cast<uint32_t>(offset);
+		const TSNode node = ts_node_descendant_for_byte_range(ts_tree_root_node(syntax->Tree()), start, start + 1);
+		if (ts_node_is_null(node) || !IsNodeType(node, bracket) || ts_node_start_byte(node) != start) {
+			return std::nullopt;
+		}
+		const TSNode parent = ts_node_parent(node);
+		if (ts_node_is_null(parent)) {
+			return std::nullopt;
+		}
+		const uint32_t childCount = ts_node_child_count(parent);
+		uint32_t index = 0;
+		while (index < childCount && !ts_node_eq(ts_node_child(parent, index), node)) {
+			index++;
+		}
+		if (IsOpeningBracket(bracket)) {
+			for (uint32_t i = index + 1; i < childCount; i++) {
+				const TSNode child = ts_node_child(parent, i);
+				if (IsNodeType(child, partner)) {
+					return TextRange {offset + 1, ts_node_start_byte(child)};
+				}
+			}
+		} else {
+			for (uint32_t i = index; i > 0; i--) {
+				const TSNode child = ts_node_child(parent, i - 1);
+				if (IsNodeType(child, partner)) {
+					return TextRange {ts_node_end_byte(child), offset};
+				}
+			}
+		}
 		return std::nullopt;
 	}
 
@@ -900,6 +958,115 @@ void EditorCore::InsertTextAt(size_t offset, std::string_view text)
 	SyncLocked();
 	fGoalColumn.reset();
 	SetSelectionLocked(ClampSelection({offset, end}));
+}
+
+
+// Candidate ranges of a node for expanding a selection: the contents between
+// its brackets (like Pe's Balance command), then the whole node.
+static std::vector<TextRange> ExpansionCandidates(TSNode node)
+{
+	std::vector<TextRange> candidates;
+	const uint32_t childCount = ts_node_child_count(node);
+	if (childCount >= 2) {
+		const TSNode first = ts_node_child(node, 0);
+		const TSNode last = ts_node_child(node, childCount - 1);
+		const std::string_view firstType = ts_node_type(first);
+		if (!ts_node_is_named(first) && firstType.size() == 1 && IsOpeningBracket(firstType[0])
+			&& IsNodeType(last, PartnerBracket(firstType[0]))) {
+			candidates.push_back({ts_node_end_byte(first), ts_node_start_byte(last)});
+		}
+	}
+	candidates.push_back({ts_node_start_byte(node), ts_node_end_byte(node)});
+	return candidates;
+}
+
+
+void EditorCore::ExpandSelection()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const size_t start = std::min(fSelection.anchor, fSelection.caret);
+	const size_t end = std::max(fSelection.anchor, fSelection.caret);
+	if (fExpandedSelection != fSelection) {
+		fExpandHistory.clear();
+	}
+
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax == nullptr || syntax->Tree() == nullptr) {
+		return;
+	}
+	TextRange target {0, fModel->Text().Length()};
+	TSNode node = ts_node_descendant_for_byte_range(
+		ts_tree_root_node(syntax->Tree()),
+		static_cast<uint32_t>(start),
+		static_cast<uint32_t>(end)
+	);
+	bool found = false;
+	while (!ts_node_is_null(node) && !found) {
+		for (const TextRange &candidate : ExpansionCandidates(node)) {
+			if (candidate.start <= start && candidate.end >= end && candidate.end - candidate.start > end - start) {
+				target = candidate;
+				found = true;
+				break;
+			}
+		}
+		node = ts_node_parent(node);
+	}
+	if (target.start == start && target.end == end) {
+		return;
+	}
+
+	fExpandHistory.push_back(fSelection);
+	fGoalColumn.reset();
+	fModel->BreakUndoCoalescing();
+	SetSelectionLocked(ClampSelection({target.start, target.end}));
+	fExpandedSelection = fSelection;
+}
+
+
+void EditorCore::ShrinkSelection()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (fExpandHistory.empty() || fExpandedSelection != fSelection) {
+		return;
+	}
+	const Selection previous = fExpandHistory.back();
+	fExpandHistory.pop_back();
+	fGoalColumn.reset();
+	SetSelectionLocked(ClampSelection(previous));
+	fExpandedSelection = fExpandHistory.empty() ? std::nullopt : std::optional<Selection>(fSelection);
+}
+
+
+void EditorCore::MoveToDefinition(bool forward)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax == nullptr || syntax->Tree() == nullptr) {
+		return;
+	}
+	const std::vector<size_t> starts = DefinitionStarts(syntax->GetLanguage(), syntax->Tree(), fQueryCursor);
+	const size_t caret = fSelection.caret;
+	std::optional<size_t> target;
+	if (forward) {
+		const auto next = std::upper_bound(starts.begin(), starts.end(), caret);
+		if (next != starts.end()) {
+			target = *next;
+		}
+	} else {
+		const auto next = std::lower_bound(starts.begin(), starts.end(), caret);
+		if (next != starts.begin()) {
+			target = *(next - 1);
+		}
+	}
+	if (!target.has_value()) {
+		return;
+	}
+	fGoalColumn.reset();
+	fModel->BreakUndoCoalescing();
+	SetSelectionLocked(ClampSelection({*target, *target}));
 }
 
 

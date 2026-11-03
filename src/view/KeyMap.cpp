@@ -63,6 +63,11 @@ KeyMap KeyMap::Default()
 		{'z',           B_COMMAND_KEY,  EditorCommand::Undo},
 		{'z',           B_COMMAND_KEY | B_SHIFT_KEY, EditorCommand::Redo},
 		{'a',           B_COMMAND_KEY,  EditorCommand::SelectAll},
+		// Pe binds Balance to Cmd+B; here it expands by syntax node.
+		{'b',           B_COMMAND_KEY,  EditorCommand::ExpandSelection},
+		{'b',           B_COMMAND_KEY | B_SHIFT_KEY, EditorCommand::ShrinkSelection},
+		{B_UP_ARROW,    B_COMMAND_KEY,  EditorCommand::MoveToPreviousDefinition},
+		{B_DOWN_ARROW,  B_COMMAND_KEY,  EditorCommand::MoveToNextDefinition},
 	};
 	for (const KeyBinding &binding : kOthers) {
 		keyMap.Add(binding);

@@ -34,6 +34,16 @@ write a `BPositionIO`; line endings and a UTF-8 BOM are preserved.
 The view handles `B_CUT`, `B_COPY`, `B_PASTE`, `B_SELECT_ALL`, `B_UNDO` and
 `B_REDO` messages, so menu items can target it directly.
 
+Syntax highlighting is enabled per document; C and C++ are built in:
+
+```cpp
+CodeEdit::ModelLock lock(*model);
+model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp" or nullptr
+```
+
+Parsing runs incrementally in a background thread. Colors come from a
+`CodeEdit::Theme` (`CodeEditView::SetTheme()`); the default follows Pe.
+
 
 ## Keyboard
 
@@ -51,11 +61,18 @@ Alt is the Command key, Win is the Option key.
 | Shift + any movement | Extend the selection |
 | Ctrl + Backspace / Delete | Delete to line start / end |
 | Alt + Z, Alt + Shift + Z | Undo, redo |
+| Alt + B, Alt + Shift + B | Expand / shrink selection by syntax (inside brackets first) |
+| Alt + Up/Down | Previous / next function or type definition |
+
+Mouse: double click selects a word, or the contents of a bracket pair when
+clicking a bracket; triple click selects a line.
 
 
 ## Building
 
-Requirements: `meson`, `ninja`, `tree_sitter_devel`, `catch2_devel` (tests).
+Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel`, `catch2_devel`
+(tests). The C and C++ grammars are Meson wraps; their release tarballs are
+downloaded on the first `meson setup`.
 
 ```sh
 meson setup build

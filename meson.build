@@ -15,6 +15,12 @@ cpp = meson.get_compiler('cpp')
 
 beDep = cpp.find_library('be')
 treeSitterDep = dependency('tree-sitter', version: '>= 0.25')
+python = find_program('python3')
+
+# The generated grammar parsers are large; build them without debug info.
+grammarOptions = ['debug=false', 'optimization=2', 'warning_level=0']
+treeSitterCDep = subproject('tree-sitter-c', default_options: grammarOptions).get_variable('tree_sitter_c_dep')
+treeSitterCppDep = subproject('tree-sitter-cpp', default_options: grammarOptions).get_variable('tree_sitter_cpp_dep')
 
 publicInc = include_directories('headers')
 privateInc = include_directories('src')

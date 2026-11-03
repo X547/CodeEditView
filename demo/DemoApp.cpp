@@ -9,6 +9,7 @@
 #include <FilePanel.h>
 #include <Path.h>
 
+#include <CodeEditView/Language.h>
 #include <CodeEditView/TextModel.h>
 
 #include "DemoWindow.h"
@@ -56,14 +57,15 @@ void DemoApp::OpenDocument(const entry_ref &ref)
 	document->path.SetTo(&ref);
 
 	BFile file(&ref, B_READ_ONLY);
-	if (file.InitCheck() == B_OK) {
-		try {
-			CodeEdit::ModelLock lock(*document->model);
+	try {
+		CodeEdit::ModelLock lock(*document->model);
+		if (file.InitCheck() == B_OK) {
 			document->model->Load(file);
-		} catch (const std::exception &e) {
-			ShowError(e.what());
-			return;
 		}
+		document->model->SetLanguage(CodeEdit::LanguageForPath(ref.name));
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+		return;
 	}
 	(new DemoWindow(document.Get()))->Show();
 	fHadWindow = true;

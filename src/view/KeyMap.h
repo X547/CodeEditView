@@ -39,6 +39,10 @@ enum class EditorCommand {
 	Undo,
 	Redo,
 	SelectAll,
+	ExpandSelection,
+	ShrinkSelection,
+	MoveToPreviousDefinition,
+	MoveToNextDefinition,
 };
 
 

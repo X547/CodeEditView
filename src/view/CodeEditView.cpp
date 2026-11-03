@@ -7,7 +7,10 @@
 #include <vector>
 
 #include <Clipboard.h>
+#include <Cursor.h>
+#include <MenuItem.h>
 #include <MessageRunner.h>
+#include <PopUpMenu.h>
 #include <ScrollBar.h>
 #include <Window.h>
 
@@ -21,8 +24,23 @@
 
 
 static constexpr uint32 kMsgCaretBlink = 'CEcb';
+static constexpr uint32 kMsgAutoScroll = 'CEas';
+static constexpr uint32 kMsgDropMove = 'CEdm';
+static constexpr uint32 kMsgDropCopy = 'CEdc';
+
 static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
+
+// Auto-scrolling runs at about 60 Hz; the scroll distance of a tick depends on
+// the elapsed time, so late ticks do not slow it down.
+static constexpr bigtime_t kAutoScrollInterval = 16000;
+static constexpr bigtime_t kMaxAutoScrollStep = 100000;
+static constexpr float kAutoScrollLinearSpeed = 12;
+static constexpr float kAutoScrollQuadraticSpeed = 0.25f;
+static constexpr float kMaxAutoScrollSpeed = 20000;
+
+// Pe starts a drag after the pointer moved more than 2 pixels.
+static constexpr float kDragThreshold = 2;
 
 
 namespace CodeEdit {
@@ -39,6 +57,33 @@ struct DrawContext {
 	size_t caretRow {};
 	uint32_t caretColumn {};
 	bool drawCaret {};
+	std::optional<CaretPosition> dropCaret;
+};
+
+
+enum class TrackMode {
+	None,
+	Select,
+	DragPending,
+};
+
+
+struct MouseState {
+	TrackMode mode = TrackMode::None;
+	SelectionUnit unit = SelectionUnit::Character;
+	TextRange anchor;
+	uint32 buttons {};
+	BPoint downPoint;
+	// Pointer position relative to the top left of the bounds; stays valid
+	// while the view scrolls under a stationary pointer.
+	BPoint trackPoint;
+	size_t pendingOffset {};
+	uint32 dragButtons {};
+	std::optional<size_t> dropOffset;
+	std::unique_ptr<BMessageRunner> autoScrollRunner;
+	bigtime_t lastAutoScroll {};
+	BPoint scrollRemainder;
+	std::optional<bool> arrowCursor;
 };
 
 
@@ -65,7 +110,8 @@ static BReference<TextModel> ModelReference(TextModel *model)
 CodeEditView::CodeEditView(const char *name, CodeEdit::TextModel *model):
 	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE),
 	fCore(std::make_unique<CodeEdit::EditorCore>(CodeEdit::ModelReference(model))),
-	fKeyMap(std::make_unique<CodeEdit::KeyMap>(CodeEdit::KeyMap::Default()))
+	fKeyMap(std::make_unique<CodeEdit::KeyMap>(CodeEdit::KeyMap::Default())),
+	fMouse(std::make_unique<CodeEdit::MouseState>())
 {
 	SetViewColor(B_TRANSPARENT_COLOR);
 	SetEditorFont(*be_fixed_font);
@@ -182,6 +228,9 @@ void CodeEditView::Draw(BRect updateRect)
 	context.caretRow = caret.row;
 	context.caretColumn = caret.column;
 	context.drawCaret = isActive && fCaretVisible && context.selectionStart == context.selectionEnd;
+	if (fMouse->dropOffset.has_value()) {
+		context.dropCaret = fCore->PositionOfOffset(*fMouse->dropOffset);
+	}
 
 	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / fLineHeight)));
 	const size_t lastRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.bottom / fLineHeight)));
@@ -300,11 +349,16 @@ void CodeEditView::DrawRow(
 	}
 	flush();
 
+	const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
 	if (isCaretRow && context.drawCaret) {
-		const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
 		const float x = context.caretColumn * fCellWidth;
 		SetHighColor(context.text);
 		FillRect(BRect(x, top, x + caretWidth - 1, bottom));
+	}
+	if (context.dropCaret.has_value() && context.dropCaret->row == row) {
+		const float x = context.dropCaret->column * fCellWidth;
+		SetHighColor(ui_color(B_KEYBOARD_NAVIGATION_COLOR));
+		FillRect(BRect(x, top, x + 2 * caretWidth - 1, bottom));
 	}
 }
 
@@ -670,6 +724,7 @@ void CodeEditView::AttachedToWindow()
 void CodeEditView::DetachedFromWindow()
 {
 	fCaretRunner.reset();
+	StopAutoScroll();
 	fCore->Detach();
 	BView::DetachedFromWindow();
 }
@@ -731,15 +786,404 @@ size_t CodeEditView::OffsetAtPoint(BPoint where)
 }
 
 
+//#pragma mark - Mouse
+
+BPoint CodeEditView::ClampToBounds(BPoint where) const
+{
+	const BRect bounds = Bounds();
+	return BPoint(
+		std::clamp(where.x, bounds.left, bounds.right),
+		std::clamp(where.y, bounds.top, bounds.bottom)
+	);
+}
+
+
+bool CodeEditView::IsPointInSelection(BPoint where)
+{
+	const CodeEdit::Selection selection = fCore->GetSelection();
+	const size_t start = std::min(selection.anchor, selection.caret);
+	const size_t end = std::max(selection.anchor, selection.caret);
+	if (start == end || where.y < 0) {
+		return false;
+	}
+	const size_t row = static_cast<size_t>(floorf(where.y / fLineHeight));
+	if (row >= fCore->RowCount()) {
+		return false;
+	}
+	// Past the line end the newline is hit, which is selected when it is
+	// inside the range.
+	const CodeEdit::CellHit hit = fCore->HitTestCell(row, where.x / fCellWidth);
+	return hit.offset >= start && hit.offset < end;
+}
+
+
+void CodeEditView::UpdateCursor(BPoint where)
+{
+	static const BCursor sIBeamCursor(B_CURSOR_ID_I_BEAM);
+	static const BCursor sArrowCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
+
+	const bool arrow = IsPointInSelection(where);
+	if (fMouse->arrowCursor == arrow) {
+		return;
+	}
+	fMouse->arrowCursor = arrow;
+	SetViewCursor(arrow ? &sArrowCursor : &sIBeamCursor);
+}
+
+
 void CodeEditView::MouseDown(BPoint where)
 {
+	using namespace CodeEdit;
+
 	MakeFocus(true);
 	BMessage *message = Window()->CurrentMessage();
 	const uint32 modifiers = message != nullptr ? message->GetInt32("modifiers", 0) : ::modifiers();
-	const size_t offset = OffsetAtPoint(where);
-	const CodeEdit::Selection selection = fCore->GetSelection();
+	const uint32 buttons = message != nullptr
+		? message->GetInt32("buttons", B_PRIMARY_MOUSE_BUTTON)
+		: B_PRIMARY_MOUSE_BUTTON;
+	const int32 clicks = message != nullptr ? message->GetInt32("clicks", 1) : 1;
 	const bool extend = (modifiers & B_SHIFT_KEY) != 0;
-	fCore->SetSelection({extend ? selection.anchor : offset, offset});
+	const bool primary = (buttons & B_PRIMARY_MOUSE_BUTTON) != 0;
+
+	fMouse->buttons = buttons;
+	fMouse->downPoint = where;
+	fMouse->trackPoint = where - Bounds().LeftTop();
+	const size_t offset = OffsetAtPoint(where);
+
+	// Pressing inside the selection may start a drag, with any button (Pe).
+	if (IsPointInSelection(where) && !extend && (clicks == 1 || !primary)) {
+		fMouse->mode = TrackMode::DragPending;
+		fMouse->pendingOffset = offset;
+		SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS);
+		return;
+	}
+	if (!primary) {
+		BView::MouseDown(where);
+		return;
+	}
+
+	TextRange range {offset, offset};
+	SelectionUnit unit = SelectionUnit::Character;
+	if (extend) {
+		const Selection selection = fCore->GetSelection();
+		range = {selection.anchor, selection.anchor};
+		fCore->ExtendSelection(range, offset, unit);
+	} else if (clicks == 2) {
+		const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fLineHeight)));
+		const CellHit hit = fCore->HitTestCell(row, where.x / fCellWidth);
+		const std::optional<TextRange> balanced = hit.pastLineEnd
+			? std::nullopt
+			: fCore->BalancedRangeAt(hit.offset);
+		if (balanced.has_value()) {
+			// Pe: selecting the contents of a bracket pair does not track.
+			fCore->SetSelection({balanced->start, balanced->end});
+			fMouse->mode = TrackMode::None;
+			ApplyDirty();
+			RestartCaretBlink();
+			return;
+		}
+		unit = SelectionUnit::Word;
+		range = hit.pastLineEnd ? TextRange {hit.offset, hit.offset} : fCore->UnitRangeAt(hit.offset, unit);
+		fCore->SetSelection({range.start, range.end});
+	} else if (clicks >= 3) {
+		unit = SelectionUnit::Line;
+		range = fCore->UnitRangeAt(offset, unit);
+		fCore->SetSelection({range.start, range.end});
+	} else {
+		fCore->SetSelection({offset, offset});
+	}
+
+	fMouse->mode = TrackMode::Select;
+	fMouse->unit = unit;
+	fMouse->anchor = range;
+	SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS | B_NO_POINTER_HISTORY);
+	ApplyDirty();
+	RestartCaretBlink();
+}
+
+
+void CodeEditView::MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage)
+{
+	using namespace CodeEdit;
+
+	if (dragMessage != nullptr) {
+		if (dragMessage->HasData("text/plain", B_MIME_TYPE)) {
+			HandleDragOver(where, transit);
+		}
+		return;
+	}
+
+	switch (fMouse->mode) {
+		case TrackMode::DragPending: {
+			const BPoint delta = where - fMouse->downPoint;
+			if (fabsf(delta.x) > kDragThreshold || fabsf(delta.y) > kDragThreshold) {
+				StartDrag();
+			}
+			break;
+		}
+		case TrackMode::Select:
+			fMouse->trackPoint = where - Bounds().LeftTop();
+			TrackSelection(where);
+			UpdateAutoScroll(where);
+			break;
+		default:
+			if (transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW) {
+				fMouse->arrowCursor.reset();
+			} else {
+				UpdateCursor(where);
+			}
+			break;
+	}
+}
+
+
+void CodeEditView::MouseUp(BPoint where)
+{
+	using namespace CodeEdit;
+
+	// A click inside the selection without dragging places the caret.
+	if (fMouse->mode == TrackMode::DragPending && (fMouse->buttons & B_PRIMARY_MOUSE_BUTTON) != 0) {
+		fCore->SetSelection({fMouse->pendingOffset, fMouse->pendingOffset});
+		ApplyDirty();
+	}
+	fMouse->mode = TrackMode::None;
+	StopAutoScroll();
+	fMouse->arrowCursor.reset();
+	UpdateCursor(where);
+	RestartCaretBlink();
+}
+
+
+void CodeEditView::TrackSelection(BPoint where)
+{
+	const size_t offset = OffsetAtPoint(ClampToBounds(where));
+	fCore->ExtendSelection(fMouse->anchor, offset, fMouse->unit);
+	ApplyDirty();
+	fCaretVisible = true;
+}
+
+
+// How hard the pointer pushes for auto-scrolling: while selecting, its
+// distance outside the bounds; while dragging over the view, its depth into
+// the edge zone.
+BPoint CodeEditView::AutoScrollPressure(BPoint where) const
+{
+	const BRect bounds = Bounds();
+	BRect inner = bounds;
+	if (fMouse->dropOffset.has_value()) {
+		inner.InsetBy(
+			std::min(2 * fCellWidth, bounds.Width() / 4),
+			std::min(1.5f * fLineHeight, bounds.Height() / 4)
+		);
+	}
+
+	BPoint pressure(0, 0);
+	if (where.x < inner.left) {
+		pressure.x = where.x - inner.left;
+	} else if (where.x > inner.right) {
+		pressure.x = where.x - inner.right;
+	}
+	if (where.y < inner.top) {
+		pressure.y = where.y - inner.top;
+	} else if (where.y > inner.bottom) {
+		pressure.y = where.y - inner.bottom;
+	}
+	return pressure;
+}
+
+
+void CodeEditView::UpdateAutoScroll(BPoint where)
+{
+	const BPoint pressure = AutoScrollPressure(where);
+	if (pressure.x == 0 && pressure.y == 0) {
+		StopAutoScroll();
+		return;
+	}
+	if (fMouse->autoScrollRunner != nullptr) {
+		return;
+	}
+	fMouse->lastAutoScroll = system_time();
+	fMouse->scrollRemainder = BPoint(0, 0);
+	BMessage message(kMsgAutoScroll);
+	fMouse->autoScrollRunner = std::make_unique<BMessageRunner>(BMessenger(this), &message, kAutoScrollInterval);
+}
+
+
+void CodeEditView::StopAutoScroll()
+{
+	fMouse->autoScrollRunner.reset();
+}
+
+
+// Pixels per second for a pressure in pixels.
+static float AutoScrollSpeed(float pressure)
+{
+	const float distance = fabsf(pressure);
+	const float speed = std::min(
+		kMaxAutoScrollSpeed,
+		kAutoScrollLinearSpeed * distance + kAutoScrollQuadraticSpeed * distance * distance
+	);
+	return pressure < 0 ? -speed : speed;
+}
+
+
+void CodeEditView::AutoScrollTick()
+{
+	using namespace CodeEdit;
+
+	const bool selecting = fMouse->mode == TrackMode::Select;
+	if (!selecting && !fMouse->dropOffset.has_value()) {
+		StopAutoScroll();
+		return;
+	}
+
+	const bigtime_t now = system_time();
+	const float seconds = std::min(now - fMouse->lastAutoScroll, kMaxAutoScrollStep) / 1000000.0f;
+	fMouse->lastAutoScroll = now;
+
+	const BRect bounds = Bounds();
+	const BPoint pressure = AutoScrollPressure(bounds.LeftTop() + fMouse->trackPoint);
+	BPoint &remainder = fMouse->scrollRemainder;
+	remainder.x += AutoScrollSpeed(pressure.x) * seconds;
+	remainder.y += AutoScrollSpeed(pressure.y) * seconds;
+	const float dx = truncf(remainder.x);
+	const float dy = truncf(remainder.y);
+	remainder.x -= dx;
+	remainder.y -= dy;
+	if (dx != 0 || dy != 0) {
+		ScrollToClamped(bounds.left + dx, bounds.top + dy);
+	}
+
+	const BPoint where = Bounds().LeftTop() + fMouse->trackPoint;
+	if (selecting) {
+		TrackSelection(where);
+	} else {
+		SetDropOffset(OffsetAtPoint(ClampToBounds(where)));
+	}
+}
+
+
+//#pragma mark - Drag and drop
+
+BRect CodeEditView::SelectionFrame()
+{
+	const CodeEdit::Selection selection = fCore->GetSelection();
+	const size_t startRow = fCore->PositionOfOffset(std::min(selection.anchor, selection.caret)).row;
+	const size_t endRow = fCore->PositionOfOffset(std::max(selection.anchor, selection.caret)).row;
+	const BRect bounds = Bounds();
+	BRect frame(bounds.left, startRow * fLineHeight, bounds.right, (endRow + 1) * fLineHeight - 1);
+	frame = frame & bounds;
+	if (!frame.IsValid()) {
+		frame = BRect(fMouse->downPoint, fMouse->downPoint).InsetByCopy(-4, -4);
+	}
+	return frame;
+}
+
+
+void CodeEditView::StartDrag()
+{
+	using namespace CodeEdit;
+
+	fMouse->mode = TrackMode::None;
+	StopAutoScroll();
+	const std::string text = fCore->SelectedText();
+	if (text.empty()) {
+		return;
+	}
+
+	BMessage drag(B_MIME_DATA);
+	drag.AddData("text/plain", B_MIME_TYPE, text.data(), text.size());
+	drag.AddPointer("be:originator", this);
+	drag.AddString("be:clip_name", "Text snippet");
+	fMouse->dragButtons = fMouse->buttons;
+	fMouse->arrowCursor.reset();
+	SetViewCursor(B_CURSOR_SYSTEM_DEFAULT);
+	DragMessage(&drag, SelectionFrame());
+}
+
+
+void CodeEditView::SetDropOffset(std::optional<size_t> offset)
+{
+	if (offset == fMouse->dropOffset) {
+		return;
+	}
+	auto invalidate = [this](size_t dropOffset) {
+		const CodeEdit::CaretPosition position = fCore->PositionOfOffset(dropOffset);
+		const float x = position.column * fCellWidth;
+		const float top = position.row * fLineHeight;
+		Invalidate(BRect(x - 1, top, x + fLineHeight / 4 + 1, top + fLineHeight - 1));
+	};
+	if (fMouse->dropOffset.has_value()) {
+		invalidate(*fMouse->dropOffset);
+	}
+	fMouse->dropOffset = offset;
+	if (offset.has_value()) {
+		invalidate(*offset);
+	}
+}
+
+
+void CodeEditView::HandleDragOver(BPoint where, uint32 transit)
+{
+	if (transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW) {
+		SetDropOffset(std::nullopt);
+		StopAutoScroll();
+		return;
+	}
+	fMouse->trackPoint = where - Bounds().LeftTop();
+	SetDropOffset(OffsetAtPoint(where));
+	UpdateAutoScroll(where);
+}
+
+
+void CodeEditView::HandleDrop(BMessage *message)
+{
+	using namespace CodeEdit;
+
+	SetDropOffset(std::nullopt);
+	StopAutoScroll();
+
+	const void *data = nullptr;
+	ssize_t size = 0;
+	if (message->FindData("text/plain", B_MIME_TYPE, &data, &size) != B_OK) {
+		return;
+	}
+	const std::string text(static_cast<const char*>(data), size);
+	const size_t target = OffsetAtPoint(ConvertFromScreen(message->DropPoint()));
+
+	void *originator = nullptr;
+	message->FindPointer("be:originator", &originator);
+	const bool internal = originator == this && !message->IsSourceRemote();
+	const Selection selection = fCore->GetSelection();
+	const TextRange source {
+		std::min(selection.anchor, selection.caret),
+		std::max(selection.anchor, selection.caret)
+	};
+
+	if (internal && target >= source.start && target <= source.end) {
+		return;
+	}
+	if (internal && (fMouse->dragButtons & B_SECONDARY_MOUSE_BUTTON) != 0) {
+		// Pe: a drag with the secondary button asks whether to move or copy.
+		BPopUpMenu *menu = new BPopUpMenu("drop", false, false);
+		for (const uint32 what : {kMsgDropMove, kMsgDropCopy}) {
+			BMessage *itemMessage = new BMessage(what);
+			itemMessage->AddUInt64("offset", target);
+			itemMessage->AddData("text", B_MIME_TYPE, text.data(), text.size());
+			menu->AddItem(new BMenuItem(what == kMsgDropMove ? "Move" : "Copy", itemMessage));
+		}
+		menu->SetTargetForItems(this);
+		menu->SetAsyncAutoDestruct(true);
+		menu->Go(message->DropPoint(), true, true, true);
+		return;
+	}
+
+	// Within the view a drag moves the text, the tertiary button copies (Pe).
+	if (internal && (fMouse->dragButtons & B_TERTIARY_MOUSE_BUTTON) == 0) {
+		fCore->MoveText(source, target);
+	} else {
+		fCore->InsertTextAt(target, text);
+	}
 	ApplyDirty();
 	RestartCaretBlink();
 }
@@ -763,7 +1207,34 @@ void CodeEditView::WindowActivated(bool active)
 
 void CodeEditView::MessageReceived(BMessage *message)
 {
+	if (message->WasDropped() && message->HasData("text/plain", B_MIME_TYPE)) {
+		HandleDrop(message);
+		return;
+	}
 	switch (message->what) {
+		case kMsgAutoScroll:
+			AutoScrollTick();
+			break;
+		case kMsgDropMove:
+		case kMsgDropCopy: {
+			const size_t offset = message->GetUInt64("offset", 0);
+			if (message->what == kMsgDropMove) {
+				const CodeEdit::Selection selection = fCore->GetSelection();
+				fCore->MoveText(
+					{std::min(selection.anchor, selection.caret), std::max(selection.anchor, selection.caret)},
+					offset
+				);
+			} else {
+				const void *data = nullptr;
+				ssize_t size = 0;
+				if (message->FindData("text", B_MIME_TYPE, &data, &size) == B_OK) {
+					fCore->InsertTextAt(offset, std::string_view(static_cast<const char*>(data), size));
+				}
+			}
+			ApplyDirty();
+			RestartCaretBlink();
+			break;
+		}
 		case CodeEdit::kMsgModelChanged:
 			fCore->Sync();
 			ApplyDirty();

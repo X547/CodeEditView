@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -22,6 +23,7 @@ class EditorCore;
 class GutterView;
 class KeyMap;
 struct DrawContext;
+struct MouseState;
 struct PageInfo;
 struct RowData;
 enum class EditorCommand;
@@ -37,6 +39,7 @@ private:
 	std::unique_ptr<CodeEdit::EditorCore> fCore;
 	std::unique_ptr<CodeEdit::KeyMap> fKeyMap;
 	std::unique_ptr<BMessageRunner> fCaretRunner;
+	std::unique_ptr<CodeEdit::MouseState> fMouse;
 	// Per code point: advance and horizontal center of the glyph's ink.
 	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
 	CodeEditScrollView *fScrollView {};
@@ -68,6 +71,20 @@ private:
 	void Cut();
 	void Paste();
 
+	BPoint ClampToBounds(BPoint where) const;
+	bool IsPointInSelection(BPoint where);
+	void UpdateCursor(BPoint where);
+	void TrackSelection(BPoint where);
+	void UpdateAutoScroll(BPoint where);
+	void StopAutoScroll();
+	BPoint AutoScrollPressure(BPoint where) const;
+	void AutoScrollTick();
+	void StartDrag();
+	BRect SelectionFrame();
+	void SetDropOffset(std::optional<size_t> offset);
+	void HandleDragOver(BPoint where, uint32 transit);
+	void HandleDrop(BMessage *message);
+
 public:
 	explicit CodeEditView(const char *name, CodeEdit::TextModel *model = nullptr);
 	~CodeEditView() override;
@@ -91,6 +108,8 @@ public:
 	void FrameResized(float width, float height) override;
 	void KeyDown(const char *bytes, int32 numBytes) override;
 	void MouseDown(BPoint where) override;
+	void MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage) override;
+	void MouseUp(BPoint where) override;
 	void MakeFocus(bool focus = true) override;
 	void WindowActivated(bool active) override;
 	void MessageReceived(BMessage *message) override;

@@ -48,6 +48,28 @@ enum class Deletion {
 };
 
 
+enum class SelectionUnit {
+	Character,
+	Word,
+	Line,
+};
+
+
+struct TextRange {
+	size_t start {};
+	size_t end {};
+
+	bool operator==(const TextRange &other) const = default;
+};
+
+
+// Cell under a point: the cluster start, or the line end past the last cluster.
+struct CellHit {
+	size_t offset {};
+	bool pastLineEnd {};
+};
+
+
 struct PageInfo {
 	// First fully visible row and the number of fully visible rows.
 	size_t topRow {};
@@ -150,7 +172,21 @@ public:
 	CaretPosition PositionOfOffset(size_t offset);
 	size_t OffsetAt(size_t row, float column);
 	size_t RowStartOffset(size_t row);
+	CellHit HitTestCell(size_t row, float column);
 	std::string SelectedText();
+
+	// Mouse selection. For words, offset is the start of the clicked cluster:
+	// a word character selects its word, blanks select the blank run, other
+	// characters select themselves.
+	TextRange UnitRangeAt(size_t offset, SelectionUnit unit);
+	// Contents between a bracket at offset and its partner.
+	std::optional<TextRange> BalancedRangeAt(size_t offset);
+	// Selects from the anchor range to the unit containing offset.
+	void ExtendSelection(const TextRange &anchor, size_t offset, SelectionUnit unit);
+
+	// Drag and drop; both select the inserted text.
+	void MoveText(const TextRange &source, size_t target);
+	void InsertTextAt(size_t offset, std::string_view text);
 
 	// Offset that follows edits like text before it; used to keep the scroll
 	// position stable when other views edit above it.

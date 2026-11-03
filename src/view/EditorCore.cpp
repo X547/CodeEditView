@@ -464,6 +464,175 @@ std::string EditorCore::SelectedText()
 }
 
 
+CellHit EditorCore::HitTestCell(size_t row, float column)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const DisplayRow displayRow = fDisplayMap.RowAt(std::min(row, fDisplayMap.RowCount() - 1));
+	const size_t lineStart = fModel->Text().LineStart(displayRow.line);
+	const LineLayout &layout = LayoutOfLine(displayRow.line);
+	const size_t index = layout.ClusterAtColumn(static_cast<uint32_t>(std::max(0.0f, column)));
+	if (index == layout.Clusters().size()) {
+		return {lineStart + layout.Length(), true};
+	}
+	return {lineStart + layout.Clusters()[index].offset, false};
+}
+
+
+TextRange EditorCore::UnitRangeAt(size_t offset, SelectionUnit unit)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	offset = std::min(offset, text.Length());
+	switch (unit) {
+		case SelectionUnit::Word: {
+			if (offset == text.Length() || text.ByteAt(offset) == '\n') {
+				return {offset, offset};
+			}
+			auto isBlank = [&text](size_t pos) {
+				const char ch = text.ByteAt(pos);
+				return ch == ' ' || ch == '\t';
+			};
+			if (isBlank(offset)) {
+				size_t start = offset;
+				size_t end = offset + 1;
+				while (start > 0 && isBlank(start - 1)) {
+					start--;
+				}
+				while (end < text.Length() && isBlank(end)) {
+					end++;
+				}
+				return {start, end};
+			}
+			const size_t next = NextBoundary(offset);
+			const size_t start = FindWordBoundary(text, next, WordDirection::Backward, false, false);
+			const size_t end = FindWordBoundary(text, offset, WordDirection::Forward, false, false);
+			if (start > offset || end < next) {
+				return {offset, next};
+			}
+			return {SnapToBoundary(start), SnapToBoundary(end)};
+		}
+		case SelectionUnit::Line: {
+			const size_t line = text.LineOfOffset(offset);
+			const size_t end = line < text.NewlineCount() ? text.LineStart(line + 1) : text.Length();
+			return {text.LineStart(line), end};
+		}
+		default:
+			break;
+	}
+	return {offset, offset};
+}
+
+
+static bool IsOpeningBracket(char ch)
+{
+	return ch == '(' || ch == '[' || ch == '{' || ch == '<';
+}
+
+
+static char PartnerBracket(char ch)
+{
+	switch (ch) {
+		case '(':
+			return ')';
+		case '[':
+			return ']';
+		case '{':
+			return '}';
+		case '<':
+			return '>';
+		case ')':
+			return '(';
+		case ']':
+			return '[';
+		case '}':
+			return '{';
+		case '>':
+			return '<';
+		default:
+			break;
+	}
+	return 0;
+}
+
+
+// TODO: skip brackets in strings and comments once syntax trees are available.
+std::optional<TextRange> EditorCore::BalancedRangeAt(size_t offset)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	if (offset >= text.Length()) {
+		return std::nullopt;
+	}
+	const char bracket = text.ByteAt(offset);
+	const char partner = PartnerBracket(bracket);
+	if (partner == 0) {
+		return std::nullopt;
+	}
+
+	int depth = 0;
+	if (IsOpeningBracket(bracket)) {
+		for (size_t pos = offset + 1; pos < text.Length(); pos++) {
+			const char ch = text.ByteAt(pos);
+			if (ch == bracket) {
+				depth++;
+			} else if (ch == partner) {
+				if (depth == 0) {
+					return TextRange {offset + 1, pos};
+				}
+				depth--;
+			}
+		}
+		return std::nullopt;
+	}
+	for (size_t pos = offset; pos > 0; pos--) {
+		const char ch = text.ByteAt(pos - 1);
+		if (ch == bracket) {
+			depth++;
+		} else if (ch == partner) {
+			if (depth == 0) {
+				return TextRange {pos, offset};
+			}
+			depth--;
+		}
+	}
+	return std::nullopt;
+}
+
+
+void EditorCore::ExtendSelection(const TextRange &anchor, size_t offset, SelectionUnit unit)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	offset = std::min(offset, text.Length());
+
+	Selection selection {anchor.start, anchor.end};
+	if (offset < anchor.start) {
+		size_t caret = offset;
+		if (unit == SelectionUnit::Word) {
+			caret = FindWordBoundary(text, offset, WordDirection::Backward, false, false);
+		} else if (unit == SelectionUnit::Line) {
+			caret = text.LineStart(text.LineOfOffset(offset));
+		}
+		selection = {anchor.end, caret};
+	} else if (offset > anchor.end) {
+		size_t caret = offset;
+		if (unit == SelectionUnit::Word) {
+			caret = FindWordBoundary(text, offset, WordDirection::Forward, false, false);
+		} else if (unit == SelectionUnit::Line) {
+			const size_t line = text.LineOfOffset(offset);
+			caret = line < text.NewlineCount() ? text.LineStart(line + 1) : text.Length();
+		}
+		selection = {anchor.start, caret};
+	}
+	fGoalColumn.reset();
+	SetSelectionLocked(ClampSelection(selection));
+}
+
+
 //#pragma mark - Commands
 
 void EditorCore::Move(Movement movement, bool extend, const PageInfo &page)
@@ -687,6 +856,50 @@ void EditorCore::DeleteSelection()
 		return;
 	}
 	ReplaceRange(from, to, {}, EditKind::Other);
+}
+
+
+void EditorCore::MoveText(const TextRange &source, size_t target)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	if (source.end > text.Length() || source.start >= source.end || target > text.Length()) {
+		return;
+	}
+	if (target >= source.start && target <= source.end) {
+		return;
+	}
+	const size_t length = source.end - source.start;
+	const std::string moved = text.Substring(source.start, length);
+	const size_t insertAt = target > source.end ? target - length : target;
+
+	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
+	fModel->Erase(source.start, length);
+	fModel->Insert(insertAt, moved);
+	fModel->EndGroup({insertAt, insertAt + length});
+	SyncLocked();
+	fGoalColumn.reset();
+	SetSelectionLocked(ClampSelection({insertAt, insertAt + length}));
+}
+
+
+void EditorCore::InsertTextAt(size_t offset, std::string_view text)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const std::string normalized = NormalizeLineEndings(text);
+	offset = SnapToBoundary(offset);
+	if (normalized.empty()) {
+		return;
+	}
+	const size_t end = offset + normalized.size();
+	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
+	fModel->Insert(offset, normalized);
+	fModel->EndGroup({offset, end});
+	SyncLocked();
+	fGoalColumn.reset();
+	SetSelectionLocked(ClampSelection({offset, end}));
 }
 
 

@@ -296,6 +296,88 @@ TEST_CASE("cores sharing a model follow each other's edits")
 }
 
 
+TEST_CASE("mouse selection units")
+{
+	BReference<TextModel> model = MakeModel("int foo_bar = baz(1, (2));\nnext line\n");
+	EditorCore core(model);
+
+	CHECK(core.UnitRangeAt(5, SelectionUnit::Word) == TextRange {4, 11});
+	CHECK(core.UnitRangeAt(4, SelectionUnit::Word) == TextRange {4, 11});
+	CHECK(core.UnitRangeAt(10, SelectionUnit::Word) == TextRange {4, 11});
+	CHECK(core.UnitRangeAt(11, SelectionUnit::Word) == TextRange {11, 12});
+	CHECK(core.UnitRangeAt(12, SelectionUnit::Word) == TextRange {12, 13});
+	CHECK(core.UnitRangeAt(26, SelectionUnit::Word) == TextRange {26, 26});
+	CHECK(core.UnitRangeAt(5, SelectionUnit::Line) == TextRange {0, 27});
+	CHECK(core.UnitRangeAt(30, SelectionUnit::Line) == TextRange {27, 37});
+	CHECK(core.UnitRangeAt(5, SelectionUnit::Character) == TextRange {5, 5});
+
+	// "baz(1, (2))": '(' at 17 pairs with ')' at 24.
+	CHECK(core.BalancedRangeAt(17) == TextRange {18, 24});
+	CHECK(core.BalancedRangeAt(24) == TextRange {18, 24});
+	CHECK(core.BalancedRangeAt(21) == TextRange {22, 23});
+	CHECK_FALSE(core.BalancedRangeAt(5).has_value());
+
+	const TextRange word {4, 11};
+	core.ExtendSelection(word, 15, SelectionUnit::Word);
+	CHECK(core.GetSelection() == Selection {4, 17});
+	core.ExtendSelection(word, 1, SelectionUnit::Word);
+	CHECK(core.GetSelection() == Selection {11, 0});
+	core.ExtendSelection(word, 6, SelectionUnit::Word);
+	CHECK(core.GetSelection() == Selection {4, 11});
+
+	const TextRange line {0, 27};
+	core.ExtendSelection(line, 30, SelectionUnit::Line);
+	CHECK(core.GetSelection() == Selection {0, 37});
+	core.ExtendSelection({27, 37}, 3, SelectionUnit::Line);
+	CHECK(core.GetSelection() == Selection {37, 0});
+
+	core.ExtendSelection({8, 8}, 2, SelectionUnit::Character);
+	CHECK(core.GetSelection() == Selection {8, 2});
+}
+
+
+TEST_CASE("hit testing cells")
+{
+	EditorCore core(MakeModel("aあb\nxy"));
+	CHECK(core.HitTestCell(0, 0.5f).offset == 0);
+	CHECK(core.HitTestCell(0, 1.2f).offset == 1);
+	CHECK(core.HitTestCell(0, 2.8f).offset == 1);
+	CHECK(core.HitTestCell(0, 3.1f).offset == 4);
+	const CellHit past = core.HitTestCell(0, 9);
+	CHECK(past.offset == 5);
+	CHECK(past.pastLineEnd);
+	CHECK(core.HitTestCell(5, 0).offset == 6);
+}
+
+
+TEST_CASE("drag and drop editing")
+{
+	BReference<TextModel> model = MakeModel("one two three");
+	EditorCore core(model);
+
+	core.SetSelection({4, 7});
+	core.MoveText({4, 7}, 13);
+	CHECK(Text(*model) == "one  threetwo");
+	CHECK(core.GetSelection() == Selection {10, 13});
+	CHECK(core.Undo());
+	CHECK(Text(*model) == "one two three");
+	CHECK(core.GetSelection() == Selection {4, 7});
+
+	core.MoveText({4, 7}, 0);
+	CHECK(Text(*model) == "twoone  three");
+	CHECK(core.GetSelection() == Selection {0, 3});
+
+	core.MoveText({0, 3}, 2);
+	CHECK(Text(*model) == "twoone  three");
+
+	core.InsertTextAt(3, "\r\nX");
+	CHECK(Text(*model) == "two\nXone  three");
+	CHECK(core.GetSelection() == Selection {3, 5});
+	CHECK(core.Undo());
+	CHECK(Text(*model) == "twoone  three");
+}
+
+
 TEST_CASE("dirty rows and scroll anchor")
 {
 	BReference<TextModel> model = MakeModel("aaaa\nb\nc\nd\ne\nf\ng");

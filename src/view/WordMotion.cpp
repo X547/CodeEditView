@@ -95,7 +95,8 @@ class WordScanner {
 private:
 	WordDirection fDirection;
 	bool fSubword;
-	bool fSkipping = true;
+	bool fSkipping;
+	bool fStarted {};
 	WordClass fClass = WordClass::None;
 	bool fLastIsUpper {};
 
@@ -108,9 +109,10 @@ private:
 	}
 
 public:
-	WordScanner(WordDirection direction, bool subword):
+	WordScanner(WordDirection direction, bool subword, bool skipNonWord):
 		fDirection(direction),
-		fSubword(subword)
+		fSubword(subword),
+		fSkipping(skipNonWord)
 	{
 	}
 
@@ -127,11 +129,11 @@ public:
 		}
 		const bool isUpper = InRange(codePoint, 'A', 'Z');
 
-		if (fSkipping) {
+		if (!fStarted) {
 			if (!IsWordClass(wordClass)) {
-				return true;
+				return fSkipping;
 			}
-			fSkipping = false;
+			fStarted = true;
 			fClass = wordClass;
 			fLastIsUpper = isUpper;
 			return true;
@@ -160,9 +162,9 @@ static char32_t WordCodePoint(const Utf8Char &ch)
 }
 
 
-size_t FindWordBoundary(const Rope &text, size_t offset, WordDirection direction, bool subword)
+size_t FindWordBoundary(const Rope &text, size_t offset, WordDirection direction, bool subword, bool skipNonWord)
 {
-	WordScanner scanner(direction, subword);
+	WordScanner scanner(direction, subword, skipNonWord);
 	if (direction == WordDirection::Forward) {
 		while (offset < text.Length()) {
 			const Utf8Char ch = DecodeAt(text, offset);

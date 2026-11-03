@@ -29,10 +29,16 @@ enum class WordDirection {
 
 WordClass ClassifyForWords(char32_t codePoint);
 
-// Pe-style word movement: skips non-word characters, then moves over
-// characters of the same word class. Sub-word movement additionally stops at
-// underscores and lower/upper case transitions.
-size_t FindWordBoundary(const Rope &text, size_t offset, WordDirection direction, bool subword);
+// Pe-style word movement: skips non-word characters (unless skipNonWord is
+// false), then moves over characters of the same word class. Sub-word movement
+// additionally stops at underscores and lower/upper case transitions.
+size_t FindWordBoundary(
+	const Rope &text,
+	size_t offset,
+	WordDirection direction,
+	bool subword,
+	bool skipNonWord = true
+);
 
 
 } // CodeEdit

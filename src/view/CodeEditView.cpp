@@ -84,6 +84,7 @@ struct MouseState {
 	bigtime_t lastAutoScroll {};
 	BPoint scrollRemainder;
 	std::optional<bool> arrowCursor;
+	bool pointerInside {};
 	bool inScrollTracking {};
 };
 
@@ -481,6 +482,8 @@ void CodeEditView::ScrollTo(BPoint where)
 		TrackSelection(pointer);
 	} else if (fMouse->dropOffset.has_value()) {
 		SetDropOffset(OffsetAtPoint(ClampToBounds(pointer)));
+	} else {
+		RefreshCursor();
 	}
 	fMouse->inScrollTracking = false;
 }
@@ -552,6 +555,7 @@ void CodeEditView::ApplyDirty()
 
 	if (!dirty.IsEmpty()) {
 		InvalidateRows(dirty.first, dirty.last);
+		RefreshCursor();
 	}
 	if (dirty.marksChanged && fGutter != nullptr) {
 		fGutter->Invalidate();
@@ -942,10 +946,12 @@ void CodeEditView::MouseMoved(BPoint where, uint32 transit, const BMessage *drag
 			UpdateAutoScroll(where);
 			break;
 		default:
-			if (transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW) {
-				fMouse->arrowCursor.reset();
-			} else {
+			fMouse->trackPoint = where - Bounds().LeftTop();
+			fMouse->pointerInside = transit != B_EXITED_VIEW && transit != B_OUTSIDE_VIEW;
+			if (fMouse->pointerInside) {
 				UpdateCursor(where);
+			} else {
+				fMouse->arrowCursor.reset();
 			}
 			break;
 	}
@@ -963,9 +969,21 @@ void CodeEditView::MouseUp(BPoint where)
 	}
 	fMouse->mode = TrackMode::None;
 	StopAutoScroll();
+	fMouse->trackPoint = where - Bounds().LeftTop();
+	fMouse->pointerInside = Bounds().Contains(where);
 	fMouse->arrowCursor.reset();
-	UpdateCursor(where);
+	RefreshCursor();
 	RestartCaretBlink();
+}
+
+
+// Re-evaluates the cursor shape for a stationary pointer after the text under
+// it or the selection changed.
+void CodeEditView::RefreshCursor()
+{
+	if (fMouse->mode == CodeEdit::TrackMode::None && fMouse->pointerInside) {
+		UpdateCursor(Bounds().LeftTop() + fMouse->trackPoint);
+	}
 }
 
 

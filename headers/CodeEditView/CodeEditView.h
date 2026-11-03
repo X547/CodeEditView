@@ -74,6 +74,7 @@ private:
 	BPoint ClampToBounds(BPoint where) const;
 	bool IsPointInSelection(BPoint where);
 	void UpdateCursor(BPoint where);
+	void RefreshCursor();
 	void TrackSelection(BPoint where);
 	void UpdateAutoScroll(BPoint where);
 	void StopAutoScroll();

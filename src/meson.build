@@ -9,7 +9,12 @@ codeEditViewSources = files(
 	'model/UndoStack.cpp',
 	'unicode/CharWidth.cpp',
 	'unicode/Utf8.cpp',
+	'view/CodeEditScrollView.cpp',
 	'view/CodeEditView.cpp',
+	'view/EditorCore.cpp',
+	'view/GutterView.cpp',
+	'view/KeyMap.cpp',
+	'view/WordMotion.cpp',
 )
 
 codeEditViewLib = shared_library(

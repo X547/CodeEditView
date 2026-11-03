@@ -1,12 +1,100 @@
 #pragma once
 
+#include <memory>
+#include <unordered_map>
+#include <utility>
+
+#include <Font.h>
 #include <View.h>
 
+#include <CodeEditView/EditorSettings.h>
+#include <CodeEditView/TextModel.h>
 
+
+class BMessageRunner;
+class CodeEditScrollView;
+
+
+namespace CodeEdit {
+
+
+class EditorCore;
+class GutterView;
+class KeyMap;
+struct DrawContext;
+struct PageInfo;
+struct RowData;
+enum class EditorCommand;
+
+
+} // CodeEdit
+
+
+// Monospace code editor view. Several views may show the same TextModel, also
+// from different windows; edits in one view appear in all of them.
 class CodeEditView: public BView {
+private:
+	std::unique_ptr<CodeEdit::EditorCore> fCore;
+	std::unique_ptr<CodeEdit::KeyMap> fKeyMap;
+	std::unique_ptr<BMessageRunner> fCaretRunner;
+	// Per code point: advance and horizontal center of the glyph's ink.
+	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
+	CodeEditScrollView *fScrollView {};
+	CodeEdit::GutterView *fGutter {};
+
+	float fCellWidth {};
+	float fLineHeight {};
+	float fAscent {};
+	bool fCaretVisible {};
+
+	friend class CodeEditScrollView;
+	friend class CodeEdit::GutterView;
+
+	std::pair<float, float> GlyphMetrics(char32_t codePoint, const char *bytes, int32 length);
+	void DrawRow(size_t row, const BRect &updateRect, const CodeEdit::RowData &data, const CodeEdit::DrawContext &context);
+	void ApplyDirty();
+	void InvalidateRows(size_t first, size_t last);
+	void InvalidateCaret();
+	void RestartCaretBlink();
+	void UpdateScrollBars();
+	void ScrollToClamped(float x, float y);
+	void ScrollToCaret(bool keepContext);
+	bool CaretInContextArea();
+	CodeEdit::PageInfo CurrentPage() const;
+	size_t TopRow() const;
+	size_t OffsetAtPoint(BPoint where);
+	void ExecuteCommand(CodeEdit::EditorCommand command, bool extend);
+	void Copy();
+	void Cut();
+	void Paste();
+
 public:
-	explicit CodeEditView(const char *name);
+	explicit CodeEditView(const char *name, CodeEdit::TextModel *model = nullptr);
 	~CodeEditView() override;
 
+	CodeEdit::TextModel *Model() const;
+
+	const CodeEdit::EditorSettings &Settings() const;
+	void SetSettings(const CodeEdit::EditorSettings &settings);
+	void SetEditorFont(const BFont &font);
+
+	CodeEdit::Selection GetSelection();
+	void SetSelection(const CodeEdit::Selection &selection);
+	void ScrollToSelection();
+
+	float LineHeight() const {return fLineHeight;}
+	float CellWidth() const {return fCellWidth;}
+
+	void AttachedToWindow() override;
+	void DetachedFromWindow() override;
 	void Draw(BRect updateRect) override;
+	void FrameResized(float width, float height) override;
+	void KeyDown(const char *bytes, int32 numBytes) override;
+	void MouseDown(BPoint where) override;
+	void MakeFocus(bool focus = true) override;
+	void WindowActivated(bool active) override;
+	void MessageReceived(BMessage *message) override;
+	void ScrollTo(BPoint where) override;
+	BSize MinSize() override;
+	BSize PreferredSize() override;
 };

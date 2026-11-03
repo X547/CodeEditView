@@ -107,6 +107,7 @@ class TextModel: public BReferenceable {
 private:
 	struct Observer {
 		BMessenger messenger;
+		bool notify {};
 		uint64_t revision {};
 		uint64_t marksRevision {};
 		bool pending {};
@@ -181,8 +182,12 @@ public:
 	bool IsModified() const;
 	void SetSavePoint();
 
-	// Observers.
+	// Observers. An observer without messenger is never notified and only
+	// learns about changes by calling Sync().
+	ObserverId AddObserver();
 	ObserverId AddObserver(const BMessenger &messenger);
+	void SetObserverMessenger(ObserverId id, const BMessenger &messenger);
+	void ClearObserverMessenger(ObserverId id);
 	void RemoveObserver(ObserverId id);
 	int32_t CountObservers() const;
 	ModelChanges Sync(ObserverId id);

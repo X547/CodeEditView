@@ -91,7 +91,7 @@ TEST_CASE("display map follows model edits")
 	TextModel model;
 	ModelLock lock(model);
 	model.SetText("one\ntwo\nthree\n");
-	const ObserverId observer = model.AddObserver(BMessenger());
+	const ObserverId observer = model.AddObserver();
 
 	DisplayMap map;
 	map.Reset(model.Text().LineCount());

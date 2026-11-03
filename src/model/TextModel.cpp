@@ -354,15 +354,41 @@ void TextModel::SetSavePoint()
 
 //#pragma mark - Observers
 
-ObserverId TextModel::AddObserver(const BMessenger &messenger)
+ObserverId TextModel::AddObserver()
 {
 	AssertLocked();
 	const ObserverId id = fNextObserverId++;
 	Observer &observer = fObservers[id];
-	observer.messenger = messenger;
 	observer.revision = fRevision;
 	observer.marksRevision = fMarksRevision;
 	return id;
+}
+
+
+ObserverId TextModel::AddObserver(const BMessenger &messenger)
+{
+	const ObserverId id = AddObserver();
+	SetObserverMessenger(id, messenger);
+	return id;
+}
+
+
+void TextModel::SetObserverMessenger(ObserverId id, const BMessenger &messenger)
+{
+	AssertLocked();
+	Observer &observer = fObservers.at(id);
+	observer.messenger = messenger;
+	observer.notify = true;
+	observer.pending = false;
+}
+
+
+void TextModel::ClearObserverMessenger(ObserverId id)
+{
+	AssertLocked();
+	Observer &observer = fObservers.at(id);
+	observer.messenger = BMessenger();
+	observer.notify = false;
 }
 
 
@@ -431,7 +457,7 @@ std::vector<TextModel::Notification> TextModel::CollectNotifications()
 {
 	std::vector<Notification> notifications;
 	for (auto &[id, observer] : fObservers) {
-		if (observer.pending) {
+		if (!observer.notify || observer.pending) {
 			continue;
 		}
 		if (observer.revision == fRevision && observer.marksRevision == fMarksRevision) {

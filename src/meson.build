@@ -1,5 +1,6 @@
 codeEditViewSources = files(
 	'Version.cpp',
+	'model/Rope.cpp',
 	'view/CodeEditView.cpp',
 )
 

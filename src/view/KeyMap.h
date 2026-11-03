@@ -44,6 +44,8 @@ enum class EditorCommand {
 	MoveToPreviousDefinition,
 	MoveToNextDefinition,
 	ToggleFold,
+	IndentLess,
+	IndentMore,
 	FoldAll,
 	UnfoldAll,
 };

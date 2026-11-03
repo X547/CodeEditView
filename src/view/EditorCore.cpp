@@ -940,9 +940,60 @@ void EditorCore::InsertTab()
 	std::string inserted = "\t";
 	if (fSettings.insertSpacesForTab) {
 		const uint32_t column = PositionOfOffsetLocked(from).column;
-		inserted.assign(fLayoutOptions.tabWidth - column % fLayoutOptions.tabWidth, ' ');
+		inserted.assign(IndentSize() - column % IndentSize(), ' ');
 	}
 	ReplaceRange(from, to, inserted, EditKind::Typing);
+}
+
+
+uint32_t EditorCore::IndentSize() const
+{
+	return fSettings.indentSize > 0 ? fSettings.indentSize : fLayoutOptions.tabWidth;
+}
+
+
+void EditorCore::ChangeIndent(bool increase)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t start = std::min(fSelection.anchor, fSelection.caret);
+	const size_t end = std::max(fSelection.anchor, fSelection.caret);
+	const size_t firstLine = text.LineOfOffset(start);
+	size_t lastLine = text.LineOfOffset(end);
+	if (lastLine > firstLine && end == text.LineStart(lastLine)) {
+		lastLine--;
+	}
+
+	const std::string unit = fSettings.insertSpacesForTab ? std::string(IndentSize(), ' ') : std::string("\t");
+	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
+	// Last line first, so the offsets of earlier lines stay valid.
+	for (size_t line = lastLine + 1; line-- > firstLine;) {
+		const size_t lineStart = text.LineStart(line);
+		const size_t lineEnd = text.LineEnd(line);
+		if (lineStart == lineEnd) {
+			continue;
+		}
+		if (increase) {
+			fModel->Insert(lineStart, unit);
+			continue;
+		}
+		size_t length = 0;
+		if (text.ByteAt(lineStart) == '\t') {
+			length = 1;
+		} else {
+			while (length < IndentSize() && lineStart + length < lineEnd && text.ByteAt(lineStart + length) == ' ') {
+				length++;
+			}
+		}
+		if (length > 0) {
+			fModel->Erase(lineStart, length);
+		}
+	}
+	// The selection follows the edits (see MapSelection()).
+	SyncLocked();
+	fGoalColumn.reset();
+	fModel->EndGroup(fSelection);
 }
 
 

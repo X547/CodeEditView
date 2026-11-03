@@ -25,6 +25,8 @@ namespace CodeEdit {
 constexpr uint32 kMsgToggleFold = 'CEtf';
 constexpr uint32 kMsgFoldAll = 'CEfa';
 constexpr uint32 kMsgUnfoldAll = 'CEua';
+constexpr uint32 kMsgIndentLess = 'CEil';
+constexpr uint32 kMsgIndentMore = 'CEim';
 
 
 class EditorCore;

@@ -378,6 +378,48 @@ TEST_CASE("drag and drop editing")
 }
 
 
+TEST_CASE("indent and unindent lines")
+{
+	BReference<TextModel> model = MakeModel("a\n\n\tb\n  c\nd\n");
+	EditorCore core(model);
+	const auto lineStart = [&model](size_t line) {
+		ModelLock lock(*model);
+		return model->Text().LineStart(line);
+	};
+
+	// Selection from line 0 to the start of line 4: lines 0-3, empty line 1 skipped.
+	core.SetSelection({0, lineStart(4)});
+	core.ChangeIndent(true);
+	CHECK(Text(*model) == "\ta\n\n\t\tb\n\t  c\nd\n");
+	CHECK(core.GetSelection() == Selection {1, lineStart(4)});
+
+	core.ChangeIndent(false);
+	CHECK(Text(*model) == "a\n\n\tb\n  c\nd\n");
+	core.ChangeIndent(false);
+	CHECK(Text(*model) == "a\n\nb\nc\nd\n");
+	CHECK(core.Undo());
+	CHECK(Text(*model) == "a\n\n\tb\n  c\nd\n");
+
+	// Without a selection only the caret line changes; the caret stays on its text.
+	core.SetSelection({lineStart(4) + 1, lineStart(4) + 1});
+	core.ChangeIndent(true);
+	CHECK(Text(*model) == "a\n\n\tb\n  c\n\td\n");
+	CHECK(core.GetSelection().caret == lineStart(4) + 2);
+
+	EditorSettings settings;
+	settings.insertSpacesForTab = true;
+	settings.indentSize = 2;
+	core.SetSettings(settings);
+	core.ChangeIndent(true);
+	CHECK(Text(*model) == "a\n\n\tb\n  c\n  \td\n");
+	core.SetSelection({lineStart(3), lineStart(3)});
+	core.ChangeIndent(false);
+	CHECK(Text(*model) == "a\n\n\tb\nc\n  \td\n");
+	core.ChangeIndent(false);
+	CHECK(Text(*model) == "a\n\n\tb\nc\n  \td\n");
+}
+
+
 TEST_CASE("bracket match at the caret")
 {
 	// f0 (1 a2 [3 14 ]5 )6 7 {8 x9 }10

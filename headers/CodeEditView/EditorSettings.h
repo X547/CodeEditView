@@ -8,6 +8,10 @@ namespace CodeEdit {
 
 struct EditorSettings {
 	uint32_t tabWidth = 4;
+	// Width of one indentation level; 0 means tabWidth (editorconfig's
+	// indent_size). Used when indenting with spaces.
+	uint32_t indentSize = 0;
+	// Indent with spaces instead of tabs (editorconfig's indent_style).
 	bool insertSpacesForTab = false;
 	// Enter copies the leading whitespace of the current line.
 	bool autoIndent = true;

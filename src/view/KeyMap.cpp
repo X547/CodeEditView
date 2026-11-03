@@ -69,6 +69,9 @@ KeyMap KeyMap::Default()
 		{B_UP_ARROW,    B_COMMAND_KEY,  EditorCommand::MoveToPreviousDefinition},
 		{B_DOWN_ARROW,  B_COMMAND_KEY,  EditorCommand::MoveToNextDefinition},
 		{'.',           B_COMMAND_KEY,  EditorCommand::ToggleFold},
+		// Pe: Cmd+[ Shift Left, Cmd+] Shift Right.
+		{'[',           B_COMMAND_KEY,  EditorCommand::IndentLess},
+		{']',           B_COMMAND_KEY,  EditorCommand::IndentMore},
 	};
 	for (const KeyBinding &binding : kOthers) {
 		keyMap.Add(binding);

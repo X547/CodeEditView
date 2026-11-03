@@ -187,6 +187,7 @@ private:
 	bool UnfoldLines(size_t first, size_t last);
 	void AddFold(const FoldRange &fold);
 	size_t FirstNonBlank(size_t line) const;
+	uint32_t IndentSize() const;
 	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange);
 	bool IsFoldedLocked(size_t headerLine) const;
 
@@ -248,6 +249,9 @@ public:
 	void InsertText(std::string_view text);
 	void InsertNewline();
 	void InsertTab();
+	// Adds or removes one indentation level at the start of each selected
+	// line (the caret line without a selection). Empty lines are skipped.
+	void ChangeIndent(bool increase);
 	void Paste(std::string_view text);
 	void DeleteSelection();
 	void SelectAll();

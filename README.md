@@ -64,6 +64,12 @@ Alt is the Command key, Win is the Option key.
 | Alt + B, Alt + Shift + B | Expand / shrink selection by syntax (inside brackets first) |
 | Alt + Up/Down | Previous / next function or type definition |
 | Alt + . | Fold the selected lines, or fold/unfold the block at the caret |
+| Alt + [ / Alt + ] | Remove / add one indent level on the selected lines |
+
+Indentation uses tabs unless `EditorSettings::insertSpacesForTab` is set;
+`indentSize` and `tabWidth` correspond to editorconfig's `indent_size` and
+`tab_width`. Tab inserts a tab character; Enter copies the leading whitespace
+of the current line.
 
 Folding: the triangles in the gutter fold and unfold blocks; clicking the
 `...` placeholder after a folded line unfolds it. Folds belong to each view.

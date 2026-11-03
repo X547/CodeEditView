@@ -60,6 +60,9 @@ DemoWindow::DemoWindow(DemoDocument *document):
 			.AddItem("Paste", B_PASTE, 'V')
 			.AddSeparator()
 			.AddItem("Select all", B_SELECT_ALL, 'A')
+			.AddSeparator()
+			.AddItem("Shift left", CodeEdit::kMsgIndentLess, '[')
+			.AddItem("Shift right", CodeEdit::kMsgIndentMore, ']')
 		.End()
 		.AddMenu("View")
 			.AddItem("Split view", kMsgToggleSplit, 'T', B_SHIFT_KEY)
@@ -195,6 +198,8 @@ void DemoWindow::MessageReceived(BMessage *message)
 		case CodeEdit::kMsgToggleFold:
 		case CodeEdit::kMsgFoldAll:
 		case CodeEdit::kMsgUnfoldAll:
+		case CodeEdit::kMsgIndentLess:
+		case CodeEdit::kMsgIndentMore:
 		case B_UNDO:
 		case B_REDO:
 		case B_CUT:

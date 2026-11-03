@@ -796,6 +796,12 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 		case EditorCommand::ToggleFold:
 			fCore->ToggleFold();
 			break;
+		case EditorCommand::IndentLess:
+			fCore->ChangeIndent(false);
+			break;
+		case EditorCommand::IndentMore:
+			fCore->ChangeIndent(true);
+			break;
 		case EditorCommand::FoldAll:
 			fCore->FoldAll();
 			break;
@@ -1615,6 +1621,12 @@ void CodeEditView::MessageReceived(BMessage *message)
 			break;
 		case CodeEdit::kMsgFoldAll:
 			ExecuteCommand(CodeEdit::EditorCommand::FoldAll, false);
+			break;
+		case CodeEdit::kMsgIndentLess:
+			ExecuteCommand(CodeEdit::EditorCommand::IndentLess, false);
+			break;
+		case CodeEdit::kMsgIndentMore:
+			ExecuteCommand(CodeEdit::EditorCommand::IndentMore, false);
 			break;
 		case CodeEdit::kMsgUnfoldAll:
 			ExecuteCommand(CodeEdit::EditorCommand::UnfoldAll, false);

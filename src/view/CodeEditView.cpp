@@ -28,6 +28,7 @@ static constexpr uint32 kMsgCaretBlink = 'CEcb';
 static constexpr uint32 kMsgAutoScroll = 'CEas';
 static constexpr uint32 kMsgDropMove = 'CEdm';
 static constexpr uint32 kMsgDropCopy = 'CEdc';
+static constexpr uint32 kMsgKeyBinding = 'CEkb';
 
 static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
@@ -764,6 +765,41 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 }
 
 
+// BWindow consumes all Command key presses: it runs shortcuts and drops the
+// rest before KeyDown(). Like BTextView, the focused view therefore installs
+// window shortcuts for its Command bindings, leaving keys the window already
+// uses (e.g. menu items) alone.
+void CodeEditView::InstallCommandShortcuts()
+{
+	BWindow *window = Window();
+	if (window == nullptr || !fInstalledShortcuts.empty()) {
+		return;
+	}
+	for (const CodeEdit::KeyBinding &binding : fKeyMap->Bindings()) {
+		if ((binding.modifiers & B_COMMAND_KEY) == 0 || window->HasShortcut(binding.key, binding.modifiers)) {
+			continue;
+		}
+		BMessage *message = new BMessage(kMsgKeyBinding);
+		message->AddInt32("command", static_cast<int32>(binding.command));
+		message->AddBool("extend", binding.extend);
+		window->AddShortcut(binding.key, binding.modifiers, message, this);
+		fInstalledShortcuts.emplace_back(binding.key, binding.modifiers);
+	}
+}
+
+
+void CodeEditView::RemoveCommandShortcuts()
+{
+	BWindow *window = Window();
+	if (window != nullptr) {
+		for (const auto &[key, modifiers] : fInstalledShortcuts) {
+			window->RemoveShortcut(key, modifiers);
+		}
+	}
+	fInstalledShortcuts.clear();
+}
+
+
 void CodeEditView::Copy()
 {
 	const std::string text = fCore->SelectedText();
@@ -994,6 +1030,7 @@ void CodeEditView::AttachedToWindow()
 void CodeEditView::DetachedFromWindow()
 {
 	CommitInputMethod();
+	RemoveCommandShortcuts();
 	fCaretRunner.reset();
 	StopAutoScroll();
 	fCore->Detach();
@@ -1479,6 +1516,11 @@ void CodeEditView::MakeFocus(bool focus)
 		CommitInputMethod();
 	}
 	BView::MakeFocus(focus);
+	if (focus) {
+		InstallCommandShortcuts();
+	} else {
+		RemoveCommandShortcuts();
+	}
 	RestartCaretBlink();
 	Invalidate();
 }
@@ -1501,6 +1543,12 @@ void CodeEditView::MessageReceived(BMessage *message)
 	switch (message->what) {
 		case kMsgAutoScroll:
 			AutoScrollTick();
+			break;
+		case kMsgKeyBinding:
+			ExecuteCommand(
+				static_cast<CodeEdit::EditorCommand>(message->GetInt32("command", 0)),
+				message->GetBool("extend", false)
+			);
 			break;
 		case B_INPUT_METHOD_EVENT:
 			HandleInputMethodEvent(message);

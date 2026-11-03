@@ -65,6 +65,7 @@ public:
 	static KeyMap Default();
 
 	void Add(const KeyBinding &binding);
+	const std::vector<KeyBinding> &Bindings() const {return fBindings;}
 	std::optional<KeyBinding> Find(uint32_t key, uint32_t modifiers) const;
 };
 

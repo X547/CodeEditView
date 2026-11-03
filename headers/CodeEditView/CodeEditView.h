@@ -4,6 +4,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <Font.h>
 #include <View.h>
@@ -46,6 +47,8 @@ private:
 	// Per code point: advance and horizontal center of the glyph's ink.
 	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
 	CodeEdit::Theme fTheme = CodeEdit::Theme::Pe();
+	// Window shortcuts (key, modifiers) installed for Command key bindings.
+	std::vector<std::pair<uint32, uint32>> fInstalledShortcuts;
 	CodeEditScrollView *fScrollView {};
 	CodeEdit::GutterView *fGutter {};
 
@@ -71,6 +74,8 @@ private:
 	size_t TopRow() const;
 	size_t OffsetAtPoint(BPoint where);
 	void ExecuteCommand(CodeEdit::EditorCommand command, bool extend);
+	void InstallCommandShortcuts();
+	void RemoveCommandShortcuts();
 	void Copy();
 	void Cut();
 	void Paste();

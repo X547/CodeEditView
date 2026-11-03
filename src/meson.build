@@ -1,6 +1,9 @@
 codeEditViewSources = files(
 	'Version.cpp',
+	'model/EditRecord.cpp',
 	'model/Rope.cpp',
+	'model/TextModel.cpp',
+	'model/UndoStack.cpp',
 	'view/CodeEditView.cpp',
 )
 

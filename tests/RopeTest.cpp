@@ -13,7 +13,7 @@
 #include <CodeEditView/Rope.h>
 
 
-using CodeEdit::Rope;
+namespace CodeEdit {
 
 
 static size_t RefLineStart(const std::string &text, size_t line)
@@ -253,3 +253,6 @@ TEST_CASE("randomized edits match std::string")
 		CheckEqual(snapshot, expected);
 	}
 }
+
+
+} // CodeEdit

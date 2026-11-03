@@ -378,6 +378,59 @@ TEST_CASE("drag and drop editing")
 }
 
 
+TEST_CASE("bracket match at the caret")
+{
+	// f0 (1 a2 [3 14 ]5 )6 7 {8 x9 }10
+	EditorCore core(MakeModel("f(a[1]) {x}"));
+	auto matchAt = [&core](size_t caret) {
+		Place(core, caret);
+		core.UpdateBracketMatch();
+		return core.BracketMatch();
+	};
+
+	CHECK(matchAt(1) == BracketPair {1, 6});
+	CHECK(matchAt(2) == BracketPair {1, 6});
+	CHECK(matchAt(4) == BracketPair {3, 5});
+	CHECK(matchAt(7) == BracketPair {6, 1});
+	CHECK(matchAt(9) == BracketPair {8, 10});
+	CHECK(matchAt(11) == BracketPair {10, 8});
+	CHECK_FALSE(matchAt(0).has_value());
+
+	core.SetSelection({1, 3});
+	core.UpdateBracketMatch();
+	CHECK_FALSE(core.BracketMatch().has_value());
+
+	EditorCore unbalanced(MakeModel("(("));
+	Place(unbalanced, 1);
+	unbalanced.UpdateBracketMatch();
+	CHECK_FALSE(unbalanced.BracketMatch().has_value());
+
+	EditorCore far(MakeModel("{\na\nb\nc\n}"));
+	far.TakeDirty();
+	Place(far, 9);
+	far.TakeDirty();
+	far.UpdateBracketMatch();
+	CHECK(far.BracketMatch() == BracketPair {8, 0});
+	const DirtyRows dirty = far.TakeDirty();
+	CHECK(dirty.first == 0);
+	CHECK(dirty.last == 4);
+}
+
+
+TEST_CASE("caret location in display columns")
+{
+	EditorCore core(MakeModel("ab\n\txあy"));
+	Place(core, 0);
+	CHECK(core.CaretLocation() == TextPoint {0, 0});
+	Place(core, 2);
+	CHECK(core.CaretLocation() == TextPoint {0, 2});
+	Place(core, 5);
+	CHECK(core.CaretLocation() == TextPoint {1, 5});
+	Place(core, 8);
+	CHECK(core.CaretLocation() == TextPoint {1, 7});
+}
+
+
 TEST_CASE("dirty rows and scroll anchor")
 {
 	BReference<TextModel> model = MakeModel("aaaa\nb\nc\nd\ne\nf\ng");

@@ -115,6 +115,8 @@ public:
 	void SetTheme(const CodeEdit::Theme &theme);
 
 	CodeEdit::Selection GetSelection();
+	// Model line and display column (tabs expanded) of the caret, 0-based.
+	CodeEdit::TextPoint CaretLocation();
 	void SetSelection(const CodeEdit::Selection &selection);
 	void ScrollToSelection();
 

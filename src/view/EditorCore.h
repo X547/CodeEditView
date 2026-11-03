@@ -72,6 +72,15 @@ struct CellHit {
 };
 
 
+// A bracket next to the caret and its partner.
+struct BracketPair {
+	size_t bracket {};
+	size_t partner {};
+
+	bool operator==(const BracketPair &other) const = default;
+};
+
+
 struct PageInfo {
 	// First fully visible row and the number of fully visible rows.
 	size_t topRow {};
@@ -129,6 +138,7 @@ private:
 	QueryCursor fQueryCursor;
 	std::vector<Selection> fExpandHistory;
 	std::optional<Selection> fExpandedSelection;
+	std::optional<BracketPair> fBracketMatch;
 
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
@@ -150,6 +160,7 @@ private:
 	void AddSelectionDirty(const Selection &selection);
 	void ReplaceRange(size_t from, size_t to, std::string_view text, EditKind kind);
 	void ApplyUndoResult(const std::optional<UndoResult> &result, const ModelChanges &changes);
+	std::optional<TextRange> BalancedRangeAtLocked(size_t offset) const;
 
 public:
 	explicit EditorCore(const BReference<TextModel> &model);
@@ -181,6 +192,8 @@ public:
 	size_t OffsetAt(size_t row, float column);
 	size_t RowStartOffset(size_t row);
 	CellHit HitTestCell(size_t row, float column);
+	// Model line and display column of the caret.
+	TextPoint CaretLocation();
 	std::string SelectedText();
 
 	// Mouse selection. For words, offset is the start of the clicked cluster:
@@ -213,6 +226,11 @@ public:
 	void SetSelection(const Selection &selection);
 	bool Undo();
 	bool Redo();
+
+	// Recomputes the bracket pair highlighted at the caret (the character
+	// after the caret first, then the one before) and marks changed rows dirty.
+	void UpdateBracketMatch();
+	std::optional<BracketPair> BracketMatch() const {return fBracketMatch;}
 
 	// Syntax navigation (no-ops without a syntax tree).
 	void ExpandSelection();

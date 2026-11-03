@@ -60,6 +60,8 @@ struct DrawContext {
 	uint32_t caretColumn {};
 	bool drawCaret {};
 	std::optional<CaretPosition> dropCaret;
+	std::optional<BracketPair> brackets;
+	rgb_color bracket;
 	std::optional<size_t> preeditRow;
 	// Byte offset of the input method text in the spliced row text.
 	size_t preeditStart {};
@@ -201,6 +203,12 @@ CodeEdit::Selection CodeEditView::GetSelection()
 }
 
 
+CodeEdit::TextPoint CodeEditView::CaretLocation()
+{
+	return fCore->CaretLocation();
+}
+
+
 void CodeEditView::SetSelection(const CodeEdit::Selection &selection)
 {
 	fCore->SetSelection(selection);
@@ -259,6 +267,8 @@ void CodeEditView::Draw(BRect updateRect)
 	if (fMouse->dropOffset.has_value()) {
 		context.dropCaret = fCore->PositionOfOffset(*fMouse->dropOffset);
 	}
+	context.brackets = fCore->BracketMatch();
+	context.bracket = mix_color(context.background, ui_color(B_KEYBOARD_NAVIGATION_COLOR), 56);
 
 	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / fLineHeight)));
 	const size_t lastRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.bottom / fLineHeight)));
@@ -319,6 +329,17 @@ void CodeEditView::DrawRow(
 			: data.layout.ColumnOfOffset(std::min(context.selectionEnd, lineEnd) - data.lineStart) * fCellWidth - 1;
 		SetHighColor(context.selection);
 		FillRect(BRect(left, top, right, bottom));
+	}
+
+	if (context.brackets.has_value() && context.preeditRow != row) {
+		SetHighColor(context.bracket);
+		for (const size_t offset : {context.brackets->bracket, context.brackets->partner}) {
+			if (offset < data.lineStart || offset >= lineEnd) {
+				continue;
+			}
+			const Cluster &cluster = data.layout.Clusters()[data.layout.ClusterAtOffset(offset - data.lineStart)];
+			FillRect(BRect(cluster.column * fCellWidth, top, cluster.EndColumn() * fCellWidth - 1, bottom));
+		}
 	}
 
 	const float firstColumn = floorf(updateRect.left / fCellWidth) - 2;
@@ -605,6 +626,7 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 // Applies accumulated changes of the editor core to the screen.
 void CodeEditView::ApplyDirty()
 {
+	fCore->UpdateBracketMatch();
 	const CodeEdit::DirtyRows dirty = fCore->TakeDirty();
 	if (dirty.scrollRangeChanged) {
 		UpdateScrollBars();
@@ -628,6 +650,9 @@ void CodeEditView::ApplyDirty()
 	}
 	if (dirty.marksChanged && fGutter != nullptr) {
 		fGutter->Invalidate();
+	}
+	if (fScrollView != nullptr) {
+		fScrollView->CaretChanged();
 	}
 }
 
@@ -1022,6 +1047,8 @@ void CodeEditView::AttachedToWindow()
 {
 	BView::AttachedToWindow();
 	fCore->Attach(BMessenger(this));
+	// State derived from the caret is otherwise only updated on changes.
+	fCore->UpdateBracketMatch();
 	fCore->TakeDirty();
 	UpdateScrollBars();
 }

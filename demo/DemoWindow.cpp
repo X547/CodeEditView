@@ -71,6 +71,8 @@ DemoWindow::DemoWindow(DemoDocument *document):
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
+			// The frame of the edit pane overlaps the menu bar and window borders.
+			.SetInsets(-1, -1, -1, -1)
 			.Add(fSplitView)
 		.End();
 	fSplitView->AddChild(pane);

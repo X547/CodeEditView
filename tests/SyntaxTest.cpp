@@ -215,6 +215,17 @@ TEST_CASE("brackets match by syntax")
 	CHECK(core.BalancedRangeAt(line2 + 8) == TextRange {line2 + 9, line2 + 30});
 	CHECK(core.BalancedRangeAt(line2 + 30) == TextRange {line2 + 9, line2 + 30});
 	CHECK_FALSE(core.BalancedRangeAt(line4 + 19).has_value());
+	core.SetSelection({line4 + 20, line4 + 20});
+	core.UpdateBracketMatch();
+	CHECK_FALSE(core.BracketMatch().has_value());
+
+	// A top-level block is a syntax error; its braces still match.
+	BReference<TextModel> invalid = MakeParsedModel("{\n\tf(a[1]);\n}\n", "cpp");
+	EditorCore invalidCore(invalid);
+	invalidCore.SetSelection({0, 0});
+	invalidCore.UpdateBracketMatch();
+	CHECK(invalidCore.BracketMatch() == BracketPair {0, 12});
+
 	const size_t braceOpen = LineStart(*model, 3);
 	const size_t braceClose = LineStart(*model, 6);
 	CHECK(core.BalancedRangeAt(braceOpen) == TextRange {braceOpen + 1, braceClose});

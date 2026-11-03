@@ -496,6 +496,16 @@ CellHit EditorCore::HitTestCell(size_t row, float column)
 }
 
 
+TextPoint EditorCore::CaretLocation()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t line = text.LineOfOffset(fSelection.caret);
+	return {line, LayoutOfLine(line).ColumnOfOffset(fSelection.caret - text.LineStart(line))};
+}
+
+
 TextRange EditorCore::UnitRangeAt(size_t offset, SelectionUnit unit)
 {
 	ModelLock lock(*fModel);
@@ -580,12 +590,20 @@ static bool IsNodeType(TSNode node, char ch)
 }
 
 
-// Without a syntax tree, brackets are matched by counting bytes; with a tree,
-// only bracket tokens match, so brackets in strings and comments are ignored.
 std::optional<TextRange> EditorCore::BalancedRangeAt(size_t offset)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	return BalancedRangeAtLocked(offset);
+}
+
+
+// With a syntax tree only bracket tokens match, so brackets in strings and
+// comments are ignored, and the partner is the sibling token. Otherwise, and
+// when there is no such sibling (syntax errors), brackets are matched by
+// counting bytes.
+std::optional<TextRange> EditorCore::BalancedRangeAtLocked(size_t offset) const
+{
 	const Rope &text = fModel->Text();
 	if (offset >= text.Length()) {
 		return std::nullopt;
@@ -627,7 +645,8 @@ std::optional<TextRange> EditorCore::BalancedRangeAt(size_t offset)
 				}
 			}
 		}
-		return std::nullopt;
+		// In code with syntax errors the partner may not be a sibling; fall
+		// back to counting bytes.
 	}
 
 	int depth = 0;
@@ -958,6 +977,44 @@ void EditorCore::InsertTextAt(size_t offset, std::string_view text)
 	SyncLocked();
 	fGoalColumn.reset();
 	SetSelectionLocked(ClampSelection({offset, end}));
+}
+
+
+void EditorCore::UpdateBracketMatch()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t caret = fSelection.caret;
+
+	std::optional<BracketPair> match;
+	if (fSelection.anchor == caret) {
+		for (const size_t pos : {caret, caret - 1}) {
+			if (pos >= text.Length()) {
+				continue;
+			}
+			const char ch = text.ByteAt(pos);
+			if (ch != '(' && ch != ')' && ch != '[' && ch != ']' && ch != '{' && ch != '}') {
+				continue;
+			}
+			const std::optional<TextRange> range = BalancedRangeAtLocked(pos);
+			if (range.has_value()) {
+				match = BracketPair {pos, IsOpeningBracket(ch) ? range->end : range->start - 1};
+				break;
+			}
+		}
+	}
+	if (match == fBracketMatch) {
+		return;
+	}
+	for (const std::optional<BracketPair> &pair : {fBracketMatch, match}) {
+		if (pair.has_value()) {
+			const size_t bracketRow = PositionOfOffsetLocked(pair->bracket).row;
+			const size_t partnerRow = PositionOfOffsetLocked(pair->partner).row;
+			fDirty.Add(std::min(bracketRow, partnerRow), std::max(bracketRow, partnerRow));
+		}
+	}
+	fBracketMatch = match;
 }
 
 

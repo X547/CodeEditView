@@ -102,6 +102,27 @@ Mouse: double click selects a word, or the contents of a bracket pair when
 clicking a bracket; triple click selects a line.
 
 
+## Debugger
+
+`CodeEditDebugger` is a small debugger built on the view. It runs GDB's
+Debug Adapter Protocol interpreter (`gdb -i=dap`, GDB 14 or later with
+Python) and shows:
+
+- a control window: program, arguments, launch, attach to a running team,
+  continue, pause, step over/into/out, stop
+- source windows; breakpoints are toggled in the gutter (Shift+click
+  enables or disables) or with Cmd+K; the execution line and the selected
+  caller frame are marked
+- floating windows (Windows menu): console with GDB commands, threads,
+  stack (double click opens the source), variables, breakpoints
+
+`CodeEditDebugger [program [arguments...]]` fills in the program.
+`build/debugger/DebuggerSample` is a program to try it on.
+
+Debug menu: Cmd+R continue, Cmd+P pause, Cmd+N step over, Cmd+I step into,
+Cmd+T step out.
+
+
 ## Building
 
 Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel`, `catch2_devel`
@@ -114,7 +135,7 @@ ninja -C build
 meson test -C build
 ```
 
-Options: `-Ddemo=false`, `-Dtests=false`.
+Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dtests=false`.
 
 The demo application is `build/demo/CodeEditDemo`.
 

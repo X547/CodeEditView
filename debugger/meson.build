@@ -5,6 +5,7 @@ privateInterfaceInc = include_directories('/boot/system/develop/headers/private/
 executable(
 	'CodeEditDebugger',
 	files(
+		'BreakpointsWindow.cpp',
 		'Common.cpp',
 		'ConsoleWindow.cpp',
 		'ControlWindow.cpp',

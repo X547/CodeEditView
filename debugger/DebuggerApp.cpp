@@ -5,6 +5,7 @@
 #include <Entry.h>
 #include <Path.h>
 
+#include "BreakpointsWindow.h"
 #include "Common.h"
 #include "ConsoleWindow.h"
 #include "ControlWindow.h"
@@ -125,6 +126,9 @@ BWindow *DebuggerApp::CreateToolWindow(ToolWindowKind kind)
 			break;
 		case ToolWindowKind::Variables:
 			window = new VariablesWindow();
+			break;
+		case ToolWindowKind::Breakpoints:
+			window = new BreakpointsWindow();
 			break;
 		default:
 			return nullptr;

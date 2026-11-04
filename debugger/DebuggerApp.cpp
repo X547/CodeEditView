@@ -13,6 +13,7 @@
 #include "SourceWindow.h"
 #include "StackWindow.h"
 #include "ThreadsWindow.h"
+#include "VariablesWindow.h"
 
 
 static constexpr const char *kAppSignature = "application/x-vnd.CodeEditDebugger";
@@ -100,6 +101,7 @@ void DebuggerApp::ReadyToRun()
 	CreateToolWindow(ToolWindowKind::Console);
 	ShowToolWindow(ToolWindowKind::Threads);
 	ShowToolWindow(ToolWindowKind::Stack);
+	ShowToolWindow(ToolWindowKind::Variables);
 	(new ControlWindow(fProgram.c_str(), fArguments.c_str()))->Show();
 }
 
@@ -120,6 +122,9 @@ BWindow *DebuggerApp::CreateToolWindow(ToolWindowKind kind)
 			break;
 		case ToolWindowKind::Stack:
 			window = new StackWindow();
+			break;
+		case ToolWindowKind::Variables:
+			window = new VariablesWindow();
 			break;
 		default:
 			return nullptr;

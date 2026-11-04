@@ -16,6 +16,7 @@ executable(
 		'SourceWindow.cpp',
 		'StackWindow.cpp',
 		'ThreadsWindow.cpp',
+		'VariablesWindow.cpp',
 	),
 	include_directories: [privateInterfaceInc],
 	dependencies: [codeEditViewDep, trackerDep, columnListViewDep],

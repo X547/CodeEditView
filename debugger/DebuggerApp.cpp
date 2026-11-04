@@ -11,6 +11,8 @@
 #include "DebugSession.h"
 #include "Documents.h"
 #include "SourceWindow.h"
+#include "StackWindow.h"
+#include "ThreadsWindow.h"
 
 
 static constexpr const char *kAppSignature = "application/x-vnd.CodeEditDebugger";
@@ -96,6 +98,8 @@ void DebuggerApp::ReadyToRun()
 {
 	// The console exists from the start to collect all output.
 	CreateToolWindow(ToolWindowKind::Console);
+	ShowToolWindow(ToolWindowKind::Threads);
+	ShowToolWindow(ToolWindowKind::Stack);
 	(new ControlWindow(fProgram.c_str(), fArguments.c_str()))->Show();
 }
 
@@ -110,6 +114,12 @@ BWindow *DebuggerApp::CreateToolWindow(ToolWindowKind kind)
 	switch (kind) {
 		case ToolWindowKind::Console:
 			window = new ConsoleWindow();
+			break;
+		case ToolWindowKind::Threads:
+			window = new ThreadsWindow();
+			break;
+		case ToolWindowKind::Stack:
+			window = new StackWindow();
 			break;
 		default:
 			return nullptr;

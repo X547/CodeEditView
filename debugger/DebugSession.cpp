@@ -758,7 +758,7 @@ void DebugSession::MessageReceived(BMessage *message)
 			break;
 		case kMsgSelectFrame:
 			if (fState == SessionState::Stopped) {
-				SelectFrame(message->GetInt32("frame", 0), true);
+				SelectFrame(message->GetInt32("frame", 0), message->GetBool("show", true));
 			}
 			break;
 		case kMsgRequestVariables:

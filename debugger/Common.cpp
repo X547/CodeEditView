@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <Application.h>
+#include <ColumnListView.h>
 #include <Menu.h>
 #include <MenuItem.h>
 
@@ -86,6 +87,24 @@ void ToggleBreakpointEnabled(CodeEdit::TextModel &model, size_t line)
 			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
 		}
 	}
+}
+
+
+BColumnListView *CreateColumnList(const char *name, uint32 selectionWhat, uint32 invocationWhat)
+{
+	BColumnListView *list = new BColumnListView(name, B_NAVIGABLE, B_NO_BORDER, false);
+	list->SetSortingEnabled(false);
+	list->SetSelectionMode(B_SINGLE_SELECTION_LIST);
+	list->SetSelectionMessage(new BMessage(selectionWhat));
+	list->SetInvocationMessage(new BMessage(invocationWhat));
+	return list;
+}
+
+
+std::string FileName(const std::string &path)
+{
+	const size_t slash = path.rfind('/');
+	return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
 

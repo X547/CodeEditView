@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include <string>
+
 #include <Messenger.h>
 #include <Window.h>
 
@@ -10,6 +12,7 @@
 #include "Protocol.h"
 
 
+class BColumnListView;
 class BMenu;
 
 
@@ -30,6 +33,13 @@ BMenu *CreateWindowsMenu();
 // switches between enabled and disabled.
 void ToggleBreakpoint(CodeEdit::TextModel &model, size_t line);
 void ToggleBreakpointEnabled(CodeEdit::TextModel &model, size_t line);
+
+
+// A column list for tool windows, sending selection and invocation
+// messages to the window.
+BColumnListView *CreateColumnList(const char *name, uint32 selectionWhat, uint32 invocationWhat);
+// Leaf of a path.
+std::string FileName(const std::string &path);
 
 
 // A floating window above the application's windows that hides when

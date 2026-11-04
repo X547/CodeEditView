@@ -21,7 +21,8 @@ constexpr uint32 kMsgStepOut = 'DSsu';
 constexpr uint32 kMsgStop = 'DSst';
 // "thread" (int64).
 constexpr uint32 kMsgSelectThread = 'DSth';
-// "frame" (int32): index in the current stack.
+// "frame" (int32): index in the current stack; "show" (bool): show its
+// source (default).
 constexpr uint32 kMsgSelectFrame = 'DSfr';
 // "reference" (int64): children of a variable or scope.
 constexpr uint32 kMsgRequestVariables = 'DSva';

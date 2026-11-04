@@ -14,6 +14,8 @@ executable(
 		'Documents.cpp',
 		'Json.cpp',
 		'SourceWindow.cpp',
+		'StackWindow.cpp',
+		'ThreadsWindow.cpp',
 	),
 	include_directories: [privateInterfaceInc],
 	dependencies: [codeEditViewDep, trackerDep, columnListViewDep],

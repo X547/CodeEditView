@@ -1,0 +1,29 @@
+#pragma once
+
+#include "Common.h"
+
+
+class BColumnListView;
+
+
+namespace Debugger {
+
+
+// The stack of the current thread. Selecting a frame shows its variables;
+// double click shows its source.
+class StackWindow: public ToolWindow {
+private:
+	BColumnListView *fList;
+	int32 fCurrent {};
+
+	void Update(const BMessage &notice);
+	void SelectFrame(bool showSource);
+
+public:
+	StackWindow();
+
+	void MessageReceived(BMessage *message) override;
+};
+
+
+} // Debugger

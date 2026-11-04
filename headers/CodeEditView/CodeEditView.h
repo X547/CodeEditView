@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -7,9 +9,11 @@
 #include <vector>
 
 #include <Font.h>
+#include <Messenger.h>
 #include <View.h>
 
 #include <CodeEditView/EditorSettings.h>
+#include <CodeEditView/Outline.h>
 #include <CodeEditView/TextModel.h>
 #include <CodeEditView/Theme.h>
 
@@ -27,6 +31,13 @@ constexpr uint32 kMsgFoldAll = 'CEfa';
 constexpr uint32 kMsgUnfoldAll = 'CEua';
 constexpr uint32 kMsgIndentLess = 'CEil';
 constexpr uint32 kMsgIndentMore = 'CEim';
+
+// Notifications sent to the target (CodeEditView::SetTarget()); "view"
+// holds the sending CodeEditView.
+// The text or its syntax tree changed, e.g. the outline may be different.
+constexpr uint32 kMsgContentsChanged = 'CEcc';
+// The caret moved; "caret" (uint64) is its offset.
+constexpr uint32 kMsgCaretMoved = 'CEcm';
 
 
 class EditorCore;
@@ -58,6 +69,8 @@ private:
 	// Window shortcuts (key, modifiers) installed for Command key bindings.
 	std::vector<std::pair<uint32, uint32>> fInstalledShortcuts;
 	CodeEditScrollView *fScrollView {};
+	BMessenger fTarget;
+	size_t fNotifiedCaret = SIZE_MAX;
 	CodeEdit::GutterView *fGutter {};
 
 	float fCellWidth {};
@@ -137,6 +150,11 @@ public:
 	CodeEdit::TextPoint CaretLocation();
 	void SetSelection(const CodeEdit::Selection &selection);
 	void ScrollToSelection();
+
+	// Receives the notifications above.
+	void SetTarget(const BMessenger &target) {fTarget = target;}
+	// Definitions in the text, from the syntax tree; empty without one.
+	std::vector<CodeEdit::OutlineItem> Outline();
 
 	float LineHeight() const {return fLineHeight;}
 	float CellWidth() const {return fCellWidth;}

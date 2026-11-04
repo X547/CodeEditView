@@ -13,6 +13,7 @@
 #include <Referenceable.h>
 
 #include <CodeEditView/EditorSettings.h>
+#include <CodeEditView/Outline.h>
 #include <CodeEditView/TextModel.h>
 #include <CodeEditView/Theme.h>
 
@@ -158,6 +159,8 @@ struct DirtyRows {
 	size_t last = 0;
 	bool scrollRangeChanged {};
 	bool marksChanged {};
+	// The text or its syntax tree changed.
+	bool contentsChanged {};
 
 	bool IsEmpty() const {return first > last;}
 	void Add(size_t from, size_t to);
@@ -341,6 +344,8 @@ public:
 	void ExpandSelection();
 	void ShrinkSelection();
 	void MoveToDefinition(bool forward);
+	// Definitions in the text; empty without a syntax tree.
+	std::vector<OutlineItem> Outline();
 
 	DirtyRows TakeDirty();
 };

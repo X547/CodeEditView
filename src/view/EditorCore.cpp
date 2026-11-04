@@ -4,6 +4,7 @@
 
 #include "WordMotion.h"
 #include "syntax/Language.h"
+#include "syntax/Outline.h"
 #include "syntax/SyntaxState.h"
 
 
@@ -179,6 +180,7 @@ void EditorCore::ResetFromModel()
 {
 	fFolds.clear();
 	Relayout();
+	fDirty.contentsChanged = true;
 	fSelection = ClampSelection(fSelection);
 	fScrollAnchor = std::min(fScrollAnchor, fModel->Text().Length());
 	fGoalColumn.reset();
@@ -220,10 +222,12 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	}
 	if (changes.syntaxChanged) {
 		fDirty.AddAll();
+		fDirty.contentsChanged = true;
 	}
 	if (changes.edits.empty()) {
 		return;
 	}
+	fDirty.contentsChanged = true;
 
 	const Rope &text = fModel->Text();
 	bool foldsRemoved = false;
@@ -1494,6 +1498,18 @@ void EditorCore::MoveToDefinition(bool forward)
 	fGoalColumn.reset();
 	fModel->BreakUndoCoalescing();
 	SetSelectionLocked(ClampSelection({*target, *target}));
+}
+
+
+std::vector<OutlineItem> EditorCore::Outline()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax == nullptr || syntax->Tree() == nullptr) {
+		return {};
+	}
+	return BuildOutline(syntax->GetLanguage(), syntax->Tree(), fModel->Text(), fQueryCursor);
 }
 
 

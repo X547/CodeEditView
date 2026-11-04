@@ -14,6 +14,7 @@ class BMenuItem;
 class BSplitView;
 class CodeEditScrollView;
 class CodeEditView;
+class OutlineView;
 
 
 static constexpr uint32 kMsgNewDocument = 'Dnew';
@@ -21,6 +22,8 @@ static constexpr uint32 kMsgOpenDocument = 'Dopn';
 static constexpr uint32 kMsgNewView = 'Dnvw';
 static constexpr uint32 kMsgToggleSplit = 'Dspl';
 static constexpr uint32 kMsgToggleWordWrap = 'Dwrp';
+static constexpr uint32 kMsgToggleOutline = 'Dotg';
+static constexpr uint32 kMsgRefreshOutline = 'Dorf';
 static constexpr uint32 kMsgSave = 'Dsav';
 static constexpr uint32 kMsgSaveAs = 'Dsas';
 static constexpr uint32 kMsgWindowOpened = 'Dwop';
@@ -41,8 +44,15 @@ public:
 class DemoWindow: public BWindow {
 private:
 	BReference<DemoDocument> fDocument;
+	BSplitView *fMainSplitView {};
 	BSplitView *fSplitView {};
+	CodeEditScrollView *fFirstPane {};
 	CodeEditScrollView *fSecondPane {};
+	OutlineView *fOutline {};
+	BMenuItem *fOutlineItem {};
+	// The edit view the outline follows: the last one with a caret move.
+	CodeEditView *fActiveView {};
+	bool fOutlineRefreshPending {};
 	std::unique_ptr<BFilePanel> fSavePanel;
 	BMenuItem *fWordWrapItem {};
 	bool fWordWrap {};
@@ -53,6 +63,9 @@ private:
 	void SaveAs();
 	void ToggleSplit();
 	void ApplySettings(CodeEditView *editView);
+	void ScheduleOutlineRefresh();
+	void RefreshOutline();
+	void JumpToOutlineItem(bool focus);
 
 public:
 	explicit DemoWindow(DemoDocument *document);

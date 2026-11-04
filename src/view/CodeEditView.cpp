@@ -231,6 +231,12 @@ void CodeEditView::ScrollToSelection()
 }
 
 
+std::vector<CodeEdit::OutlineItem> CodeEditView::Outline()
+{
+	return fCore->Outline();
+}
+
+
 //#pragma mark - Drawing
 
 std::pair<float, float> CodeEditView::GlyphMetrics(char32_t codePoint, const char *bytes, int32 length)
@@ -753,6 +759,22 @@ void CodeEditView::ApplyDirty()
 	}
 	if (fScrollView != nullptr) {
 		fScrollView->CaretChanged();
+	}
+
+	if (fTarget.IsValid()) {
+		if (dirty.contentsChanged) {
+			BMessage message(CodeEdit::kMsgContentsChanged);
+			message.AddPointer("view", this);
+			fTarget.SendMessage(&message);
+		}
+		const size_t caret = fCore->GetSelection().caret;
+		if (caret != fNotifiedCaret) {
+			fNotifiedCaret = caret;
+			BMessage message(CodeEdit::kMsgCaretMoved);
+			message.AddPointer("view", this);
+			message.AddUInt64("caret", caret);
+			fTarget.SendMessage(&message);
+		}
 	}
 }
 

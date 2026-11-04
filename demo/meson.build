@@ -5,6 +5,7 @@ executable(
 	files(
 		'DemoApp.cpp',
 		'DemoWindow.cpp',
+		'OutlineView.cpp',
 	),
 	dependencies: [codeEditViewDep, trackerDep],
 	install: true

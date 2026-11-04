@@ -26,6 +26,7 @@ codeEditViewSources = files(
 	'model/UndoStack.cpp',
 	'syntax/Highlighter.cpp',
 	'syntax/Language.cpp',
+	'syntax/Outline.cpp',
 	'syntax/SyntaxState.cpp',
 	'syntax/SyntaxWorker.cpp',
 	'syntax/Theme.cpp',

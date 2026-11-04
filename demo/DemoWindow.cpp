@@ -10,11 +10,14 @@
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
+#include <ScrollView.h>
 #include <SplitView.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/Language.h>
+
+#include "OutlineView.h"
 
 
 DemoDocument::DemoDocument():
@@ -69,6 +72,8 @@ DemoWindow::DemoWindow(DemoDocument *document):
 			.AddItem("Split view", kMsgToggleSplit, 'T', B_SHIFT_KEY)
 			.AddItem("Word wrap", kMsgToggleWordWrap)
 				.GetItem(fWordWrapItem)
+			.AddItem("Outline", kMsgToggleOutline, 'L', B_SHIFT_KEY)
+				.GetItem(fOutlineItem)
 			.AddSeparator()
 			.AddItem("Fold/unfold", CodeEdit::kMsgToggleFold, '.')
 			.AddItem("Fold all", CodeEdit::kMsgFoldAll)
@@ -76,18 +81,26 @@ DemoWindow::DemoWindow(DemoDocument *document):
 		.End();
 
 	CodeEditScrollView *pane = CreatePane();
+	fFirstPane = pane;
+	fActiveView = pane->EditView();
 	fSplitView = new BSplitView(B_VERTICAL, 0);
+	fOutline = new OutlineView();
+	fMainSplitView = new BSplitView(B_HORIZONTAL, 0);
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
 			// The frame of the edit pane overlaps the menu bar and window borders.
 			.SetInsets(-1, -1, -1, -1)
-			.Add(fSplitView)
+			.Add(fMainSplitView)
 		.End();
+	fMainSplitView->AddChild(new BScrollView("outlineScroll", fOutline, 0, false, true, B_PLAIN_BORDER), 1);
+	fMainSplitView->AddChild(fSplitView, 3);
 	fSplitView->AddChild(pane);
+	fOutlineItem->SetMarked(true);
 
 	pane->EditView()->MakeFocus(true);
+	PostMessage(kMsgRefreshOutline);
 	UpdateTitle();
 	be_app->PostMessage(kMsgWindowOpened);
 }
@@ -102,6 +115,7 @@ DemoWindow::~DemoWindow()
 CodeEditScrollView *DemoWindow::CreatePane()
 {
 	CodeEditView *editView = new CodeEditView("editView", fDocument->model.Get());
+	editView->SetTarget(BMessenger(this));
 	ApplySettings(editView);
 	return new CodeEditScrollView("pane", editView);
 }
@@ -112,6 +126,40 @@ void DemoWindow::ApplySettings(CodeEditView *editView)
 	CodeEdit::EditorSettings settings = editView->Settings();
 	settings.wordWrap = fWordWrap;
 	editView->SetSettings(settings);
+}
+
+
+// Edits come in bursts (e.g. undo of a large change); refresh once.
+void DemoWindow::ScheduleOutlineRefresh()
+{
+	if (!fOutlineRefreshPending) {
+		fOutlineRefreshPending = true;
+		PostMessage(kMsgRefreshOutline);
+	}
+}
+
+
+void DemoWindow::RefreshOutline()
+{
+	if (fActiveView == nullptr || !fOutlineItem->IsMarked()) {
+		return;
+	}
+	fOutline->SetOutline(fActiveView->Outline());
+	fOutline->SelectAt(fActiveView->GetSelection().caret);
+}
+
+
+void DemoWindow::JumpToOutlineItem(bool focus)
+{
+	const OutlineListItem *item = fOutline->SelectedItem();
+	if (item == nullptr || fActiveView == nullptr) {
+		return;
+	}
+	fActiveView->SetSelection({item->NameStart(), item->NameEnd()});
+	fActiveView->ScrollToSelection();
+	if (focus) {
+		fActiveView->MakeFocus(true);
+	}
 }
 
 
@@ -160,6 +208,9 @@ void DemoWindow::SaveAs()
 void DemoWindow::ToggleSplit()
 {
 	if (fSecondPane != nullptr) {
+		if (fActiveView == fSecondPane->EditView()) {
+			fActiveView = fFirstPane->EditView();
+		}
 		fSecondPane->RemoveSelf();
 		delete fSecondPane;
 		fSecondPane = nullptr;
@@ -184,6 +235,46 @@ void DemoWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgToggleSplit:
 			ToggleSplit();
+			break;
+		case kMsgToggleOutline: {
+			const bool visible = !fOutlineItem->IsMarked();
+			fOutlineItem->SetMarked(visible);
+			fMainSplitView->SetItemCollapsed(0, !visible);
+			if (visible) {
+				ScheduleOutlineRefresh();
+			}
+			break;
+		}
+		case CodeEdit::kMsgContentsChanged: {
+			void *view = nullptr;
+			if (message->FindPointer("view", &view) == B_OK && view == fActiveView) {
+				ScheduleOutlineRefresh();
+			}
+			break;
+		}
+		case CodeEdit::kMsgCaretMoved: {
+			void *pointer = nullptr;
+			message->FindPointer("view", &pointer);
+			CodeEditView *view = static_cast<CodeEditView*>(pointer);
+			if (view == nullptr || (view != fActiveView && !view->IsFocus())) {
+				break;
+			}
+			if (view != fActiveView) {
+				fActiveView = view;
+				ScheduleOutlineRefresh();
+			}
+			fOutline->SelectAt(message->GetUInt64("caret", 0));
+			break;
+		}
+		case kMsgRefreshOutline:
+			fOutlineRefreshPending = false;
+			RefreshOutline();
+			break;
+		case kMsgOutlineSelected:
+			JumpToOutlineItem(false);
+			break;
+		case kMsgOutlineInvoked:
+			JumpToOutlineItem(true);
 			break;
 		case kMsgToggleWordWrap: {
 			fWordWrap = !fWordWrap;

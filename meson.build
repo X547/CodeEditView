@@ -31,6 +31,10 @@ if get_option('demo')
 	subdir('demo')
 endif
 
+if get_option('debugger')
+	subdir('debugger')
+endif
+
 if get_option('tests')
 	subdir('tests')
 endif

@@ -111,14 +111,43 @@ struct CaretPosition {
 };
 
 
+// A display row: the clusters of its line from rowStart to rowEnd, drawn
+// starting at cell indent.
 struct RowData {
 	size_t line {};
 	size_t lineStart {};
+	// The whole line.
 	std::string text;
 	bool hasNewline {};
 	LineLayout layout;
 	// Per byte of text; empty without syntax highlighting.
 	std::vector<HighlightStyle> styles;
+	uint32_t subRow {};
+	bool lastRow = true;
+	// Byte offsets in text.
+	size_t rowStart {};
+	size_t rowEnd {};
+	// Line column of the cluster at rowStart.
+	uint32_t rowColumn {};
+	uint32_t indent {};
+
+	// Row column of an offset in text within the row.
+	uint32_t DisplayColumn(size_t offset) const
+	{
+		return layout.ColumnOfOffset(offset) - rowColumn + indent;
+	}
+};
+
+
+// Location of a display row within its line.
+struct RowSpan {
+	size_t line {};
+	size_t lineStart {};
+	uint32_t subRow {};
+	WrapRow row;
+	// Offset in the line where the next row starts, or the line length.
+	size_t end {};
+	bool last {};
 };
 
 
@@ -145,13 +174,19 @@ private:
 	ObserverId fObserver = kNoObserver;
 	EditorSettings fSettings;
 	LayoutOptions fLayoutOptions;
+	// Lines left stale by a wrap width change keep their old row count until
+	// re-wrapped. Queries never re-wrap: that shifts the rows after a line,
+	// which the view must compensate for (see WrapRows()).
 	DisplayMap fDisplayMap;
+	DirtyRows fDirty;
 	Selection fSelection;
 	std::optional<uint32_t> fGoalColumn;
 	size_t fScrollAnchor {};
 	uint32_t fMaxColumns {};
-	DirtyRows fDirty;
+	// Wrap width in cells given by the view; 0 until known.
+	uint32_t fWrapColumns {};
 	mutable std::unordered_map<size_t, LineLayout> fLayoutCache;
+	mutable std::unordered_map<size_t, std::vector<WrapRow>> fWrapCache;
 	QueryCursor fQueryCursor;
 	std::vector<Selection> fExpandHistory;
 	std::optional<Selection> fExpandedSelection;
@@ -162,15 +197,27 @@ private:
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
 	void ResetFromModel();
+	void Relayout();
 	void ApplyChanges(const ModelChanges &changes);
 	void SyncLocked();
 	void TrimLayoutCache() const;
 	std::string LineText(size_t line) const;
 	const LineLayout &LayoutOfLine(size_t line) const;
+	bool IsWrappingLocked() const {return fSettings.wordWrap && fWrapColumns > 0;}
+	std::vector<WrapRow> ComputeWrap(const LineLayout &layout) const;
+	const std::vector<WrapRow> &WrapOfLine(size_t line) const;
+	bool UpdateWrapRows(size_t line);
+	bool RewrapLine(size_t line);
+	void EnsureWrapped(size_t line);
+	bool WrapRowsLocked(size_t firstRow, size_t count);
+	DisplayRow RowAtLocked(size_t row) const;
+	RowSpan SpanOf(size_t line, uint32_t subRow) const;
+	RowSpan SpanOfOffset(size_t offset) const;
 	size_t SnapToBoundary(size_t offset) const;
 	size_t PreviousBoundary(size_t offset) const;
 	size_t NextBoundary(size_t offset) const;
 	CaretPosition PositionOfOffsetLocked(size_t offset) const;
+	uint32_t LineColumnOfOffset(size_t offset) const;
 	size_t OffsetAtLocked(size_t row, float column) const;
 	size_t SmartLineStart(size_t caret) const;
 	size_t PageTarget(Movement movement, size_t row, const PageInfo &page) const;
@@ -209,6 +256,17 @@ public:
 	const EditorSettings &Settings() const {return fSettings;}
 	const LayoutOptions &GetLayoutOptions() const {return fLayoutOptions;}
 	void SetSettings(const EditorSettings &settings);
+
+	// Word wrap. The width in cells comes from the view. After a change,
+	// lines are stale until re-wrapped by WrapRows() (the rows about to be
+	// shown), WrapFromScrollAnchor() (count rows from the scroll anchor) or
+	// RewrapStep() (up to maxLines lines in the background; returns whether
+	// stale lines remain). WrapRows() returns whether row counts changed.
+	void SetWrapColumns(uint32_t columns);
+	bool IsWrapping();
+	bool WrapRows(size_t firstRow, size_t count);
+	void WrapFromScrollAnchor(size_t count);
+	bool RewrapStep(size_t maxLines);
 
 	// Queries.
 	Selection GetSelection();

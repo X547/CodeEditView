@@ -76,6 +76,12 @@ Folding: the triangles in the gutter fold and unfold blocks; clicking the
 The view also accepts `CodeEdit::kMsgToggleFold`, `kMsgFoldAll` and
 `kMsgUnfoldAll` messages.
 
+Word wrap (`EditorSettings::wordWrap`) wraps lines at the view width,
+preferably after blanks and punctuation. Continuation rows are indented by the
+line's leading whitespace plus `wrapIndent` cells. Up/Down move by display
+row; Home/End go to the row edges first, then to the line edges. After a
+resize, lines are re-wrapped in the background, visible ones first.
+
 Mouse: double click selects a word, or the contents of a bracket pair when
 clicking a bracket; triple click selects a line.
 

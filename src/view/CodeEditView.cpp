@@ -29,10 +29,12 @@ static constexpr uint32 kMsgAutoScroll = 'CEas';
 static constexpr uint32 kMsgDropMove = 'CEdm';
 static constexpr uint32 kMsgDropCopy = 'CEdc';
 static constexpr uint32 kMsgKeyBinding = 'CEkb';
+static constexpr uint32 kMsgRewrap = 'CErw';
 
 static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
 static constexpr uint32 kFoldPlaceholderCells = 3;
+static constexpr size_t kRewrapBatchLines = 2000;
 
 // Auto-scrolling runs at about 60 Hz; the scroll distance of a tick depends on
 // the elapsed time, so late ticks do not slow it down.
@@ -162,6 +164,7 @@ void CodeEditView::SetSettings(const CodeEdit::EditorSettings &settings)
 {
 	fCore->SetSettings(settings);
 	if (Window() != nullptr) {
+		UpdateWrapColumns();
 		ApplyDirty();
 	}
 }
@@ -181,6 +184,7 @@ void CodeEditView::SetEditorFont(const BFont &font)
 		fGutter->SetFont(&font);
 	}
 	if (Window() != nullptr) {
+		UpdateWrapColumns();
 		UpdateScrollBars();
 		Invalidate();
 		if (fScrollView != nullptr) {
@@ -275,8 +279,8 @@ void CodeEditView::Draw(BRect updateRect)
 	}
 	context.bracket = mix_color(context.background, ui_color(B_KEYBOARD_NAVIGATION_COLOR), 56);
 
-	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / fLineHeight)));
-	const size_t lastRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.bottom / fLineHeight)));
+	const size_t firstRow = RowAtY(updateRect.top);
+	const size_t lastRow = RowAtY(updateRect.bottom);
 	std::vector<RowData> rows = fCore->Rows(firstRow, lastRow - firstRow + 1);
 
 	// The uncommitted input method text is shown inside the caret row.
@@ -286,7 +290,7 @@ void CodeEditView::Draw(BRect updateRect)
 			const InputMethodState &input = *fInputMethod;
 			context.preeditRow = caret.row;
 			context.preeditStart = selection.caret - data.lineStart;
-			context.caretColumn = data.layout.ColumnOfOffset(context.preeditStart + input.selectionStart);
+			context.caretColumn = data.DisplayColumn(context.preeditStart + input.selectionStart);
 			context.drawCaret = context.drawCaret && input.selectionStart == input.selectionEnd;
 		}
 	}
@@ -296,9 +300,12 @@ void CodeEditView::Draw(BRect updateRect)
 		DrawRow(firstRow + i, updateRect, rows[i], context);
 	}
 
-	const float rowsBottom = (firstRow + rows.size()) * fLineHeight;
+	SetHighColor(context.background);
+	if (updateRect.top < fOriginY) {
+		FillRect(BRect(updateRect.left, updateRect.top, updateRect.right, fOriginY - 1));
+	}
+	const float rowsBottom = RowTop(firstRow + rows.size());
 	if (rowsBottom <= updateRect.bottom) {
-		SetHighColor(context.background);
 		FillRect(BRect(updateRect.left, rowsBottom, updateRect.right, updateRect.bottom));
 	}
 }
@@ -313,7 +320,7 @@ void CodeEditView::DrawRow(
 {
 	using namespace CodeEdit;
 
-	const float top = row * fLineHeight;
+	const float top = RowTop(row);
 	const float bottom = top + fLineHeight - 1;
 	const float baseline = top + fAscent;
 	const bool isCaretRow = row == context.caretRow;
@@ -322,16 +329,18 @@ void CodeEditView::DrawRow(
 	SetHighColor(isCaretRow && !hasSelection ? context.currentLine : context.background);
 	FillRect(BRect(updateRect.left, top, updateRect.right, bottom));
 
-	const size_t lineEnd = data.lineStart + data.text.size();
-	const bool selectsNewline = data.hasNewline && context.selectionStart <= lineEnd
-		&& context.selectionEnd > lineEnd;
-	if (hasSelection && ((context.selectionEnd > data.lineStart && context.selectionStart < lineEnd) || selectsNewline)) {
-		const float left = context.selectionStart <= data.lineStart
-			? 0
-			: data.layout.ColumnOfOffset(context.selectionStart - data.lineStart) * fCellWidth;
-		const float right = selectsNewline
+	// The row covers [rowStart, rowEnd) of the text; past its end is the
+	// newline, or the continuation in the next row.
+	const size_t rowStart = data.lineStart + data.rowStart;
+	const size_t rowEnd = data.lineStart + data.rowEnd;
+	const bool selectsBreak = data.lastRow
+		? data.hasNewline && context.selectionStart <= rowEnd && context.selectionEnd > rowEnd
+		: context.selectionStart < rowEnd && context.selectionEnd > rowEnd;
+	if (hasSelection && ((context.selectionEnd > rowStart && context.selectionStart < rowEnd) || selectsBreak)) {
+		const float left = data.DisplayColumn(std::max(context.selectionStart, rowStart) - data.lineStart) * fCellWidth;
+		const float right = selectsBreak
 			? updateRect.right
-			: data.layout.ColumnOfOffset(std::min(context.selectionEnd, lineEnd) - data.lineStart) * fCellWidth - 1;
+			: data.DisplayColumn(std::min(context.selectionEnd, rowEnd) - data.lineStart) * fCellWidth - 1;
 		SetHighColor(context.selection);
 		FillRect(BRect(left, top, right, bottom));
 	}
@@ -339,16 +348,19 @@ void CodeEditView::DrawRow(
 	if (context.brackets.has_value() && context.preeditRow != row) {
 		SetHighColor(context.bracket);
 		for (const size_t offset : {context.brackets->bracket, context.brackets->partner}) {
-			if (offset < data.lineStart || offset >= lineEnd) {
+			if (offset < rowStart || offset >= rowEnd) {
 				continue;
 			}
 			const Cluster &cluster = data.layout.Clusters()[data.layout.ClusterAtOffset(offset - data.lineStart)];
-			FillRect(BRect(cluster.column * fCellWidth, top, cluster.EndColumn() * fCellWidth - 1, bottom));
+			const float left = data.DisplayColumn(cluster.offset) * fCellWidth;
+			FillRect(BRect(left, top, left + cluster.width * fCellWidth - 1, bottom));
 		}
 	}
 
 	const float firstColumn = floorf(updateRect.left / fCellWidth) - 2;
 	const float lastColumn = ceilf(updateRect.right / fCellWidth) + 2;
+	// Row column = line column + columnShift.
+	const float columnShift = static_cast<float>(data.indent) - static_cast<float>(data.rowColumn);
 
 	std::string runBytes;
 	std::vector<BPoint> runPoints;
@@ -362,11 +374,17 @@ void CodeEditView::DrawRow(
 
 	rgb_color currentColor = context.text;
 	SetHighColor(currentColor);
-	for (const Cluster &cluster : data.layout.Clusters()) {
-		if (cluster.EndColumn() < firstColumn) {
+	const std::vector<Cluster> &clusters = data.layout.Clusters();
+	for (size_t index = data.layout.ClusterAtOffset(data.rowStart); index < clusters.size(); index++) {
+		const Cluster &cluster = clusters[index];
+		if (cluster.offset >= data.rowEnd) {
+			break;
+		}
+		const float column = cluster.column + columnShift;
+		if (column + cluster.width < firstColumn) {
 			continue;
 		}
-		if (cluster.column > lastColumn) {
+		if (column > lastColumn) {
 			break;
 		}
 		if (cluster.kind == ClusterKind::Text) {
@@ -377,7 +395,7 @@ void CodeEditView::DrawRow(
 				currentColor = color;
 			}
 		}
-		const float x = cluster.column * fCellWidth;
+		const float x = column * fCellWidth;
 		const float cellsWidth = cluster.width * fCellWidth;
 
 		switch (cluster.kind) {
@@ -425,9 +443,9 @@ void CodeEditView::DrawRow(
 	flush();
 
 	const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
-	if (std::binary_search(context.foldedHeaders.begin(), context.foldedHeaders.end(), data.line)) {
+	if (data.lastRow && std::binary_search(context.foldedHeaders.begin(), context.foldedHeaders.end(), data.line)) {
 		// Placeholder for the folded lines after the header text.
-		const float left = (data.layout.Width() + 1) * fCellWidth;
+		const float left = (data.DisplayColumn(data.text.size()) + 1) * fCellWidth;
 		const BRect box(left, top + 1, left + kFoldPlaceholderCells * fCellWidth - 1, bottom - 1);
 		SetHighColor(mix_color(context.background, context.placeholder, 48));
 		FillRoundRect(box, 2, 2);
@@ -440,8 +458,8 @@ void CodeEditView::DrawRow(
 		// clause being converted.
 		const InputMethodState &input = *fInputMethod;
 		auto underline = [&](int32 start, int32 end, float thickness) {
-			const float left = data.layout.ColumnOfOffset(context.preeditStart + start) * fCellWidth;
-			const float right = data.layout.ColumnOfOffset(context.preeditStart + end) * fCellWidth - 2;
+			const float left = data.DisplayColumn(context.preeditStart + start) * fCellWidth;
+			const float right = data.DisplayColumn(context.preeditStart + end) * fCellWidth - 2;
 			if (right > left) {
 				FillRect(BRect(left + 1, bottom - thickness + 1, right, bottom));
 			}
@@ -472,8 +490,8 @@ void CodeEditView::DrawRow(
 
 void CodeEditView::InvalidateRows(size_t first, size_t last)
 {
-	const float top = first * fLineHeight;
-	const float bottom = last == SIZE_MAX ? FLT_MAX : (last + 1) * fLineHeight - 1;
+	const float top = RowTop(first);
+	const float bottom = last == SIZE_MAX ? FLT_MAX : RowTop(last + 1) - 1;
 
 	const BRect bounds = Bounds();
 	if (top <= bounds.bottom && bottom >= bounds.top) {
@@ -496,7 +514,7 @@ void CodeEditView::InvalidateCaret()
 {
 	const CodeEdit::CaretPosition caret = fCore->PositionOfOffset(fCore->GetSelection().caret);
 	const float x = caret.column * fCellWidth;
-	const float top = caret.row * fLineHeight;
+	const float top = RowTop(caret.row);
 	Invalidate(BRect(x - 1, top, x + fLineHeight / 8 + 1, top + fLineHeight - 1));
 }
 
@@ -518,17 +536,60 @@ void CodeEditView::RestartCaretBlink()
 
 size_t CodeEditView::TopRow() const
 {
-	return static_cast<size_t>(std::max(0.0f, floorf(Bounds().top / fLineHeight)));
+	return RowAtY(Bounds().top);
+}
+
+
+size_t CodeEditView::RowAtY(float y) const
+{
+	return static_cast<size_t>(std::max(0.0f, floorf((y - fOriginY) / fLineHeight)));
 }
 
 
 CodeEdit::PageInfo CodeEditView::CurrentPage() const
 {
 	const BRect bounds = Bounds();
-	const size_t topRow = static_cast<size_t>(std::max(0.0f, ceilf(bounds.top / fLineHeight)));
-	const float visibleHeight = bounds.bottom + 1 - topRow * fLineHeight;
+	const size_t topRow = static_cast<size_t>(std::max(0.0f, ceilf((bounds.top - fOriginY) / fLineHeight)));
+	const float visibleHeight = bounds.bottom + 1 - RowTop(topRow);
 	const size_t visibleRows = static_cast<size_t>(std::max(1.0f, floorf(visibleHeight / fLineHeight)));
 	return {topRow, visibleRows};
+}
+
+
+// Wrapped text does not scroll horizontally.
+float CodeEditView::ContentWidth()
+{
+	return fCore->IsWrapping() ? 0 : (fCore->MaxColumns() + 2) * fCellWidth;
+}
+
+
+// The wrap width leaves one cell for the caret after a full row.
+void CodeEditView::UpdateWrapColumns()
+{
+	if (Window() == nullptr || fCellWidth <= 0) {
+		return;
+	}
+	const float columns = floorf((Bounds().Width() + 1) / fCellWidth) - 1;
+	fCore->SetWrapColumns(static_cast<uint32_t>(std::max(1.0f, columns)));
+	if (!fCore->IsWrapping()) {
+		return;
+	}
+	ScheduleRewrap();
+	if (Bounds().left != 0) {
+		ScrollToClamped(0, Bounds().top);
+	}
+	ApplyDirty();
+}
+
+
+// Re-wraps lines in small batches from the message loop, so resizing a
+// large document does not block the window.
+void CodeEditView::ScheduleRewrap()
+{
+	if (!fRewrapPosted && Window() != nullptr) {
+		fRewrapPosted = true;
+		BMessenger(this).SendMessage(kMsgRewrap);
+	}
 }
 
 
@@ -536,11 +597,11 @@ void CodeEditView::UpdateScrollBars()
 {
 	const BRect bounds = Bounds();
 	const float height = fCore->RowCount() * fLineHeight;
-	const float width = (fCore->MaxColumns() + 2) * fCellWidth;
+	const float width = ContentWidth();
 
 	if (BScrollBar *bar = ScrollBar(B_VERTICAL); bar != nullptr) {
 		const float visible = bounds.Height() + 1;
-		bar->SetRange(0, std::max(0.0f, height - visible));
+		bar->SetRange(fOriginY, fOriginY + std::max(0.0f, height - visible));
 		bar->SetProportion(height > 0 ? std::min(1.0f, visible / height) : 1.0f);
 		bar->SetSteps(fLineHeight, std::max(fLineHeight, visible - fLineHeight));
 	}
@@ -553,23 +614,41 @@ void CodeEditView::UpdateScrollBars()
 }
 
 
-void CodeEditView::ScrollToClamped(float x, float y)
+BPoint CodeEditView::ClampScrollPosition(float x, float y)
 {
 	const BRect bounds = Bounds();
 	const float height = fCore->RowCount() * fLineHeight;
-	const float width = (fCore->MaxColumns() + 2) * fCellWidth;
+	const float width = ContentWidth();
 	const float maxX = std::max(0.0f, width - bounds.Width() - 1);
 	const float maxY = std::max(0.0f, height - bounds.Height() - 1);
-	x = std::clamp(roundf(x), 0.0f, maxX);
-	y = std::clamp(roundf(y), 0.0f, maxY);
-	if (x != bounds.left || y != bounds.top) {
-		ScrollTo(BPoint(x, y));
+	return BPoint(std::clamp(roundf(x), 0.0f, maxX), std::clamp(roundf(y), fOriginY, fOriginY + maxY));
+}
+
+
+void CodeEditView::ScrollToClamped(float x, float y)
+{
+	const BPoint where = ClampScrollPosition(x, y);
+	if (where != Bounds().LeftTop()) {
+		ScrollTo(where);
 	}
 }
 
 
 void CodeEditView::ScrollTo(BPoint where)
 {
+	// Rows scrolled into view are wrapped before the visible bits are copied.
+	// If that changed rows above the visible text, the origin moves so the
+	// pixels on screen stay valid, and the target moves with its text.
+	if (fCore->IsWrapping()) {
+		const size_t anchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
+		if (fCore->WrapRows(RowAtY(where.y), CurrentPage().visibleRows + 2)) {
+			const size_t newAnchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
+			const float delta = (static_cast<float>(newAnchorRow) - static_cast<float>(anchorRow)) * fLineHeight;
+			fOriginY -= delta;
+			where.y -= delta;
+			UpdateScrollBars();
+		}
+	}
 	BView::ScrollTo(where);
 	if (fGutter != nullptr) {
 		fGutter->ScrollTo(BPoint(0, where.y));
@@ -618,7 +697,7 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 	const float context = contextRows * fLineHeight;
 
 	float y = bounds.top;
-	const float caretTop = caret.row * fLineHeight;
+	const float caretTop = RowTop(caret.row);
 	const float caretBottom = caretTop + fLineHeight;
 	if (caretTop - context < y) {
 		y = caretTop - context;
@@ -641,22 +720,28 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 // Applies accumulated changes of the editor core to the screen.
 void CodeEditView::ApplyDirty()
 {
+	// Lines from the scroll anchor on are wrapped before drawing; changes
+	// above it are compensated below.
+	fCore->WrapFromScrollAnchor(CurrentPage().visibleRows + 2);
 	fCore->UpdateBracketMatch();
 	const CodeEdit::DirtyRows dirty = fCore->TakeDirty();
+
+	// Keep the text at the top of the view in place when rows are inserted
+	// or removed above it: the origin moves instead of the view, so nothing
+	// on screen changes. Only at the ends of the text the view may have to
+	// scroll; the scroll bar range follows the origin.
+	const size_t anchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
+	const size_t topRow = TopRow();
+	if (anchorRow != topRow) {
+		fOriginY -= (static_cast<float>(anchorRow) - static_cast<float>(topRow)) * fLineHeight;
+		UpdateScrollBars();
+		ScrollToClamped(Bounds().left, Bounds().top);
+	}
 	if (dirty.scrollRangeChanged) {
 		UpdateScrollBars();
 		if (fScrollView != nullptr) {
 			fScrollView->ContentsChanged();
 		}
-	}
-
-	// Keep the text at the top of the view in place when lines are inserted or
-	// removed above it.
-	const size_t anchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
-	const size_t topRow = TopRow();
-	if (anchorRow != topRow) {
-		const float fraction = Bounds().top - topRow * fLineHeight;
-		ScrollToClamped(Bounds().left, anchorRow * fLineHeight + fraction);
 	}
 
 	if (!dirty.IsEmpty()) {
@@ -766,7 +851,7 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 			scroll(bounds.left, bounds.top + std::max<size_t>(1, page.visibleRows - 1) * fLineHeight);
 			break;
 		case EditorCommand::ScrollToStart:
-			scroll(bounds.left, 0);
+			scroll(bounds.left, fOriginY);
 			break;
 		case EditorCommand::ScrollToEnd:
 			scroll(bounds.left, FLT_MAX);
@@ -914,7 +999,7 @@ bool CodeEditView::SpliceInputMethod(CodeEdit::RowData &data, size_t caret)
 	if (!input.composing || input.text.empty()) {
 		return false;
 	}
-	if (caret < data.lineStart || caret > data.lineStart + data.text.size()) {
+	if (caret < data.lineStart + data.rowStart || caret > data.lineStart + data.rowEnd) {
 		return false;
 	}
 	if (!data.styles.empty()) {
@@ -922,6 +1007,9 @@ bool CodeEditView::SpliceInputMethod(CodeEdit::RowData &data, size_t caret)
 	}
 	data.text.insert(caret - data.lineStart, input.text);
 	data.layout = CodeEdit::LineLayout(data.text, fCore->GetLayoutOptions());
+	// A wrapped row is not wrapped again: the text after the input method
+	// text may extend past the right edge.
+	data.rowEnd += input.text.size();
 	return true;
 }
 
@@ -1026,7 +1114,7 @@ void CodeEditView::SendInputMethodLocation()
 
 	BMessage reply(B_INPUT_METHOD_EVENT);
 	reply.AddInt32("be:opcode", B_INPUT_METHOD_LOCATION_REQUEST);
-	const float top = position.row * fLineHeight;
+	const float top = RowTop(position.row);
 	if (rows.empty() || !SpliceInputMethod(rows.front(), caret)) {
 		reply.AddPoint("be:location_reply", ConvertToScreen(BPoint(position.column * fCellWidth, top)));
 		reply.AddFloat("be:height_reply", fLineHeight);
@@ -1037,7 +1125,7 @@ void CodeEditView::SendInputMethodLocation()
 			if ((static_cast<uint8>(input.text[i]) & 0xc0) == 0x80) {
 				continue;
 			}
-			const float x = data.layout.ColumnOfOffset(start + i) * fCellWidth;
+			const float x = data.DisplayColumn(start + i) * fCellWidth;
 			reply.AddPoint("be:location_reply", ConvertToScreen(BPoint(x, top)));
 			reply.AddFloat("be:height_reply", fLineHeight);
 		}
@@ -1081,6 +1169,7 @@ void CodeEditView::AttachedToWindow()
 	fCore->UpdateBracketMatch();
 	fCore->TakeDirty();
 	UpdateScrollBars();
+	UpdateWrapColumns();
 }
 
 
@@ -1098,6 +1187,7 @@ void CodeEditView::DetachedFromWindow()
 void CodeEditView::FrameResized(float width, float height)
 {
 	BView::FrameResized(width, height);
+	UpdateWrapColumns();
 	UpdateScrollBars();
 }
 
@@ -1147,7 +1237,7 @@ void CodeEditView::KeyDown(const char *bytes, int32 numBytes)
 
 size_t CodeEditView::OffsetAtPoint(BPoint where)
 {
-	const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fLineHeight)));
+	const size_t row = RowAtY(where.y);
 	return fCore->OffsetAt(row, where.x / fCellWidth);
 }
 
@@ -1169,10 +1259,10 @@ bool CodeEditView::IsPointInSelection(BPoint where)
 	const CodeEdit::Selection selection = fCore->GetSelection();
 	const size_t start = std::min(selection.anchor, selection.caret);
 	const size_t end = std::max(selection.anchor, selection.caret);
-	if (start == end || where.y < 0) {
+	if (start == end || where.y < fOriginY) {
 		return false;
 	}
-	const size_t row = static_cast<size_t>(floorf(where.y / fLineHeight));
+	const size_t row = RowAtY(where.y);
 	if (row >= fCore->RowCount()) {
 		return false;
 	}
@@ -1233,7 +1323,7 @@ void CodeEditView::MouseDown(BPoint where)
 	// A click past the end of a folded header line (on the placeholder)
 	// unfolds it.
 	if (!extend && clicks == 1) {
-		const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fLineHeight)));
+		const size_t row = RowAtY(where.y);
 		const std::vector<DisplayRow> rows = fCore->DisplayRows(row, 1);
 		if (!rows.empty() && fCore->HitTestCell(row, where.x / fCellWidth).pastLineEnd
 			&& fCore->IsFolded(rows.front().line)) {
@@ -1252,7 +1342,7 @@ void CodeEditView::MouseDown(BPoint where)
 		range = {selection.anchor, selection.anchor};
 		fCore->ExtendSelection(range, offset, unit);
 	} else if (clicks == 2) {
-		const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fLineHeight)));
+		const size_t row = RowAtY(where.y);
 		const CellHit hit = fCore->HitTestCell(row, where.x / fCellWidth);
 		const std::optional<TextRange> balanced = hit.pastLineEnd
 			? std::nullopt
@@ -1462,7 +1552,7 @@ BRect CodeEditView::SelectionFrame()
 	const size_t startRow = fCore->PositionOfOffset(std::min(selection.anchor, selection.caret)).row;
 	const size_t endRow = fCore->PositionOfOffset(std::max(selection.anchor, selection.caret)).row;
 	const BRect bounds = Bounds();
-	BRect frame(bounds.left, startRow * fLineHeight, bounds.right, (endRow + 1) * fLineHeight - 1);
+	BRect frame(bounds.left, RowTop(startRow), bounds.right, RowTop(endRow + 1) - 1);
 	frame = frame & bounds;
 	if (!frame.IsValid()) {
 		frame = BRect(fMouse->downPoint, fMouse->downPoint).InsetByCopy(-4, -4);
@@ -1501,7 +1591,7 @@ void CodeEditView::SetDropOffset(std::optional<size_t> offset)
 	auto invalidate = [this](size_t dropOffset) {
 		const CodeEdit::CaretPosition position = fCore->PositionOfOffset(dropOffset);
 		const float x = position.column * fCellWidth;
-		const float top = position.row * fLineHeight;
+		const float top = RowTop(position.row);
 		Invalidate(BRect(x - 1, top, x + fLineHeight / 4 + 1, top + fLineHeight - 1));
 	};
 	if (fMouse->dropOffset.has_value()) {
@@ -1615,6 +1705,13 @@ void CodeEditView::MessageReceived(BMessage *message)
 	switch (message->what) {
 		case kMsgAutoScroll:
 			AutoScrollTick();
+			break;
+		case kMsgRewrap:
+			fRewrapPosted = false;
+			if (fCore->RewrapStep(kRewrapBatchLines)) {
+				ScheduleRewrap();
+			}
+			ApplyDirty();
 			break;
 		case CodeEdit::kMsgToggleFold:
 			ExecuteCommand(CodeEdit::EditorCommand::ToggleFold, false);

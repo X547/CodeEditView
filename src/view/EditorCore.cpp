@@ -108,36 +108,104 @@ void EditorCore::SyncLocked()
 
 void EditorCore::SetSettings(const EditorSettings &settings)
 {
-	fSettings = settings;
-	fLayoutOptions.tabWidth = std::max<uint32_t>(1, settings.tabWidth);
-	fLayoutOptions.ambiguousWidth = std::clamp<uint32_t>(settings.ambiguousWidth, 1, 2);
-
 	ModelLock lock(*fModel);
 	SyncLocked();
-	ResetFromModel();
+
+	LayoutOptions layoutOptions = fLayoutOptions;
+	layoutOptions.tabWidth = std::max<uint32_t>(1, settings.tabWidth);
+	layoutOptions.ambiguousWidth = std::clamp<uint32_t>(settings.ambiguousWidth, 1, 2);
+	const bool relayout = layoutOptions.tabWidth != fLayoutOptions.tabWidth
+		|| layoutOptions.ambiguousWidth != fLayoutOptions.ambiguousWidth
+		|| settings.wordWrap != fSettings.wordWrap
+		|| (settings.wordWrap && settings.wrapIndent != fSettings.wrapIndent);
+	fSettings = settings;
+	fLayoutOptions = layoutOptions;
+	if (relayout) {
+		Relayout();
+		fSelection = ClampSelection(fSelection);
+		fGoalColumn.reset();
+	}
+}
+
+
+void EditorCore::SetWrapColumns(uint32_t columns)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (columns == fWrapColumns) {
+		return;
+	}
+	const bool wasWrapping = IsWrappingLocked();
+	fWrapColumns = columns;
+	if (!fSettings.wordWrap) {
+		return;
+	}
+	if (!wasWrapping || !IsWrappingLocked()) {
+		Relayout();
+		return;
+	}
+	// Lines are re-wrapped lazily, starting with the visible ones.
+	fWrapCache.clear();
+	const Rope &text = fModel->Text();
+	fDisplayMap.MarkAllStale(text.LineOfOffset(std::min(fScrollAnchor, text.Length())));
+	fDirty.AddAll();
+	fDirty.marksChanged = true;
+}
+
+
+bool EditorCore::IsWrapping()
+{
+	ModelLock lock(*fModel);
+	return IsWrappingLocked();
+}
+
+
+bool EditorCore::RewrapStep(size_t maxLines)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	for (size_t i = 0; i < maxLines; i++) {
+		const std::optional<size_t> line = fDisplayMap.NextStaleLine();
+		if (!line.has_value()) {
+			break;
+		}
+		RewrapLine(*line);
+	}
+	return fDisplayMap.HasStaleLines();
 }
 
 
 void EditorCore::ResetFromModel()
 {
+	fFolds.clear();
+	Relayout();
+	fSelection = ClampSelection(fSelection);
+	fScrollAnchor = std::min(fScrollAnchor, fModel->Text().Length());
+	fGoalColumn.reset();
+}
+
+
+// Lays out all lines again, keeping folds.
+void EditorCore::Relayout()
+{
 	const Rope &text = fModel->Text();
 	fLayoutCache.clear();
+	fWrapCache.clear();
 	fDisplayMap.Reset(text.LineCount());
 
 	// TODO: computing the widest line lays out the whole text; do it lazily
 	// for large files.
 	fMaxColumns = 0;
+	const bool wrapping = IsWrappingLocked();
 	for (size_t line = 0; line < text.LineCount(); line++) {
-		fMaxColumns = std::max(fMaxColumns, LineLayout(LineText(line), fLayoutOptions).Width());
+		const LineLayout layout(LineText(line), fLayoutOptions);
+		fMaxColumns = std::max(fMaxColumns, layout.Width());
+		if (wrapping) {
+			fDisplayMap.SetWrapRows(line, static_cast<uint32_t>(ComputeWrap(layout).size()));
+		}
 	}
 
-	fFolds.clear();
-	fSelection = ClampSelection(fSelection);
-	fScrollAnchor = std::min(fScrollAnchor, text.Length());
-	fGoalColumn.reset();
-	fDirty.AddAll();
-	fDirty.scrollRangeChanged = true;
-	fDirty.marksChanged = true;
+	ApplyFolds();
 }
 
 
@@ -159,36 +227,63 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 
 	const Rope &text = fModel->Text();
 	bool foldsRemoved = false;
+	bool rowsChanged = false;
+	// Inclusive line ranges touched by the edits, following later edits.
+	std::vector<std::pair<size_t, size_t>> edited;
 	for (const EditRecord &edit : changes.edits) {
 		fDisplayMap.ApplyEdit(edit);
 		foldsRemoved = AdjustFolds(edit) || foldsRemoved;
 		fSelection = MapSelection(fSelection, edit);
 		fScrollAnchor = edit.MapOffset(fScrollAnchor, Gravity::Left);
-		if (edit.oldEnd.line == edit.newEnd.line) {
-			fDirty.Add(edit.start.line, edit.newEnd.line);
-		} else {
-			fDirty.Add(edit.start.line, SIZE_MAX);
-			fDirty.scrollRangeChanged = true;
-			fDirty.marksChanged = true;
+
+		const size_t first = edit.start.line;
+		const size_t oldLast = edit.oldEnd.line;
+		const size_t newLast = edit.newEnd.line;
+		rowsChanged = rowsChanged || oldLast != newLast;
+		for (auto &[from, to] : edited) {
+			if (from > oldLast) {
+				from = from - oldLast + newLast;
+				to = to - oldLast + newLast;
+			} else if (to >= first) {
+				from = std::min(from, first);
+				to = to > oldLast ? to - oldLast + newLast : newLast;
+			}
 		}
+		edited.emplace_back(first, newLast);
 	}
 	fLayoutCache.clear();
+	fWrapCache.clear();
 
-	// Later edits may have shifted the lines of earlier ones; the widest line
-	// is only used for the scroll range, so an approximation is fine.
-	for (const EditRecord &edit : changes.edits) {
-		const size_t lastLine = std::min(edit.newEnd.line, text.NewlineCount());
-		for (size_t line = std::min(edit.start.line, lastLine); line <= lastLine; line++) {
+	size_t firstLine = SIZE_MAX;
+	size_t lastLine = 0;
+	const bool wrapping = IsWrappingLocked();
+	for (auto [from, to] : edited) {
+		to = std::min(to, text.NewlineCount());
+		firstLine = std::min(firstLine, from);
+		lastLine = std::max(lastLine, to);
+		for (size_t line = from; line <= to; line++) {
 			const uint32_t width = LayoutOfLine(line).Width();
 			if (width > fMaxColumns) {
 				fMaxColumns = width;
 				fDirty.scrollRangeChanged = true;
+			}
+			if (wrapping && UpdateWrapRows(line)) {
+				rowsChanged = true;
 			}
 		}
 	}
 
 	if (foldsRemoved) {
 		ApplyFolds();
+	}
+	const size_t firstRow = fDisplayMap.FirstRowOfLine(firstLine);
+	if (rowsChanged) {
+		fDirty.Add(firstRow, SIZE_MAX);
+		fDirty.scrollRangeChanged = true;
+		fDirty.marksChanged = true;
+	} else {
+		const size_t endRow = fDisplayMap.FirstRowOfLine(lastLine + 1);
+		fDirty.Add(firstRow, endRow > firstRow ? endRow - 1 : firstRow);
 	}
 	fSelection = ClampSelection(fSelection);
 }
@@ -198,6 +293,9 @@ void EditorCore::TrimLayoutCache() const
 {
 	if (fLayoutCache.size() > kMaxCachedLayouts) {
 		fLayoutCache.clear();
+	}
+	if (fWrapCache.size() > kMaxCachedLayouts) {
+		fWrapCache.clear();
 	}
 }
 
@@ -217,6 +315,145 @@ const LineLayout &EditorCore::LayoutOfLine(size_t line) const
 		return it->second;
 	}
 	return fLayoutCache.emplace(line, LineLayout(LineText(line), fLayoutOptions)).first->second;
+}
+
+
+//#pragma mark - Wrapping
+
+std::vector<WrapRow> EditorCore::ComputeWrap(const LineLayout &layout) const
+{
+	return WrapLine(layout, IsWrappingLocked() ? fWrapColumns : 0, fSettings.wrapIndent);
+}
+
+
+const std::vector<WrapRow> &EditorCore::WrapOfLine(size_t line) const
+{
+	static const std::vector<WrapRow> kSingleRow {WrapRow {}};
+	if (!IsWrappingLocked()) {
+		return kSingleRow;
+	}
+	const auto it = fWrapCache.find(line);
+	if (it != fWrapCache.end()) {
+		return it->second;
+	}
+	return fWrapCache.emplace(line, ComputeWrap(LayoutOfLine(line))).first->second;
+}
+
+
+// Sets the row count of a line from its wrap; returns whether it changed.
+bool EditorCore::UpdateWrapRows(size_t line)
+{
+	const uint32_t oldRows = fDisplayMap.WrapRows(line);
+	uint32_t rows = 1;
+	if (IsWrappingLocked()) {
+		const auto it = fWrapCache.find(line);
+		// Stale lines are mostly re-wrapped in bulk; do not fill the cache.
+		rows = static_cast<uint32_t>(it != fWrapCache.end()
+			? it->second.size()
+			: ComputeWrap(LineLayout(LineText(line), fLayoutOptions)).size());
+	}
+	fDisplayMap.SetWrapRows(line, rows);
+	return rows != oldRows && !fDisplayMap.IsHidden(line);
+}
+
+
+// Re-wraps a line outside of an edit; returns whether its row count changed.
+// Text at the scroll anchor stays in place (see CodeEditView::ApplyDirty()),
+// so only changes from the anchor line on need repainting.
+bool EditorCore::RewrapLine(size_t line)
+{
+	if (!UpdateWrapRows(line)) {
+		return false;
+	}
+	fDirty.scrollRangeChanged = true;
+	const Rope &text = fModel->Text();
+	if (line >= text.LineOfOffset(std::min(fScrollAnchor, text.Length()))) {
+		fDirty.Add(fDisplayMap.FirstRowOfLine(line), SIZE_MAX);
+	}
+	return true;
+}
+
+
+void EditorCore::EnsureWrapped(size_t line)
+{
+	if (fDisplayMap.IsStale(line)) {
+		RewrapLine(line);
+	}
+}
+
+
+bool EditorCore::WrapRowsLocked(size_t firstRow, size_t count)
+{
+	bool changed = false;
+	size_t row = firstRow;
+	// Re-wrapping a line changes the rows after its first one, so the same
+	// row is looked up again.
+	while (fDisplayMap.HasStaleLines() && row < firstRow + count && row < fDisplayMap.RowCount()) {
+		const DisplayRow displayRow = fDisplayMap.RowAt(row);
+		if (fDisplayMap.IsStale(displayRow.line)) {
+			changed = RewrapLine(displayRow.line) || changed;
+			continue;
+		}
+		row = fDisplayMap.FirstRowOfLine(displayRow.line + 1);
+	}
+	return changed;
+}
+
+
+bool EditorCore::WrapRows(size_t firstRow, size_t count)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return WrapRowsLocked(firstRow, count);
+}
+
+
+void EditorCore::WrapFromScrollAnchor(size_t count)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (!fDisplayMap.HasStaleLines()) {
+		return;
+	}
+	const Rope &text = fModel->Text();
+	EnsureWrapped(text.LineOfOffset(std::min(fScrollAnchor, text.Length())));
+	WrapRowsLocked(PositionOfOffsetLocked(fScrollAnchor).row, count);
+}
+
+
+// Stale lines may have a different number of rows than their wrap; rows
+// past the wrap repeat its last row.
+DisplayRow EditorCore::RowAtLocked(size_t row) const
+{
+	return fDisplayMap.RowAt(std::min(row, fDisplayMap.RowCount() - 1));
+}
+
+
+RowSpan EditorCore::SpanOf(size_t line, uint32_t subRow) const
+{
+	const std::vector<WrapRow> &wrap = WrapOfLine(line);
+	RowSpan span;
+	span.line = line;
+	span.lineStart = fModel->Text().LineStart(line);
+	span.subRow = std::min<uint32_t>(subRow, static_cast<uint32_t>(wrap.size() - 1));
+	span.row = wrap[span.subRow];
+	span.last = span.subRow + 1 == wrap.size();
+	span.end = span.last ? LayoutOfLine(line).Length() : wrap[span.subRow + 1].offset;
+	return span;
+}
+
+
+RowSpan EditorCore::SpanOfOffset(size_t offset) const
+{
+	const Rope &text = fModel->Text();
+	offset = std::min(offset, text.Length());
+	const size_t line = text.LineOfOffset(offset);
+	const std::vector<WrapRow> &wrap = WrapOfLine(line);
+	const size_t inLine = offset - text.LineStart(line);
+	const auto next = std::upper_bound(wrap.begin(), wrap.end(), inLine, [](size_t value, const WrapRow &row) {
+		return value < row.offset;
+	});
+	return SpanOf(line, static_cast<uint32_t>(next - wrap.begin() - 1));
 }
 
 
@@ -266,19 +503,38 @@ size_t EditorCore::NextBoundary(size_t offset) const
 
 CaretPosition EditorCore::PositionOfOffsetLocked(size_t offset) const
 {
-	const Rope &text = fModel->Text();
-	offset = std::min(offset, text.Length());
-	const size_t line = text.LineOfOffset(offset);
-	const uint32_t column = LayoutOfLine(line).ColumnOfOffset(offset - text.LineStart(line));
-	return {fDisplayMap.FirstRowOfLine(line), column};
+	offset = std::min(offset, fModel->Text().Length());
+	const RowSpan span = SpanOfOffset(offset);
+	const uint32_t column = LayoutOfLine(span.line).ColumnOfOffset(offset - span.lineStart)
+		- span.row.column + span.row.indent;
+	const uint32_t subRow = fDisplayMap.IsHidden(span.line)
+		? 0
+		: std::min(span.subRow, fDisplayMap.WrapRows(span.line) - 1);
+	return {fDisplayMap.FirstRowOfLine(span.line) + subRow, column};
 }
 
 
+// Column of an offset in its line, independent of wrapping.
+uint32_t EditorCore::LineColumnOfOffset(size_t offset) const
+{
+	const Rope &text = fModel->Text();
+	offset = std::min(offset, text.Length());
+	const size_t line = text.LineOfOffset(offset);
+	return LayoutOfLine(line).ColumnOfOffset(offset - text.LineStart(line));
+}
+
+
+// The last offset of a row that is not the last of its line is before its
+// last cluster; the end of the row is the start of the next one.
 size_t EditorCore::OffsetAtLocked(size_t row, float column) const
 {
-	const DisplayRow displayRow = fDisplayMap.RowAt(std::min(row, fDisplayMap.RowCount() - 1));
-	const size_t lineStart = fModel->Text().LineStart(displayRow.line);
-	return lineStart + LayoutOfLine(displayRow.line).BoundaryNearColumn(column);
+	const DisplayRow displayRow = RowAtLocked(row);
+	const RowSpan span = SpanOf(displayRow.line, displayRow.subRow);
+	const LineLayout &layout = LayoutOfLine(span.line);
+	const float lineColumn = column - span.row.indent + span.row.column;
+	const size_t last = span.last ? layout.Length() : layout.PreviousBoundary(span.end);
+	const size_t offset = std::clamp<size_t>(layout.BoundaryNearColumn(lineColumn), span.row.offset, last);
+	return span.lineStart + offset;
 }
 
 
@@ -422,15 +678,26 @@ std::vector<RowData> EditorCore::Rows(size_t first, size_t count)
 	Prepare();
 	const Rope &text = fModel->Text();
 	std::vector<RowData> rows;
-	const size_t end = std::min(first + count, fDisplayMap.RowCount());
-	for (size_t row = first; row < end; row++) {
-		const DisplayRow displayRow = fDisplayMap.RowAt(row);
+	for (size_t row = first; row < first + count && row < fDisplayMap.RowCount(); row++) {
+		const DisplayRow displayRow = RowAtLocked(row);
+		const RowSpan span = SpanOf(displayRow.line, displayRow.subRow);
 		RowData data;
 		data.line = displayRow.line;
-		data.lineStart = text.LineStart(displayRow.line);
-		data.text = LineText(displayRow.line);
+		data.lineStart = span.lineStart;
+		if (!rows.empty() && rows.back().line == displayRow.line) {
+			data.text = rows.back().text;
+			data.layout = rows.back().layout;
+		} else {
+			data.text = LineText(displayRow.line);
+			data.layout = LayoutOfLine(displayRow.line);
+		}
 		data.hasNewline = displayRow.line < text.NewlineCount();
-		data.layout = LayoutOfLine(displayRow.line);
+		data.subRow = span.subRow;
+		data.lastRow = span.last;
+		data.rowStart = span.row.offset;
+		data.rowEnd = span.end;
+		data.rowColumn = span.row.column;
+		data.indent = span.row.indent;
 		rows.push_back(std::move(data));
 	}
 
@@ -454,9 +721,8 @@ std::vector<DisplayRow> EditorCore::DisplayRows(size_t first, size_t count)
 	ModelLock lock(*fModel);
 	Prepare();
 	std::vector<DisplayRow> rows;
-	const size_t end = std::min(first + count, fDisplayMap.RowCount());
-	for (size_t row = first; row < end; row++) {
-		rows.push_back(fDisplayMap.RowAt(row));
+	for (size_t row = first; row < first + count && row < fDisplayMap.RowCount(); row++) {
+		rows.push_back(RowAtLocked(row));
 	}
 	return rows;
 }
@@ -482,8 +748,9 @@ size_t EditorCore::RowStartOffset(size_t row)
 {
 	ModelLock lock(*fModel);
 	Prepare();
-	const DisplayRow displayRow = fDisplayMap.RowAt(std::min(row, fDisplayMap.RowCount() - 1));
-	return fModel->Text().LineStart(displayRow.line);
+	const DisplayRow displayRow = RowAtLocked(row);
+	const RowSpan span = SpanOf(displayRow.line, displayRow.subRow);
+	return span.lineStart + span.row.offset;
 }
 
 
@@ -501,14 +768,19 @@ CellHit EditorCore::HitTestCell(size_t row, float column)
 {
 	ModelLock lock(*fModel);
 	Prepare();
-	const DisplayRow displayRow = fDisplayMap.RowAt(std::min(row, fDisplayMap.RowCount() - 1));
-	const size_t lineStart = fModel->Text().LineStart(displayRow.line);
-	const LineLayout &layout = LayoutOfLine(displayRow.line);
-	const size_t index = layout.ClusterAtColumn(static_cast<uint32_t>(std::max(0.0f, column)));
-	if (index == layout.Clusters().size()) {
-		return {lineStart + layout.Length(), true};
+	const DisplayRow displayRow = RowAtLocked(row);
+	const RowSpan span = SpanOf(displayRow.line, displayRow.subRow);
+	const LineLayout &layout = LayoutOfLine(span.line);
+	const float rowColumn = std::max(0.0f, column - span.row.indent);
+	const size_t index = layout.ClusterAtColumn(static_cast<uint32_t>(rowColumn) + span.row.column);
+	if (index == layout.Clusters().size() || layout.Clusters()[index].offset >= span.end) {
+		if (span.last) {
+			return {span.lineStart + layout.Length(), true};
+		}
+		// Past the end of a wrapped row: its last cluster.
+		return {span.lineStart + layout.PreviousBoundary(span.end), false};
 	}
-	return {lineStart + layout.Clusters()[index].offset, false};
+	return {span.lineStart + layout.Clusters()[index].offset, false};
 }
 
 
@@ -737,6 +1009,9 @@ void EditorCore::Move(Movement movement, bool extend, const PageInfo &page)
 	const size_t selectionStart = std::min(fSelection.anchor, fSelection.caret);
 	const size_t selectionEnd = std::max(fSelection.anchor, fSelection.caret);
 	const bool collapse = !extend && selectionStart != selectionEnd;
+	// Commands are followed by CodeEditView::ApplyDirty(), so re-wrapping
+	// is safe here.
+	EnsureWrapped(text.LineOfOffset(caret));
 
 	size_t newCaret = caret;
 	std::optional<uint32_t> goalColumn;
@@ -765,12 +1040,19 @@ void EditorCore::Move(Movement movement, bool extend, const PageInfo &page)
 			newCaret = SnapToBoundary(FindWordBoundary(text, caret, WordDirection::Forward,
 				movement == Movement::SubwordRight));
 			break;
-		case Movement::LineStart:
-			newCaret = SmartLineStart(caret);
+		// In a wrapped line, the start and end of the row come first.
+		case Movement::LineStart: {
+			const RowSpan span = SpanOfOffset(caret);
+			const size_t rowStart = span.lineStart + span.row.offset;
+			newCaret = span.subRow > 0 && caret != rowStart ? rowStart : SmartLineStart(caret);
 			break;
-		case Movement::LineEnd:
-			newCaret = text.LineEnd(text.LineOfOffset(caret));
+		}
+		case Movement::LineEnd: {
+			const RowSpan span = SpanOfOffset(caret);
+			const size_t rowEnd = span.lineStart + LayoutOfLine(span.line).PreviousBoundary(span.end);
+			newCaret = !span.last && caret != rowEnd ? rowEnd : text.LineEnd(span.line);
 			break;
+		}
 		case Movement::PreviousLine: {
 			if (collapse) {
 				newCaret = selectionStart;
@@ -939,7 +1221,7 @@ void EditorCore::InsertTab()
 
 	std::string inserted = "\t";
 	if (fSettings.insertSpacesForTab) {
-		const uint32_t column = PositionOfOffsetLocked(from).column;
+		const uint32_t column = LineColumnOfOffset(from);
 		inserted.assign(IndentSize() - column % IndentSize(), ' ');
 	}
 	ReplaceRange(from, to, inserted, EditKind::Typing);

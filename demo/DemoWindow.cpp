@@ -9,6 +9,7 @@
 #include <FilePanel.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
+#include <MenuItem.h>
 #include <SplitView.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
@@ -66,6 +67,8 @@ DemoWindow::DemoWindow(DemoDocument *document):
 		.End()
 		.AddMenu("View")
 			.AddItem("Split view", kMsgToggleSplit, 'T', B_SHIFT_KEY)
+			.AddItem("Word wrap", kMsgToggleWordWrap)
+				.GetItem(fWordWrapItem)
 			.AddSeparator()
 			.AddItem("Fold/unfold", CodeEdit::kMsgToggleFold, '.')
 			.AddItem("Fold all", CodeEdit::kMsgFoldAll)
@@ -98,7 +101,17 @@ DemoWindow::~DemoWindow()
 
 CodeEditScrollView *DemoWindow::CreatePane()
 {
-	return new CodeEditScrollView("pane", new CodeEditView("editView", fDocument->model.Get()));
+	CodeEditView *editView = new CodeEditView("editView", fDocument->model.Get());
+	ApplySettings(editView);
+	return new CodeEditScrollView("pane", editView);
+}
+
+
+void DemoWindow::ApplySettings(CodeEditView *editView)
+{
+	CodeEdit::EditorSettings settings = editView->Settings();
+	settings.wordWrap = fWordWrap;
+	editView->SetSettings(settings);
 }
 
 
@@ -172,6 +185,17 @@ void DemoWindow::MessageReceived(BMessage *message)
 		case kMsgToggleSplit:
 			ToggleSplit();
 			break;
+		case kMsgToggleWordWrap: {
+			fWordWrap = !fWordWrap;
+			fWordWrapItem->SetMarked(fWordWrap);
+			for (int32 i = 0; i < fSplitView->CountChildren(); i++) {
+				CodeEditScrollView *pane = dynamic_cast<CodeEditScrollView*>(fSplitView->ChildAt(i));
+				if (pane != nullptr) {
+					ApplySettings(pane->EditView());
+				}
+			}
+			break;
+		}
 		case kMsgSave:
 			Save();
 			break;

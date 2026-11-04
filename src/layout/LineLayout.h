@@ -79,4 +79,25 @@ public:
 std::string PlaceholderText(const Cluster &cluster);
 
 
+// One display row of a wrapped line.
+struct WrapRow {
+	// Byte offset of the first cluster in the line.
+	uint32_t offset {};
+	// Line column of the first cluster.
+	uint32_t column {};
+	// Cells before the first cluster (continuation indent).
+	uint32_t indent {};
+
+	bool operator==(const WrapRow &other) const = default;
+};
+
+
+// Splits a line into rows of at most width cells; width 0 means no wrapping.
+// Continuation rows are indented by the leading whitespace of the line plus
+// continuationIndent, at most half the width. Rows break after whitespace
+// (which may hang past the edge), after punctuation and next to wide
+// characters, otherwise anywhere; a row holds at least one cluster.
+std::vector<WrapRow> WrapLine(const LineLayout &layout, uint32_t width, uint32_t continuationIndent);
+
+
 } // CodeEdit

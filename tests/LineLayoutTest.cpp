@@ -1,6 +1,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -170,6 +171,42 @@ TEST_CASE("cluster boundaries and columns")
 	CHECK(empty.ClusterAtOffset(0) == 0);
 	CHECK(empty.BoundaryNearColumn(3.0f) == 0);
 	CHECK(empty.ColumnOfOffset(0) == 0);
+}
+
+
+static std::vector<WrapRow> Wrap(std::string_view line, uint32_t width, uint32_t indent)
+{
+	return WrapLine(LineLayout(line, {}), width, indent);
+}
+
+
+TEST_CASE("wrapping at whitespace and punctuation")
+{
+	using Rows = std::vector<WrapRow>;
+	CHECK(Wrap("hello world", 0, 4) == Rows {{0, 0, 0}});
+	CHECK(Wrap("hello world", 11, 4) == Rows {{0, 0, 0}});
+	CHECK(Wrap("", 4, 4) == Rows {{0, 0, 0}});
+
+	CHECK(Wrap("hello world foo", 8, 4) == Rows {{0, 0, 0}, {6, 6, 4}, {10, 10, 4}, {12, 12, 4}});
+	// Blanks at the break hang past the edge.
+	CHECK(Wrap("ab    cd", 4, 4) == Rows {{0, 0, 0}, {6, 6, 2}});
+	// Continuation indent follows the leading whitespace (a tab here).
+	CHECK(Wrap("\tx = aaaa + bbbb;", 16, 4) == Rows {{0, 0, 0}, {12, 15, 8}});
+	CHECK(Wrap("foo(bar,baz)", 6, 0) == Rows {{0, 0, 0}, {4, 4, 0}, {8, 8, 0}});
+	// No break inside operators like "->".
+	CHECK(Wrap("a b->c", 4, 0) == Rows {{0, 0, 0}, {2, 2, 0}});
+}
+
+
+TEST_CASE("wrapping wide characters and narrow widths")
+{
+	using Rows = std::vector<WrapRow>;
+	CHECK(Wrap("あいうえお", 5, 0) == Rows {{0, 0, 0}, {6, 4, 0}, {12, 8, 0}});
+	// Closing punctuation stays with the character before it.
+	CHECK(Wrap("あい。う", 4, 0) == Rows {{0, 0, 0}, {3, 2, 0}, {9, 6, 0}});
+	CHECK(Wrap("abc", 1, 4) == Rows {{0, 0, 0}, {1, 1, 0}, {2, 2, 0}});
+	// A cluster wider than the row gets a row of its own.
+	CHECK(Wrap("あa", 1, 0) == Rows {{0, 0, 0}, {3, 2, 0}});
 }
 
 

@@ -21,6 +21,13 @@ struct EditorSettings {
 	uint32_t ambiguousWidth = 1;
 	// Rows kept visible around the caret when navigating with the keyboard.
 	uint32_t contextLines = 3;
+	// Wrap long lines at the view width.
+	bool wordWrap = false;
+	// Continuation rows are indented by the leading whitespace of their line
+	// plus this many cells.
+	uint32_t wrapIndent = 4;
+
+	bool operator==(const EditorSettings &other) const = default;
 };
 
 

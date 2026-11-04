@@ -12,6 +12,7 @@ codeEditTests = executable(
 		'TextModelTest.cpp',
 		'UnicodeTest.cpp',
 		'VersionTest.cpp',
+		'WrapTest.cpp',
 	),
 	include_directories: [privateInc],
 	dependencies: [codeEditViewDep, treeSitterDep, catch2Dep]

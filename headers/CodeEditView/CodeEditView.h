@@ -63,7 +63,11 @@ private:
 	float fCellWidth {};
 	float fLineHeight {};
 	float fAscent {};
+	// Y of the top of row 0. Rows inserted or removed above the visible text
+	// move it instead of scrolling, so the text on screen stays in place.
+	float fOriginY {};
 	bool fCaretVisible {};
+	bool fRewrapPosted {};
 
 	friend class CodeEditScrollView;
 	friend class CodeEdit::GutterView;
@@ -75,11 +79,17 @@ private:
 	void InvalidateCaret();
 	void RestartCaretBlink();
 	void UpdateScrollBars();
+	float ContentWidth();
+	void UpdateWrapColumns();
+	void ScheduleRewrap();
+	BPoint ClampScrollPosition(float x, float y);
 	void ScrollToClamped(float x, float y);
 	void ScrollToCaret(bool keepContext);
 	bool CaretInContextArea();
 	CodeEdit::PageInfo CurrentPage() const;
 	size_t TopRow() const;
+	float RowTop(size_t row) const {return fOriginY + row * fLineHeight;}
+	size_t RowAtY(float y) const;
 	size_t OffsetAtPoint(BPoint where);
 	void ExecuteCommand(CodeEdit::EditorCommand command, bool extend);
 	void InstallCommandShortcuts();

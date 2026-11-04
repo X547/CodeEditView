@@ -54,8 +54,8 @@ void GutterView::Draw(BRect updateRect)
 	const float cellWidth = fEditView->fCellWidth;
 	const BRect bounds = Bounds();
 
-	const size_t firstRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.top / lineHeight)));
-	const size_t lastRow = static_cast<size_t>(std::max(0.0f, floorf(updateRect.bottom / lineHeight)));
+	const size_t firstRow = fEditView->RowAtY(updateRect.top);
+	const size_t lastRow = fEditView->RowAtY(updateRect.bottom);
 	const std::vector<DisplayRow> rows = core.DisplayRows(firstRow, lastRow - firstRow + 1);
 	const size_t caretRow = core.PositionOfOffset(core.GetSelection().caret).row;
 
@@ -72,7 +72,7 @@ void GutterView::Draw(BRect updateRect)
 			continue;
 		}
 		const size_t row = firstRow + i;
-		const float top = row * lineHeight;
+		const float top = fEditView->RowTop(row);
 		char number[32];
 		snprintf(number, sizeof(number), "%zu", rows[i].line + 1);
 		const float x = foldLeft - StringWidth(number);
@@ -113,7 +113,7 @@ void GutterView::Draw(BRect updateRect)
 void GutterView::MouseDown(BPoint where)
 {
 	EditorCore &core = *fEditView->fCore;
-	const size_t row = static_cast<size_t>(std::max(0.0f, floorf(where.y / fEditView->fLineHeight)));
+	const size_t row = fEditView->RowAtY(where.y);
 	const std::vector<DisplayRow> rows = core.DisplayRows(row, 1);
 	if (rows.empty() || rows.front().subRow != 0) {
 		return;

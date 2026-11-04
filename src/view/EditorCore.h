@@ -347,6 +347,11 @@ public:
 	// Definitions in the text; empty without a syntax tree.
 	std::vector<OutlineItem> Outline();
 
+	// Marks of lines firstLine to lastLine, sorted by line.
+	std::vector<MarkInfo> Marks(size_t firstLine, size_t lastLine);
+	// Unfolds folds hiding the line; returns the line's first row.
+	size_t RevealLine(size_t line);
+
 	DirtyRows TakeDirty();
 };
 

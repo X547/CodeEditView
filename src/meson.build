@@ -37,6 +37,7 @@ codeEditViewSources = files(
 	'view/EditorCore.cpp',
 	'view/GutterView.cpp',
 	'view/KeyMap.cpp',
+	'view/Marks.cpp',
 	'view/PositionView.cpp',
 	'view/WordMotion.cpp',
 )

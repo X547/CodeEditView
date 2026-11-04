@@ -9,8 +9,9 @@ class CodeEditView;
 namespace CodeEdit {
 
 
-// Line numbers and fold markers beside a CodeEditView; scrolls vertically
-// with it. Clicking a marker toggles the fold.
+// Line marks, line numbers and fold markers beside a CodeEditView; scrolls
+// vertically with it. Clicking a fold marker toggles the fold, clicking
+// elsewhere sends kMsgGutterClicked to the view's target.
 class GutterView: public BView {
 private:
 	CodeEditView *fEditView;

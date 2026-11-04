@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,8 @@ struct DrawContext {
 	std::optional<BracketPair> brackets;
 	rgb_color bracket;
 	std::vector<size_t> foldedHeaders;
+	// Line backgrounds of marks, mixed into the document background.
+	std::map<size_t, rgb_color> lineBackgrounds;
 	std::optional<size_t> preeditRow;
 	// Byte offset of the input method text in the spliced row text.
 	size_t preeditStart {};
@@ -140,6 +143,10 @@ CodeEditView::CodeEditView(const char *name, CodeEdit::TextModel *model):
 {
 	SetViewColor(B_TRANSPARENT_COLOR);
 	SetEditorFont(*be_fixed_font);
+	for (const uint32_t kind : {CodeEdit::kMarkBookmark, CodeEdit::kMarkBreakpoint,
+			CodeEdit::kMarkBreakpointDisabled, CodeEdit::kMarkExecLine}) {
+		fMarkStyles[kind] = CodeEdit::DefaultMarkStyle(kind);
+	}
 }
 
 
@@ -203,6 +210,25 @@ void CodeEditView::SetTheme(const CodeEdit::Theme &theme)
 }
 
 
+CodeEdit::MarkStyle CodeEditView::GetMarkStyle(uint32_t kind) const
+{
+	const auto it = fMarkStyles.find(kind);
+	return it != fMarkStyles.end() ? it->second : CodeEdit::MarkStyle {};
+}
+
+
+void CodeEditView::SetMarkStyle(uint32_t kind, const CodeEdit::MarkStyle &style)
+{
+	fMarkStyles[kind] = style;
+	if (Window() != nullptr) {
+		Invalidate();
+		if (fGutter != nullptr) {
+			fGutter->Invalidate();
+		}
+	}
+}
+
+
 CodeEdit::Selection CodeEditView::GetSelection()
 {
 	return fCore->GetSelection();
@@ -228,6 +254,23 @@ void CodeEditView::SetSelection(const CodeEdit::Selection &selection)
 void CodeEditView::ScrollToSelection()
 {
 	ScrollToCaret(false);
+}
+
+
+void CodeEditView::RevealLine(size_t line)
+{
+	const size_t row = fCore->RevealLine(line);
+	if (Window() == nullptr) {
+		return;
+	}
+	ApplyDirty();
+	const BRect bounds = Bounds();
+	const CodeEdit::PageInfo page = CurrentPage();
+	const size_t context = std::min<size_t>(fCore->Settings().contextLines, (page.visibleRows - 1) / 2);
+	if (row < page.topRow + context || row + context >= page.topRow + page.visibleRows) {
+		// Off screen or near an edge: show it a third down the view.
+		ScrollToClamped(bounds.left, RowTop(row) - floorf(page.visibleRows / 3.0f) * fLineHeight);
+	}
 }
 
 
@@ -288,6 +331,23 @@ void CodeEditView::Draw(BRect updateRect)
 	const size_t firstRow = RowAtY(updateRect.top);
 	const size_t lastRow = RowAtY(updateRect.bottom);
 	std::vector<RowData> rows = fCore->Rows(firstRow, lastRow - firstRow + 1);
+	if (!rows.empty()) {
+		std::map<size_t, int32_t> priorities;
+		for (const MarkInfo &mark : fCore->Marks(rows.front().line, rows.back().line)) {
+			const MarkStyle style = GetMarkStyle(mark.kind);
+			if (style.lineBackground.alpha == 0) {
+				continue;
+			}
+			const auto it = priorities.find(mark.line);
+			if (it != priorities.end() && it->second >= style.priority) {
+				continue;
+			}
+			priorities[mark.line] = style.priority;
+			rgb_color color = mix_color(context.background, style.lineBackground, style.lineBackground.alpha);
+			color.alpha = 255;
+			context.lineBackgrounds[mark.line] = color;
+		}
+	}
 
 	// The uncommitted input method text is shown inside the caret row.
 	if (caret.row >= firstRow && caret.row < firstRow + rows.size()) {
@@ -332,7 +392,14 @@ void CodeEditView::DrawRow(
 	const bool isCaretRow = row == context.caretRow;
 	const bool hasSelection = context.selectionStart != context.selectionEnd;
 
-	SetHighColor(isCaretRow && !hasSelection ? context.currentLine : context.background);
+	const auto lineBackground = context.lineBackgrounds.find(data.line);
+	if (lineBackground != context.lineBackgrounds.end()) {
+		SetHighColor(isCaretRow && !hasSelection
+			? mix_color(lineBackground->second, context.text, 12)
+			: lineBackground->second);
+	} else {
+		SetHighColor(isCaretRow && !hasSelection ? context.currentLine : context.background);
+	}
 	FillRect(BRect(updateRect.left, top, updateRect.right, bottom));
 
 	// The row covers [rowStart, rowEnd) of the text; past its end is the

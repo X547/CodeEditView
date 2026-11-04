@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -13,6 +14,7 @@
 #include <View.h>
 
 #include <CodeEditView/EditorSettings.h>
+#include <CodeEditView/Marks.h>
 #include <CodeEditView/Outline.h>
 #include <CodeEditView/TextModel.h>
 #include <CodeEditView/Theme.h>
@@ -38,6 +40,9 @@ constexpr uint32 kMsgIndentMore = 'CEim';
 constexpr uint32 kMsgContentsChanged = 'CEcc';
 // The caret moved; "caret" (uint64) is its offset.
 constexpr uint32 kMsgCaretMoved = 'CEcm';
+// The gutter was clicked outside the fold markers: "line" (uint64), and
+// "buttons", "modifiers" and "clicks" (int32) of the mouse down.
+constexpr uint32 kMsgGutterClicked = 'CEgc';
 
 
 class EditorCore;
@@ -66,6 +71,7 @@ private:
 	// Per code point: advance and horizontal center of the glyph's ink.
 	std::unordered_map<char32_t, std::pair<float, float>> fGlyphCache;
 	CodeEdit::Theme fTheme = CodeEdit::Theme::Pe();
+	std::map<uint32_t, CodeEdit::MarkStyle> fMarkStyles;
 	// Window shortcuts (key, modifiers) installed for Command key bindings.
 	std::vector<std::pair<uint32, uint32>> fInstalledShortcuts;
 	CodeEditScrollView *fScrollView {};
@@ -144,12 +150,19 @@ public:
 	void SetEditorFont(const BFont &font);
 	const CodeEdit::Theme &GetTheme() const {return fTheme;}
 	void SetTheme(const CodeEdit::Theme &theme);
+	// Styles per mark kind; the built-in kinds have defaults
+	// (DefaultMarkStyle()), other kinds are not shown until set.
+	CodeEdit::MarkStyle GetMarkStyle(uint32_t kind) const;
+	void SetMarkStyle(uint32_t kind, const CodeEdit::MarkStyle &style);
 
 	CodeEdit::Selection GetSelection();
 	// Model line and display column (tabs expanded) of the caret, 0-based.
 	CodeEdit::TextPoint CaretLocation();
 	void SetSelection(const CodeEdit::Selection &selection);
 	void ScrollToSelection();
+	// Unfolds and scrolls so that the line is visible with context rows,
+	// without moving the caret (e.g. for a debugger's execution line).
+	void RevealLine(size_t line);
 
 	// Receives the notifications above.
 	void SetTarget(const BMessenger &target) {fTarget = target;}

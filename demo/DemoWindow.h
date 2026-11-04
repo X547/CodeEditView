@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <memory>
 
 #include <Path.h>
@@ -24,6 +25,14 @@ static constexpr uint32 kMsgToggleSplit = 'Dspl';
 static constexpr uint32 kMsgToggleWordWrap = 'Dwrp';
 static constexpr uint32 kMsgToggleOutline = 'Dotg';
 static constexpr uint32 kMsgRefreshOutline = 'Dorf';
+static constexpr uint32 kMsgToggleBookmark = 'Dtbm';
+static constexpr uint32 kMsgNextBookmark = 'Dnbm';
+static constexpr uint32 kMsgPreviousBookmark = 'Dpbm';
+static constexpr uint32 kMsgToggleBreakpoint = 'Dtbp';
+static constexpr uint32 kMsgEnableBreakpoint = 'Debp';
+static constexpr uint32 kMsgStep = 'Dstp';
+static constexpr uint32 kMsgContinue = 'Dcnt';
+static constexpr uint32 kMsgStop = 'Dsto';
 static constexpr uint32 kMsgSave = 'Dsav';
 static constexpr uint32 kMsgSaveAs = 'Dsas';
 static constexpr uint32 kMsgWindowOpened = 'Dwop';
@@ -36,6 +45,8 @@ class DemoDocument: public BReferenceable {
 public:
 	BReference<CodeEdit::TextModel> model;
 	BPath path;
+	// Mark of the fake debugger's execution line, if running.
+	CodeEdit::MarkId execMark {};
 
 	DemoDocument();
 };
@@ -66,6 +77,12 @@ private:
 	void ScheduleOutlineRefresh();
 	void RefreshOutline();
 	void JumpToOutlineItem(bool focus);
+	size_t CaretLine();
+	void ToggleMark(size_t line, std::initializer_list<uint32_t> kinds);
+	void ToggleBreakpointEnabled(size_t line);
+	void GoToBookmark(bool forward);
+	void MoveExecLine(bool toBreakpoint);
+	void StopExecution();
 
 public:
 	explicit DemoWindow(DemoDocument *document);

@@ -602,6 +602,21 @@ bool TextModel::MoveMark(MarkId id, size_t line)
 }
 
 
+bool TextModel::SetMarkKind(MarkId id, uint32_t kind)
+{
+	AssertLocked();
+	const auto it = fMarks.find(id);
+	if (it == fMarks.end()) {
+		return false;
+	}
+	if (it->second.kind != kind) {
+		it->second.kind = kind;
+		fMarksRevision++;
+	}
+	return true;
+}
+
+
 std::optional<MarkInfo> TextModel::FindMark(MarkId id) const
 {
 	AssertLocked();

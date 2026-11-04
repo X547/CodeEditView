@@ -218,7 +218,9 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		return;
 	}
 	if (changes.marksChanged) {
+		// Marks may color line backgrounds.
 		fDirty.marksChanged = true;
+		fDirty.AddAll();
 	}
 	if (changes.syntaxChanged) {
 		fDirty.AddAll();
@@ -1510,6 +1512,27 @@ std::vector<OutlineItem> EditorCore::Outline()
 		return {};
 	}
 	return BuildOutline(syntax->GetLanguage(), syntax->Tree(), fModel->Text(), fQueryCursor);
+}
+
+
+std::vector<MarkInfo> EditorCore::Marks(size_t firstLine, size_t lastLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return fModel->Marks(firstLine, lastLine);
+}
+
+
+size_t EditorCore::RevealLine(size_t line)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	line = std::min(line, fModel->Text().NewlineCount());
+	if (UnfoldLines(line, line)) {
+		ApplyFolds();
+	}
+	EnsureWrapped(line);
+	return fDisplayMap.FirstRowOfLine(line);
 }
 
 

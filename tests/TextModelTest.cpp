@@ -469,6 +469,9 @@ TEST_CASE("marks follow their lines")
 		CHECK(model.FindMark(mark2)->line == 0);
 		CHECK(model.RemoveMark(mark2));
 		CHECK_FALSE(model.RemoveMark(mark2));
+		CHECK(model.SetMarkKind(mark3, kMarkBreakpointDisabled));
+		CHECK(model.FindMark(mark3)->kind == kMarkBreakpointDisabled);
+		CHECK_FALSE(model.SetMarkKind(mark2, kMarkBreakpoint));
 	}
 }
 

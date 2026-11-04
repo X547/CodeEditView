@@ -73,6 +73,31 @@ static size_t CaretLine(EditorCore &core)
 }
 
 
+TEST_CASE("revealing a folded line and mark changes")
+{
+	BReference<TextModel> model = MakeModel(kSample, nullptr);
+	EditorCore core(model);
+	core.Fold({1, 5});
+	CHECK(core.RowCount() == 5);
+	// Line 4 is hidden; revealing it unfolds.
+	CHECK(core.RevealLine(4) == 4);
+	CHECK(core.Folds().empty());
+	CHECK(core.RevealLine(100) == 8);
+
+	core.TakeDirty();
+	{
+		ModelLock lock(*model);
+		model->AddMark(kMarkExecLine, 3);
+	}
+	REQUIRE(core.Marks(0, 8).size() == 1);
+	CHECK(core.Marks(0, 8).front().line == 3);
+	const DirtyRows dirty = core.TakeDirty();
+	CHECK(dirty.marksChanged);
+	CHECK(dirty.first == 0);
+	CHECK(dirty.last == SIZE_MAX);
+}
+
+
 TEST_CASE("fold candidates from the syntax tree")
 {
 	BReference<TextModel> model = MakeModel(kSample, "cpp");

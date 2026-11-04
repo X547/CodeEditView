@@ -45,6 +45,7 @@ constexpr ObserverId kNoObserver = 0;
 constexpr uint32_t kMarkBookmark = 1;
 constexpr uint32_t kMarkBreakpoint = 2;
 constexpr uint32_t kMarkExecLine = 3;
+constexpr uint32_t kMarkBreakpointDisabled = 4;
 constexpr uint32_t kMarkFirstUserKind = 1000;
 
 
@@ -216,6 +217,7 @@ public:
 	bool RemoveMark(MarkId id);
 	void RemoveMarks(uint32_t kind);
 	bool MoveMark(MarkId id, size_t line);
+	bool SetMarkKind(MarkId id, uint32_t kind);
 	std::optional<MarkInfo> FindMark(MarkId id) const;
 	std::vector<MarkInfo> Marks(size_t firstLine, size_t lastLine) const;
 

@@ -1,7 +1,10 @@
 #include "DemoWindow.h"
 
+#include <algorithm>
 #include <exception>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <Alert.h>
 #include <Application.h>
@@ -78,6 +81,18 @@ DemoWindow::DemoWindow(DemoDocument *document):
 			.AddItem("Fold/unfold", CodeEdit::kMsgToggleFold, '.')
 			.AddItem("Fold all", CodeEdit::kMsgFoldAll)
 			.AddItem("Unfold all", CodeEdit::kMsgUnfoldAll)
+		.End()
+		.AddMenu("Marks")
+			.AddItem("Toggle bookmark", kMsgToggleBookmark, 'M')
+			.AddItem("Next bookmark", kMsgNextBookmark, 'J')
+			.AddItem("Previous bookmark", kMsgPreviousBookmark, 'J', B_SHIFT_KEY)
+			.AddSeparator()
+			.AddItem("Toggle breakpoint", kMsgToggleBreakpoint, 'K')
+			.AddItem("Enable/disable breakpoint", kMsgEnableBreakpoint, 'K', B_SHIFT_KEY)
+			.AddSeparator()
+			.AddItem("Step (fake)", kMsgStep, 'I', B_SHIFT_KEY)
+			.AddItem("Continue to breakpoint (fake)", kMsgContinue)
+			.AddItem("Stop", kMsgStop)
 		.End();
 
 	CodeEditScrollView *pane = CreatePane();
@@ -163,6 +178,135 @@ void DemoWindow::JumpToOutlineItem(bool focus)
 }
 
 
+size_t DemoWindow::CaretLine()
+{
+	return fActiveView != nullptr ? fActiveView->CaretLocation().line : 0;
+}
+
+
+// Removes the marks of these kinds from the line, or adds one of the first
+// kind. Marks move to the start of an edit that deletes their line.
+void DemoWindow::ToggleMark(size_t line, std::initializer_list<uint32_t> kinds)
+{
+	CodeEdit::TextModel &model = *fDocument->model;
+	CodeEdit::ModelLock lock(model);
+	bool removed = false;
+	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+		if (std::find(kinds.begin(), kinds.end(), mark.kind) != kinds.end()) {
+			model.RemoveMark(mark.id);
+			removed = true;
+		}
+	}
+	if (!removed) {
+		model.AddMark(*kinds.begin(), line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
+	}
+}
+
+
+void DemoWindow::ToggleBreakpointEnabled(size_t line)
+{
+	CodeEdit::TextModel &model = *fDocument->model;
+	CodeEdit::ModelLock lock(model);
+	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+		if (mark.kind == CodeEdit::kMarkBreakpoint) {
+			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpointDisabled);
+		} else if (mark.kind == CodeEdit::kMarkBreakpointDisabled) {
+			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
+		}
+	}
+}
+
+
+void DemoWindow::GoToBookmark(bool forward)
+{
+	if (fActiveView == nullptr) {
+		return;
+	}
+	const size_t caretLine = CaretLine();
+	size_t lineStart = 0;
+	{
+		CodeEdit::TextModel &model = *fDocument->model;
+		CodeEdit::ModelLock lock(model);
+		std::vector<size_t> lines;
+		for (const CodeEdit::MarkInfo &mark : model.Marks(0, model.Text().NewlineCount())) {
+			if (mark.kind == CodeEdit::kMarkBookmark) {
+				lines.push_back(mark.line);
+			}
+		}
+		if (lines.empty()) {
+			return;
+		}
+		// Wraps around at the ends.
+		size_t target;
+		if (forward) {
+			const auto next = std::upper_bound(lines.begin(), lines.end(), caretLine);
+			target = next != lines.end() ? *next : lines.front();
+		} else {
+			const auto next = std::lower_bound(lines.begin(), lines.end(), caretLine);
+			target = next != lines.begin() ? *(next - 1) : lines.back();
+		}
+		lineStart = model.Text().LineStart(target);
+	}
+	fActiveView->SetSelection({lineStart, lineStart});
+	fActiveView->ScrollToSelection();
+}
+
+
+// Step: to the next non-blank line. Continue: to the next enabled
+// breakpoint after the current line. Past the end, execution stops.
+void DemoWindow::MoveExecLine(bool toBreakpoint)
+{
+	std::optional<size_t> target;
+	{
+		CodeEdit::TextModel &model = *fDocument->model;
+		CodeEdit::ModelLock lock(model);
+		const CodeEdit::Rope &text = model.Text();
+		size_t first = 0;
+		if (const std::optional<CodeEdit::MarkInfo> mark = model.FindMark(fDocument->execMark)) {
+			first = mark->line + 1;
+		}
+		for (size_t line = first; line <= text.NewlineCount() && !target.has_value(); line++) {
+			if (toBreakpoint) {
+				for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+					if (mark.kind == CodeEdit::kMarkBreakpoint) {
+						target = line;
+					}
+				}
+				continue;
+			}
+			for (size_t offset = text.LineStart(line); offset < text.LineEnd(line); offset++) {
+				const char ch = text.ByteAt(offset);
+				if (ch != ' ' && ch != '\t') {
+					target = line;
+					break;
+				}
+			}
+		}
+		if (!target.has_value()) {
+			model.RemoveMark(fDocument->execMark);
+			fDocument->execMark = 0;
+			return;
+		}
+		if (!model.MoveMark(fDocument->execMark, *target)) {
+			fDocument->execMark = model.AddMark(
+				CodeEdit::kMarkExecLine, *target, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
+		}
+	}
+	if (fActiveView != nullptr) {
+		fActiveView->RevealLine(*target);
+	}
+}
+
+
+void DemoWindow::StopExecution()
+{
+	CodeEdit::TextModel &model = *fDocument->model;
+	CodeEdit::ModelLock lock(model);
+	model.RemoveMark(fDocument->execMark);
+	fDocument->execMark = 0;
+}
+
+
 void DemoWindow::UpdateTitle()
 {
 	if (fDocument->path.InitCheck() == B_OK) {
@@ -236,6 +380,41 @@ void DemoWindow::MessageReceived(BMessage *message)
 		case kMsgToggleSplit:
 			ToggleSplit();
 			break;
+		case kMsgToggleBookmark:
+			ToggleMark(CaretLine(), {CodeEdit::kMarkBookmark});
+			break;
+		case kMsgNextBookmark:
+		case kMsgPreviousBookmark:
+			GoToBookmark(message->what == kMsgNextBookmark);
+			break;
+		case kMsgToggleBreakpoint:
+			ToggleMark(CaretLine(), {CodeEdit::kMarkBreakpoint, CodeEdit::kMarkBreakpointDisabled});
+			break;
+		case kMsgEnableBreakpoint:
+			ToggleBreakpointEnabled(CaretLine());
+			break;
+		case kMsgStep:
+		case kMsgContinue:
+			MoveExecLine(message->what == kMsgContinue);
+			break;
+		case kMsgStop:
+			StopExecution();
+			break;
+		case CodeEdit::kMsgGutterClicked: {
+			// Click: breakpoint, Shift + click: enable/disable it, secondary
+			// button: bookmark.
+			const size_t line = message->GetUInt64("line", 0);
+			const int32 buttons = message->GetInt32("buttons", B_PRIMARY_MOUSE_BUTTON);
+			const int32 modifiers = message->GetInt32("modifiers", 0);
+			if ((buttons & B_SECONDARY_MOUSE_BUTTON) != 0) {
+				ToggleMark(line, {CodeEdit::kMarkBookmark});
+			} else if ((modifiers & B_SHIFT_KEY) != 0) {
+				ToggleBreakpointEnabled(line);
+			} else {
+				ToggleMark(line, {CodeEdit::kMarkBreakpoint, CodeEdit::kMarkBreakpointDisabled});
+			}
+			break;
+		}
 		case kMsgToggleOutline: {
 			const bool visible = !fOutlineItem->IsMarked();
 			fOutlineItem->SetMarked(visible);

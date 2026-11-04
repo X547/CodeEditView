@@ -88,6 +88,16 @@ a navigation panel. With `SetTarget()`, the view sends `kMsgContentsChanged`
 when the outline may have changed and `kMsgCaretMoved` when the caret moved.
 The demo shows the outline in a side panel (View > Outline).
 
+Line marks (bookmarks, breakpoints, an execution line, or host-defined kinds)
+belong to the model (`TextModel::AddMark()`), so all views show them. Each
+view draws them in the gutter and may tint the line background, as set per
+kind by `CodeEditView::SetMarkStyle()`. Clicking the gutter outside the fold
+markers sends `kMsgGutterClicked` with the line to the target;
+`RevealLine()` scrolls to a line without moving the caret. The demo's Marks
+menu toggles bookmarks and breakpoints and steps a fake execution line;
+in the gutter, click toggles a breakpoint, Shift+click enables or disables
+it, and the secondary button toggles a bookmark.
+
 Mouse: double click selects a word, or the contents of a bracket pair when
 clicking a bracket; triple click selects a line.
 

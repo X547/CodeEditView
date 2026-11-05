@@ -1362,19 +1362,22 @@ bool CodeEditView::IsPointInSelection(BPoint where)
 }
 
 
-// Whether the point is on the placeholder drawn after a folded header line.
-bool CodeEditView::IsPointOnFoldPlaceholder(BPoint where)
+// The header line of the folded line whose placeholder is at the point.
+std::optional<size_t> CodeEditView::FoldPlaceholderAt(BPoint where)
 {
 	if (where.y < fOriginY) {
-		return false;
+		return std::nullopt;
 	}
 	const std::vector<CodeEdit::RowData> rows = fCore->Rows(RowAtY(where.y), 1);
 	if (rows.empty() || !rows.front().lastRow || !fCore->IsFolded(rows.front().line)) {
-		return false;
+		return std::nullopt;
 	}
 	const CodeEdit::RowData &data = rows.front();
 	const float left = (data.DisplayColumn(data.text.size()) + 1) * fCellWidth;
-	return where.x >= left && where.x < left + kFoldPlaceholderCells * fCellWidth;
+	if (where.x < left || where.x >= left + kFoldPlaceholderCells * fCellWidth) {
+		return std::nullopt;
+	}
+	return data.line;
 }
 
 
@@ -1383,7 +1386,7 @@ void CodeEditView::UpdateCursor(BPoint where)
 	static const BCursor sIBeamCursor(B_CURSOR_ID_I_BEAM);
 	static const BCursor sArrowCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
 
-	const bool arrow = IsPointInSelection(where) || IsPointOnFoldPlaceholder(where);
+	const bool arrow = IsPointInSelection(where) || FoldPlaceholderAt(where).has_value();
 	if (fMouse->arrowCursor == arrow) {
 		return;
 	}
@@ -1425,14 +1428,10 @@ void CodeEditView::MouseDown(BPoint where)
 		return;
 	}
 
-	// A click past the end of a folded header line (on the placeholder)
-	// unfolds it.
+	// A click on the placeholder of a folded header line unfolds it.
 	if (!extend && clicks == 1) {
-		const size_t row = RowAtY(where.y);
-		const std::vector<DisplayRow> rows = fCore->DisplayRows(row, 1);
-		if (!rows.empty() && fCore->HitTestCell(row, where.x / fCellWidth).pastLineEnd
-			&& fCore->IsFolded(rows.front().line)) {
-			fCore->Unfold(rows.front().line);
+		if (const std::optional<size_t> headerLine = FoldPlaceholderAt(where)) {
+			fCore->Unfold(*headerLine);
 			fMouse->mode = TrackMode::None;
 			ApplyDirty();
 			RestartCaretBlink();

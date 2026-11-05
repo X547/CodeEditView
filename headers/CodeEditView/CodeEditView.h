@@ -119,7 +119,7 @@ private:
 
 	BPoint ClampToBounds(BPoint where) const;
 	bool IsPointInSelection(BPoint where);
-	bool IsPointOnFoldPlaceholder(BPoint where);
+	std::optional<size_t> FoldPlaceholderAt(BPoint where);
 	void UpdateCursor(BPoint where);
 	void RefreshCursor();
 	void TrackSelection(BPoint where);

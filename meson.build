@@ -38,3 +38,8 @@ endif
 if get_option('tests')
 	subdir('tests')
 endif
+
+# Needs libgit2; uses the test setup above.
+if get_option('gitdiff')
+	subdir('gitdiff')
+endif

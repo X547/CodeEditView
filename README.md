@@ -103,6 +103,18 @@ it, and the secondary button toggles a bookmark.
 Mouse: double click selects a word, or the contents of a bracket pair when
 clicking a bracket; triple click selects a line.
 
+For side-by-side views such as diffs:
+
+- `EditorSettings::readOnly` makes a view read-only; other views of the
+  same model may still edit it.
+- `SetDecorations()` adds host highlights: line backgrounds, text range
+  backgrounds and gap lines between lines. They follow edits until replaced.
+- `SetHostFolds()` folds line ranges for the host, next to the user's
+  folds; the user can unfold them as usual.
+- `LineTop()`, `LineAtY()` and `ScrollLineTo()` give the vertical position
+  of lines, and `kMsgViewportChanged` tells the target when it changed.
+- `SetModel()` switches a view to another model.
+
 
 ## Debugger
 
@@ -125,11 +137,36 @@ Debug menu: Cmd+R continue, Cmd+P pause, Cmd+N step over, Cmd+I step into,
 Cmd+T step out.
 
 
+## Git diff
+
+`CodeEditGitDiff [repository or file]` edits the staging area of a Git
+repository with libgit2 (no `git` process). Like Git GUI, it lists unstaged
+and staged changes; selecting a file shows a diff:
+
+- unstaged: index (read-only) and working tree
+- staged: HEAD (read-only) and index
+
+The index side of the staged diff is an editable text: edits are written to
+the index with Save. Between the panes, shapes connect the changed chunks;
+their arrows stage or unstage a chunk, which writes the index at once.
+Unchanged regions are folded, and the panes scroll together.
+
+Changes menu: Cmd+T stages or unstages the chunk at the caret or the
+selected lines, Cmd+R reverts them in the working tree buffer, Cmd+Shift+T
+stages or unstages the whole file (also a double click in the list),
+Cmd+Shift+Down/Up go to the next or previous change. Cmd+S saves the right
+pane (writes the index in the staged diff), Cmd+Shift+S saves all.
+
+Binary files, files with mixed line endings, conflicts, symbolic links,
+submodules and files with filter attributes are shown read-only.
+
+
 ## Building
 
 Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel`, `catch2_devel`
-(tests). The C and C++ grammars are Meson wraps; their release tarballs are
-downloaded on the first `meson setup`.
+(tests), `libgit2_1.9_devel` and `libpcre2_devel` (Git diff; `libgit2.pc`
+requires `libpcre2-8.pc`). The C and C++ grammars are Meson wraps; their
+release tarballs are downloaded on the first `meson setup`.
 
 ```sh
 meson setup build
@@ -137,7 +174,8 @@ ninja -C build
 meson test -C build
 ```
 
-Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dtests=false`.
+Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dgitdiff=false`,
+`-Dtests=false`.
 
 The demo application is `build/demo/CodeEditDemo`.
 

@@ -1,3 +1,4 @@
 option('demo', type: 'boolean', value: true, description: 'Build the CodeEditDemo application')
 option('tests', type: 'boolean', value: true, description: 'Build Catch2 unit tests')
 option('debugger', type: 'boolean', value: true, description: 'Build the CodeEditDebugger application')
+option('gitdiff', type: 'boolean', value: true, description: 'Build the CodeEditGitDiff application (needs libgit2)')

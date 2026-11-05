@@ -1362,12 +1362,28 @@ bool CodeEditView::IsPointInSelection(BPoint where)
 }
 
 
+// Whether the point is on the placeholder drawn after a folded header line.
+bool CodeEditView::IsPointOnFoldPlaceholder(BPoint where)
+{
+	if (where.y < fOriginY) {
+		return false;
+	}
+	const std::vector<CodeEdit::RowData> rows = fCore->Rows(RowAtY(where.y), 1);
+	if (rows.empty() || !rows.front().lastRow || !fCore->IsFolded(rows.front().line)) {
+		return false;
+	}
+	const CodeEdit::RowData &data = rows.front();
+	const float left = (data.DisplayColumn(data.text.size()) + 1) * fCellWidth;
+	return where.x >= left && where.x < left + kFoldPlaceholderCells * fCellWidth;
+}
+
+
 void CodeEditView::UpdateCursor(BPoint where)
 {
 	static const BCursor sIBeamCursor(B_CURSOR_ID_I_BEAM);
 	static const BCursor sArrowCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
 
-	const bool arrow = IsPointInSelection(where);
+	const bool arrow = IsPointInSelection(where) || IsPointOnFoldPlaceholder(where);
 	if (fMouse->arrowCursor == arrow) {
 		return;
 	}

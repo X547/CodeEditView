@@ -51,6 +51,8 @@ public:
 	OutlineView();
 	~OutlineView() override;
 
+	void MouseDown(BPoint where) override;
+
 	// Rebuilds the list if the definitions differ, keeping collapsed items
 	// and the scroll position; otherwise only updates their offsets.
 	void SetOutline(const std::vector<CodeEdit::OutlineItem> &items);

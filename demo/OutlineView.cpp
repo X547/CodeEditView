@@ -51,6 +51,9 @@ OutlineListItem::OutlineListItem(const OutlineItem &item, uint32 level, bool exp
 	fNameEnd(item.nameEnd),
 	fPath(path)
 {
+	// BListView skips disabled items in keyboard navigation and never
+	// selects them.
+	SetEnabled(fKind != OutlineKind::Separator);
 }
 
 
@@ -144,6 +147,18 @@ OutlineView::OutlineView():
 OutlineView::~OutlineView()
 {
 	Clear();
+}
+
+
+void OutlineView::MouseDown(BPoint where)
+{
+	// BListView deselects all on a click on a disabled item.
+	const BListItem *item = ItemAt(IndexOf(where));
+	if (item != nullptr && !item->IsEnabled()) {
+		MakeFocus(true);
+		return;
+	}
+	BOutlineListView::MouseDown(where);
 }
 
 

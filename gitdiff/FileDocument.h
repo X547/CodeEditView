@@ -9,8 +9,13 @@
 
 #include <CodeEditView/TextModel.h>
 
+#include "TextSide.h"
+
 
 namespace GitDiff {
+
+
+using namespace DiffKit;
 
 
 class Repository;
@@ -23,21 +28,34 @@ enum class Side {
 };
 
 
+enum class DiffKind {
+	// Index (left) against the working tree (right).
+	Unstaged,
+	// HEAD (left) against the index (right).
+	Staged,
+};
+
+
+// The side shown in a pane (0 left, 1 right) of a diff.
+inline Side SideOf(DiffKind kind, int pane)
+{
+	if (kind == DiffKind::Unstaged) {
+		return pane == 0 ? Side::Index : Side::Worktree;
+	}
+	return pane == 0 ? Side::Head : Side::Index;
+}
+
+
 // The HEAD, index and working tree versions of one file as text models.
 // The index and working tree models are edited by the user and written
 // back explicitly. Errors throw GitError.
 class FileDocument: public BReferenceable {
 private:
 	struct SideState {
-		BReference<CodeEdit::TextModel> model;
-		bool exists {};
+		DiffKit::TextSide text;
 		uint32_t mode {};
-		// Bytes last loaded or written; reloading skips unchanged data.
-		std::optional<std::string> loaded;
-		// The file changed on disk while the model had unsaved edits.
-		bool changedOnDisk {};
-		// Why the loaded data cannot be edited as text; empty if it can.
-		std::string problem;
+
+		explicit SideState(const std::string &path): text(path) {}
 	};
 
 	std::string fPath;
@@ -46,17 +64,15 @@ private:
 
 	SideState &State(Side side) {return fSides[static_cast<int>(side)];}
 	const SideState &State(Side side) const {return fSides[static_cast<int>(side)];}
-	void LoadSide(Side side, const std::optional<std::string> &data, bool force);
-	std::string SavedData(Side side) const;
 
 public:
 	explicit FileDocument(const std::string &path);
 
 	const std::string &Path() const {return fPath;}
-	CodeEdit::TextModel *Model(Side side) const {return State(side).model.Get();}
-	bool Exists(Side side) const {return State(side).exists;}
-	bool IsModified(Side side) const;
-	bool ChangedOnDisk(Side side) const {return State(side).changedOnDisk;}
+	CodeEdit::TextModel *Model(Side side) const {return State(side).text.Model();}
+	bool Exists(Side side) const {return State(side).text.Exists();}
+	bool IsModified(Side side) const {return State(side).text.IsModified();}
+	bool ChangedOnDisk(Side side) const {return State(side).text.ChangedOnDisk();}
 	// Why the file cannot be edited or staged here; empty if it can.
 	const std::string &ReadOnlyReason() const {return fReadOnlyReason;}
 

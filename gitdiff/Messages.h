@@ -31,10 +31,7 @@ constexpr uint32 kMsgFileInvoked = 'GDfi';
 // Internal notifications.
 // The index or a working tree file was written; the status may differ.
 constexpr uint32 kMsgStatusChanged = 'GDsc';
-constexpr uint32 kMsgDiffTimer = 'GDdt';
 constexpr uint32 kMsgRefreshTimer = 'GDrt';
-// "chunk" (int32): index of the chunk whose arrow was clicked.
-constexpr uint32 kMsgTransferChunk = 'GDtc';
 constexpr uint32 kMsgWindowClosed = 'GDwc';
 
 

@@ -8,19 +8,15 @@
 
 #include <CodeEditView/CodeEditView.h>
 
+#include "DiffColors.h"
 #include "DiffView.h"
-#include "Messages.h"
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 static constexpr float kWidth = 36;
 static constexpr float kArrowSize = 14;
-
-static constexpr rgb_color kInsertColor = {40, 170, 60, 255};
-static constexpr rgb_color kDeleteColor = {210, 50, 50, 255};
-static constexpr rgb_color kChangeColor = {60, 110, 220, 255};
 
 
 LinkMapView::LinkMapView(DiffView *diffView):
@@ -45,7 +41,6 @@ std::vector<LinkMapView::Shape> LinkMapView::VisibleShapes()
 	std::vector<Shape> shapes;
 	const BRect bounds = Bounds();
 	const std::vector<Chunk> &chunks = fDiffView->Chunks();
-	const bool arrowOnLeft = fDiffView->Kind() == DiffKind::Staged;
 	for (size_t i = 0; i < chunks.size(); i++) {
 		const Chunk &chunk = chunks[i];
 		const float leftTop = LineY(0, chunk.aFirst);
@@ -75,12 +70,15 @@ std::vector<LinkMapView::Shape> LinkMapView::VisibleShapes()
 			shape.color = kChangeColor;
 		}
 
-		// The arrow sits on the source side and points to the index.
-		const float sourceTop = arrowOnLeft ? leftTop : rightTop;
-		const float sourceBottom = arrowOnLeft ? leftBottom : rightBottom;
-		const float centerY = floorf((sourceTop + sourceBottom) / 2);
-		const float left = arrowOnLeft ? bounds.left + 2 : bounds.right - 2 - kArrowSize;
-		shape.arrow = BRect(left, centerY - kArrowSize / 2, left + kArrowSize, centerY + kArrowSize / 2);
+		// An arrow sits on its source side, next to the source lines.
+		for (int toPane = 0; toPane < 2; toPane++) {
+			const bool sourceLeft = toPane == 1;
+			const float sourceTop = sourceLeft ? leftTop : rightTop;
+			const float sourceBottom = sourceLeft ? leftBottom : rightBottom;
+			const float centerY = floorf((sourceTop + sourceBottom) / 2);
+			const float left = sourceLeft ? bounds.left + 2 : bounds.right - 2 - kArrowSize;
+			shape.arrows[toPane] = BRect(left, centerY - kArrowSize / 2, left + kArrowSize, centerY + kArrowSize / 2);
+		}
 		shapes.push_back(shape);
 	}
 	return shapes;
@@ -114,34 +112,36 @@ void LinkMapView::Draw(BRect updateRect)
 	const rgb_color background = ui_color(B_PANEL_BACKGROUND_COLOR);
 	SetHighColor(background);
 	FillRect(updateRect);
-	if (fDiffView->Document() == nullptr) {
+	if (!fDiffView->HasModels()) {
 		return;
 	}
 
 	SetDrawingMode(B_OP_OVER);
-	const bool pointsRight = fDiffView->Kind() == DiffKind::Staged;
-	const bool editable = fDiffView->Document()->ReadOnlyReason().empty();
 	for (const Shape &shape : VisibleShapes()) {
 		SetHighColor(mix_color(background, shape.color, 80));
 		FillPolygon(shape.points, 4);
 		SetHighColor(mix_color(background, shape.color, 180));
 		StrokeLine(shape.points[0], shape.points[1]);
 		StrokeLine(shape.points[3], shape.points[2]);
-		if (editable) {
-			DrawArrow(shape.arrow, pointsRight, shape.color, fHovered == shape.chunk);
+		for (int toPane = 0; toPane < 2; toPane++) {
+			if (fDiffView->CanCopyTo(toPane)) {
+				DrawArrow(shape.arrows[toPane], toPane == 1, shape.color, fHovered == Arrow(shape.chunk, toPane));
+			}
 		}
 	}
 }
 
 
-std::optional<size_t> LinkMapView::ArrowAt(BPoint where)
+std::optional<LinkMapView::Arrow> LinkMapView::ArrowAt(BPoint where)
 {
-	if (fDiffView->Document() == nullptr || !fDiffView->Document()->ReadOnlyReason().empty()) {
+	if (!fDiffView->HasModels()) {
 		return std::nullopt;
 	}
 	for (const Shape &shape : VisibleShapes()) {
-		if (shape.arrow.InsetByCopy(-2, -2).Contains(where)) {
-			return shape.chunk;
+		for (int toPane = 0; toPane < 2; toPane++) {
+			if (fDiffView->CanCopyTo(toPane) && shape.arrows[toPane].InsetByCopy(-2, -2).Contains(where)) {
+				return Arrow(shape.chunk, toPane);
+			}
 		}
 	}
 	return std::nullopt;
@@ -150,12 +150,13 @@ std::optional<size_t> LinkMapView::ArrowAt(BPoint where)
 
 void LinkMapView::MouseDown(BPoint where)
 {
-	const std::optional<size_t> chunk = ArrowAt(where);
-	if (!chunk.has_value()) {
+	const std::optional<Arrow> arrow = ArrowAt(where);
+	if (!arrow.has_value()) {
 		return;
 	}
-	BMessage message(kMsgTransferChunk);
-	message.AddInt32("chunk", static_cast<int32>(*chunk));
+	BMessage message(kMsgCopyChunk);
+	message.AddInt32("chunk", static_cast<int32>(arrow->first));
+	message.AddInt32("pane", arrow->second);
 	Window()->PostMessage(&message, fDiffView);
 }
 
@@ -163,7 +164,7 @@ void LinkMapView::MouseDown(BPoint where)
 void LinkMapView::MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage)
 {
 	(void)dragMessage;
-	const std::optional<size_t> hovered = transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW
+	const std::optional<Arrow> hovered = transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW
 		? std::nullopt
 		: ArrowAt(where);
 	if (hovered != fHovered) {
@@ -191,4 +192,4 @@ BSize LinkMapView::PreferredSize()
 }
 
 
-} // GitDiff
+} // DiffKit

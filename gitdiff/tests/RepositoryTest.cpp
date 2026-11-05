@@ -24,6 +24,9 @@ using CodeEdit::ModelLock;
 using CodeEdit::TextModel;
 
 
+GitLibrary sGitLibrary;
+
+
 // A repository in a temporary directory, built with libgit2 only.
 class TestRepository {
 private:

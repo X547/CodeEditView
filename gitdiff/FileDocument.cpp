@@ -2,8 +2,6 @@
 
 #include <DataIO.h>
 
-#include <CodeEditView/Language.h>
-
 #include "Chunks.h"
 #include "Repository.h"
 
@@ -33,67 +31,9 @@ static std::string ModelText(TextModel &model)
 
 
 FileDocument::FileDocument(const std::string &path):
-	fPath(path)
+	fPath(path),
+	fSides {SideState(path), SideState(path), SideState(path)}
 {
-	for (SideState &state : fSides) {
-		state.model.SetTo(new TextModel(), true);
-		ModelLock lock(*state.model);
-		state.model->SetLanguage(CodeEdit::LanguageForPath(path));
-	}
-}
-
-
-bool FileDocument::IsModified(Side side) const
-{
-	TextModel &model = *State(side).model;
-	ModelLock lock(model);
-	return model.IsModified();
-}
-
-
-std::string FileDocument::SavedData(Side side) const
-{
-	TextModel &model = *State(side).model;
-	BMallocIO stream;
-	{
-		ModelLock lock(model);
-		model.Save(stream);
-	}
-	return std::string(static_cast<const char*>(stream.Buffer()), stream.BufferLength());
-}
-
-
-void FileDocument::LoadSide(Side side, const std::optional<std::string> &data, bool force)
-{
-	SideState &state = State(side);
-	const std::string bytes = data.value_or(std::string());
-	if (state.loaded == bytes) {
-		state.exists = data.has_value();
-		return;
-	}
-	if (!force && IsModified(side)) {
-		state.changedOnDisk = true;
-		return;
-	}
-	state.exists = data.has_value();
-	state.loaded = bytes;
-	state.changedOnDisk = false;
-	{
-		TextModel &model = *state.model;
-		ModelLock lock(model);
-		BMemoryIO stream(bytes.data(), bytes.size());
-		model.Load(stream);
-		model.SetSavePoint();
-	}
-
-	// Saving must give back the same bytes, or editing would change lines
-	// the user did not touch.
-	state.problem.clear();
-	if (Repository::IsBinary(bytes)) {
-		state.problem = "is a binary file";
-	} else if (SavedData(side) != bytes) {
-		state.problem = "has mixed line endings";
-	}
 }
 
 
@@ -113,7 +53,7 @@ void FileDocument::Load(Repository &repository, bool force)
 			State(side).mode = contents[i]->mode;
 		}
 		// The HEAD version is never edited.
-		LoadSide(side, data, force || side == Side::Head);
+		State(side).text.Load(data, force || side == Side::Head);
 	}
 
 	// A new index entry gets the line endings that `git add` would store.
@@ -129,7 +69,7 @@ void FileDocument::Load(Repository &repository, bool force)
 			lineEnding = clean.GetLineEnding();
 			hasBom = clean.HasBom();
 		}
-		TextModel &model = *State(Side::Index).model;
+		TextModel &model = *Model(Side::Index);
 		ModelLock lock(model);
 		model.SetLineEnding(lineEnding);
 		model.SetHasBom(hasBom);
@@ -155,8 +95,8 @@ void FileDocument::Load(Repository &repository, bool force)
 	}
 	fReadOnlyReason = repository.FilterProblem(fPath);
 	for (const SideState &state : fSides) {
-		if (fReadOnlyReason.empty() && !state.problem.empty()) {
-			fReadOnlyReason = state.problem;
+		if (fReadOnlyReason.empty() && !state.text.Problem().empty()) {
+			fReadOnlyReason = state.text.Problem();
 		}
 	}
 }
@@ -167,32 +107,24 @@ void FileDocument::WriteIndex(Repository &repository)
 	SideState &index = State(Side::Index);
 	const SideState &worktree = State(Side::Worktree);
 	uint32_t mode = GIT_FILEMODE_BLOB;
-	if (index.exists) {
+	if (index.text.Exists()) {
 		mode = index.mode;
-	} else if (worktree.exists) {
+	} else if (worktree.text.Exists()) {
 		mode = worktree.mode;
 	}
-	const std::string data = SavedData(Side::Index);
+	const std::string data = index.text.SavedData();
 	repository.WriteIndex(fPath, data, mode);
-	index.exists = true;
 	index.mode = mode;
-	index.loaded = data;
-	index.changedOnDisk = false;
-	ModelLock lock(*index.model);
-	index.model->SetSavePoint();
+	index.text.MarkSaved(data);
 }
 
 
 void FileDocument::SaveWorktree(Repository &repository)
 {
 	SideState &worktree = State(Side::Worktree);
-	const std::string data = SavedData(Side::Worktree);
+	const std::string data = worktree.text.SavedData();
 	repository.WriteWorktree(fPath, data);
-	worktree.exists = true;
-	worktree.loaded = data;
-	worktree.changedOnDisk = false;
-	ModelLock lock(*worktree.model);
-	worktree.model->SetSavePoint();
+	worktree.text.MarkSaved(data);
 }
 
 
@@ -200,7 +132,7 @@ void FileDocument::StageFile(Repository &repository)
 {
 	if (!Exists(Side::Worktree)) {
 		repository.RemoveFromIndex(fPath);
-		LoadSide(Side::Index, std::nullopt, true);
+		State(Side::Index).text.Load(std::nullopt, true);
 		return;
 	}
 	TextModel &index = *Model(Side::Index);
@@ -218,16 +150,20 @@ void FileDocument::UnstageFile(Repository &repository)
 {
 	if (!Exists(Side::Head)) {
 		repository.RemoveFromIndex(fPath);
-		LoadSide(Side::Index, std::nullopt, true);
+		State(Side::Index).text.Load(std::nullopt, true);
 		return;
 	}
 	TextModel &head = *Model(Side::Head);
 	TextModel &index = *Model(Side::Index);
 	const std::vector<Chunk> chunks = ComputeChunks(ModelText(head), ModelText(index));
 	RevertB(head, index, chunks, AllIndexes(chunks));
-	State(Side::Index).exists = true;
-	State(Side::Index).mode = State(Side::Head).mode;
-	WriteIndex(repository);
+	// The entry takes the HEAD mode, also when it was not in the index.
+	SideState &indexState = State(Side::Index);
+	const uint32_t mode = State(Side::Head).mode;
+	const std::string data = indexState.text.SavedData();
+	repository.WriteIndex(fPath, data, mode);
+	indexState.mode = mode;
+	indexState.text.MarkSaved(data);
 }
 
 

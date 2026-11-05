@@ -39,7 +39,9 @@ if get_option('tests')
 	subdir('tests')
 endif
 
-# Needs libgit2; uses the test setup above.
+# The diff apps and their shared library need libgit2; they use the test
+# setup above.
 if get_option('gitdiff')
+	subdir('diffkit')
 	subdir('gitdiff')
 endif

@@ -12,7 +12,7 @@ class TextModel;
 }
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 // A run of lines that differ between side A and side B. Lines are 0-based
@@ -48,6 +48,9 @@ std::vector<Chunk> ComputeChunks(std::string_view a, std::string_view b, DiffAlg
 // the other: one to one between chunks, proportionally inside them.
 double MapLine(const std::vector<Chunk> &chunks, double line, bool fromA);
 
+// The chunks with sides A and B exchanged, to transfer the other way.
+std::vector<Chunk> SwapSides(const std::vector<Chunk> &chunks);
+
 // Indexes of the chunks that a range of lines on one side touches. A chunk
 // without lines on that side is touched if the range includes or borders
 // its position.
@@ -66,4 +69,4 @@ void RevertB(CodeEdit::TextModel &a, CodeEdit::TextModel &b, const std::vector<C
 	const std::vector<size_t> &indexes, const LineRange *selection = nullptr);
 
 
-} // GitDiff
+} // DiffKit

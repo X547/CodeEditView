@@ -7,7 +7,7 @@
 #include <git2.h>
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 class GitError: public std::runtime_error {
@@ -49,4 +49,4 @@ public:
 };
 
 
-} // GitDiff
+} // DiffKit

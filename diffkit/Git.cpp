@@ -1,7 +1,7 @@
 #include "Git.h"
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 void Check(int result, const char *what)
@@ -19,4 +19,4 @@ void Check(int result, const char *what)
 }
 
 
-} // GitDiff
+} // DiffKit

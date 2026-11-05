@@ -98,7 +98,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fHideUnchangedItem->SetMarked(true);
 
 	fFileList = new FileListView();
-	fDiffView = new DiffView(fRepository.get());
+	fDiffView = new DiffView();
 	BSplitView *splitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
@@ -164,9 +164,74 @@ void DiffWindow::ShowSelectedFile()
 	}
 	FileDocument *document = DocumentFor(selected->first);
 	if (document != nullptr) {
-		fDiffView->SetDiff(document, selected->second);
+		fDocument.SetTo(document);
+		fKind = selected->second;
+		// The state first, so the views get their read-only settings before
+		// the models.
+		UpdateDiffState();
+		fDiffView->SetModels(document->Model(SideOf(fKind, 0)), document->Model(SideOf(fKind, 1)),
+			document->Path() + (fKind == DiffKind::Unstaged ? ":unstaged" : ":staged"));
 	}
 	UpdateTitle();
+}
+
+
+bool DiffWindow::CanEdit() const
+{
+	return fDocument != nullptr && fDocument->ReadOnlyReason().empty();
+}
+
+
+// Labels, the read-only state of the right pane, and the arrows: they copy
+// to the index (stage in the unstaged diff, unstage in the staged diff).
+void DiffWindow::UpdateDiffState()
+{
+	static const char *kSideNames[] = {"HEAD", "Index", "Working tree"};
+	static const char *kMissing[] = {"not in HEAD", "not in index", "deleted"};
+
+	if (fDocument == nullptr) {
+		fDiffView->SetLabel(0, "");
+		fDiffView->SetLabel(1, "");
+		fDiffView->SetCopyTargets(false, false);
+		return;
+	}
+	for (int pane = 0; pane < 2; pane++) {
+		const Side side = SideOf(fKind, pane);
+		const int sideIndex = static_cast<int>(side);
+		std::string text = kSideNames[sideIndex];
+		if (!fDocument->Exists(side)) {
+			text += std::string(" — ") + kMissing[sideIndex];
+		}
+		if (side != Side::Head && fDocument->IsModified(side)) {
+			text += " — modified";
+		}
+		if (fDocument->ChangedOnDisk(side)) {
+			text += " — changed on disk";
+		}
+		if (pane == 1 && !fDocument->ReadOnlyReason().empty()) {
+			text += " — read-only: file " + fDocument->ReadOnlyReason();
+		}
+		fDiffView->SetLabel(pane, text.c_str());
+	}
+	fDiffView->SetReadOnly(0, true);
+	fDiffView->SetReadOnly(1, !CanEdit() || (SideOf(fKind, 1) == Side::Worktree && !fDocument->Exists(Side::Worktree)));
+	fDiffView->SetCopyTargets(fKind == DiffKind::Unstaged && CanEdit(), fKind == DiffKind::Staged && CanEdit());
+}
+
+
+// Copying into the index writes it at once; into the working tree buffer, it
+// is saved with Save.
+void DiffWindow::ChangesCopied(int pane)
+{
+	if (fDocument != nullptr && SideOf(fKind, pane) == Side::Index) {
+		try {
+			fDocument->WriteIndex(*fRepository);
+		} catch (const std::exception &e) {
+			ShowError(e.what());
+		}
+		Refresh();
+	}
+	UpdateDiffState();
 }
 
 
@@ -185,7 +250,7 @@ void DiffWindow::Refresh()
 	for (const StatusEntry &entry : status) {
 		listed.insert(entry.path);
 	}
-	FileDocument *current = fDiffView->Document();
+	FileDocument *current = fDocument.Get();
 	for (auto it = fDocuments.begin(); it != fDocuments.end();) {
 		FileDocument *document = it->second.Get();
 		try {
@@ -198,7 +263,7 @@ void DiffWindow::Refresh()
 		it = keep ? std::next(it) : fDocuments.erase(it);
 	}
 	fDiffView->RefreshDiff();
-	fDiffView->UpdateState();
+	UpdateDiffState();
 }
 
 
@@ -212,9 +277,9 @@ void DiffWindow::ScheduleRefresh()
 void DiffWindow::UpdateTitle()
 {
 	std::string title = BPath(fRepository->Workdir().c_str()).Leaf();
-	if (const FileDocument *document = fDiffView->Document()) {
+	if (const FileDocument *document = fDocument.Get()) {
 		title += " — " + document->Path();
-		title += fDiffView->Kind() == DiffKind::Unstaged ? " (unstaged)" : " (staged)";
+		title += fKind == DiffKind::Unstaged ? " (unstaged)" : " (staged)";
 	}
 	SetTitle(title.c_str());
 }
@@ -232,8 +297,8 @@ void DiffWindow::Save(bool all)
 					document->SaveWorktree(*fRepository);
 				}
 			}
-		} else if (FileDocument *document = fDiffView->Document()) {
-			if (fDiffView->Kind() == DiffKind::Staged) {
+		} else if (FileDocument *document = fDocument.Get()) {
+			if (fKind == DiffKind::Staged) {
 				document->WriteIndex(*fRepository);
 			} else if (document->IsModified(Side::Worktree)) {
 				document->SaveWorktree(*fRepository);
@@ -242,14 +307,14 @@ void DiffWindow::Save(bool all)
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 	}
-	fDiffView->UpdateState();
+	UpdateDiffState();
 	Refresh();
 }
 
 
 void DiffWindow::ReloadDocument()
 {
-	FileDocument *document = fDiffView->Document();
+	FileDocument *document = fDocument.Get();
 	if (document == nullptr) {
 		return;
 	}
@@ -259,18 +324,18 @@ void DiffWindow::ReloadDocument()
 		ShowError(e.what());
 	}
 	fDiffView->RefreshDiff();
-	fDiffView->UpdateState();
+	UpdateDiffState();
 }
 
 
 void DiffWindow::StageFile()
 {
-	FileDocument *document = fDiffView->Document();
+	FileDocument *document = fDocument.Get();
 	if (document == nullptr || !document->ReadOnlyReason().empty()) {
 		return;
 	}
 	try {
-		if (fDiffView->Kind() == DiffKind::Unstaged) {
+		if (fKind == DiffKind::Unstaged) {
 			document->StageFile(*fRepository);
 		} else {
 			document->UnstageFile(*fRepository);
@@ -357,10 +422,21 @@ void DiffWindow::MessageReceived(BMessage *message)
 			ReloadDocument();
 			break;
 		case kMsgStage:
-			fDiffView->Stage();
+			// To the index: left in the unstaged diff, right in the staged one.
+			if (CanEdit()) {
+				fDiffView->CopyChanges(fKind == DiffKind::Unstaged ? 0 : 1);
+			}
 			break;
 		case kMsgRevert:
-			fDiffView->Revert();
+			if (CanEdit() && fKind == DiffKind::Unstaged && fDocument->Exists(Side::Worktree)) {
+				fDiffView->CopyChanges(1);
+			}
+			break;
+		case kMsgChangesCopied:
+			ChangesCopied(message->GetInt32("pane", 0));
+			break;
+		case kMsgDiffEdited:
+			UpdateDiffState();
 			break;
 		case kMsgStageFile:
 			StageFile();

@@ -31,6 +31,9 @@ private:
 	std::map<std::string, BReference<FileDocument>> fDocuments;
 	FileListView *fFileList {};
 	DiffView *fDiffView {};
+	// The document and diff shown in fDiffView.
+	BReference<FileDocument> fDocument;
+	DiffKind fKind = DiffKind::Unstaged;
 	std::unique_ptr<BMessageRunner> fRefreshRunner;
 	BMenuItem *fSyncScrollingItem {};
 	BMenuItem *fHideUnchangedItem {};
@@ -39,6 +42,9 @@ private:
 	node_ref fGitDirNode {};
 
 	FileDocument *DocumentFor(const std::string &path);
+	void UpdateDiffState();
+	bool CanEdit() const;
+	void ChangesCopied(int pane);
 	void ShowSelectedFile();
 	void Refresh();
 	void ScheduleRefresh();

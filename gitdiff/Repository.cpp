@@ -326,10 +326,5 @@ std::string Repository::FilterProblem(const std::string &path)
 }
 
 
-bool Repository::IsBinary(std::string_view data)
-{
-	return data.substr(0, 8000).find('\0') != std::string_view::npos;
-}
-
 
 } // GitDiff

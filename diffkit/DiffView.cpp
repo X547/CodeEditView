@@ -15,12 +15,11 @@
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
+#include "DiffColors.h"
 #include "LinkMapView.h"
-#include "Messages.h"
-#include "Repository.h"
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 using CodeEdit::Decoration;
@@ -40,16 +39,12 @@ static constexpr bigtime_t kDiffDelay = 150000;
 static constexpr size_t kContextLines = 3;
 // Unchanged regions are hidden only if at least this many lines would be.
 static constexpr size_t kMinHiddenLines = 4;
-
-static constexpr rgb_color kInsertColor = {40, 170, 60, 255};
-static constexpr rgb_color kDeleteColor = {210, 50, 50, 255};
-static constexpr rgb_color kChangeColor = {60, 110, 220, 255};
 static constexpr uint8 kLineMix = 56;
 
 
 void ShowError(const char *message)
 {
-	BAlert *alert = new BAlert("Git diff", message, "OK", nullptr, nullptr, B_WIDTH_AS_USUAL, B_STOP_ALERT);
+	BAlert *alert = new BAlert("Error", message, "OK", nullptr, nullptr, B_WIDTH_AS_USUAL, B_STOP_ALERT);
 	alert->Go(nullptr);
 }
 
@@ -92,9 +87,8 @@ static LineRange SelectedLines(CodeEditView *view, bool &empty)
 }
 
 
-DiffView::DiffView(Repository *repository):
-	BView("diffView", 0),
-	fRepository(repository)
+DiffView::DiffView():
+	BView("diffView", 0)
 {
 	for (int pane = 0; pane < 2; pane++) {
 		fViews[pane] = new CodeEditView(pane == 0 ? "leftView" : "rightView");
@@ -140,23 +134,11 @@ void DiffView::AttachedToWindow()
 }
 
 
-Side DiffView::SideOf(int pane) const
-{
-	if (fKind == DiffKind::Unstaged) {
-		return pane == 0 ? Side::Index : Side::Worktree;
-	}
-	return pane == 0 ? Side::Head : Side::Index;
-}
-
-
 void DiffView::ApplySettings()
 {
-	const bool rightReadOnly = fDocument == nullptr
-		|| !fDocument->ReadOnlyReason().empty()
-		|| (SideOf(1) == Side::Worktree && !fDocument->Exists(Side::Worktree));
 	for (int pane = 0; pane < 2; pane++) {
 		CodeEdit::EditorSettings settings = fViews[pane]->Settings();
-		settings.readOnly = pane == 0 || rightReadOnly;
+		settings.readOnly = fReadOnly[pane] || !HasModels();
 		settings.wordWrap = fWordWrap;
 		if (!(settings == fViews[pane]->Settings())) {
 			fViews[pane]->SetSettings(settings);
@@ -167,18 +149,18 @@ void DiffView::ApplySettings()
 
 void DiffView::SavePosition()
 {
-	if (fDocument == nullptr) {
+	if (!HasModels()) {
 		return;
 	}
 	CodeEditView *view = fViews[1];
-	fSavedPositions[{fDocument->Path(), fKind}] = {view->GetSelection(), view->LineAtY(view->Bounds().top)};
+	fSavedPositions[fKey] = {view->GetSelection(), view->LineAtY(view->Bounds().top)};
 }
 
 
 void DiffView::RestorePosition()
 {
 	CodeEditView *view = fViews[1];
-	const auto it = fSavedPositions.find({fDocument->Path(), fKind});
+	const auto it = fSavedPositions.find(fKey);
 	if (it != fSavedPositions.end()) {
 		view->SetSelection(it->second.selection);
 		view->ScrollLineTo(it->second.top, 0, 0);
@@ -196,14 +178,18 @@ void DiffView::RestorePosition()
 }
 
 
-void DiffView::SetDiff(FileDocument *document, DiffKind kind)
+void DiffView::SetModels(TextModel *left, TextModel *right, const std::string &key)
 {
-	if (document == fDocument.Get() && kind == fKind) {
+	if (left == fModels[0].Get() && right == fModels[1].Get() && key == fKey) {
 		return;
 	}
 	SavePosition();
-	fDocument.SetTo(document);
-	fKind = kind;
+	if (left == nullptr || right == nullptr) {
+		left = right = nullptr;
+	}
+	fModels[0].SetTo(left);
+	fModels[1].SetTo(right);
+	fKey = key;
 	fExpanded.clear();
 	fRegions.clear();
 	fFolded[0].clear();
@@ -213,44 +199,36 @@ void DiffView::SetDiff(FileDocument *document, DiffKind kind)
 	fChunks.clear();
 
 	for (int pane = 0; pane < 2; pane++) {
-		fViews[pane]->SetModel(document != nullptr ? document->Model(SideOf(pane)) : nullptr);
+		fViews[pane]->SetModel(fModels[pane].Get());
 	}
-	UpdateState();
+	ApplySettings();
 	RefreshDiff();
-	if (document != nullptr) {
+	if (HasModels()) {
 		RestorePosition();
 	}
 }
 
 
-void DiffView::UpdateState()
+void DiffView::SetLabel(int pane, const char *text)
 {
-	static const char *kSideNames[] = {"HEAD", "Index", "Working tree"};
-	static const char *kMissing[] = {"not in HEAD", "not in index", "deleted"};
+	fLabels[pane]->SetText(text);
+}
 
+
+void DiffView::SetReadOnly(int pane, bool readOnly)
+{
+	fReadOnly[pane] = readOnly;
 	ApplySettings();
-	for (int pane = 0; pane < 2; pane++) {
-		if (fDocument == nullptr) {
-			fLabels[pane]->SetText("");
-			continue;
-		}
-		const Side side = SideOf(pane);
-		const int sideIndex = static_cast<int>(side);
-		std::string text = kSideNames[sideIndex];
-		if (!fDocument->Exists(side)) {
-			text += std::string(" — ") + kMissing[sideIndex];
-		}
-		if (side != Side::Head && fDocument->IsModified(side)) {
-			text += " — modified";
-		}
-		if (fDocument->ChangedOnDisk(side)) {
-			text += " — changed on disk";
-		}
-		if (pane == 1 && !fDocument->ReadOnlyReason().empty()) {
-			text += " — read-only: file " + fDocument->ReadOnlyReason();
-		}
-		fLabels[pane]->SetText(text.c_str());
+}
+
+
+void DiffView::SetCopyTargets(bool toLeft, bool toRight)
+{
+	if (fCopyTo[0] == toLeft && fCopyTo[1] == toRight) {
+		return;
 	}
+	fCopyTo[0] = toLeft;
+	fCopyTo[1] = toRight;
 	fLinkMap->Invalidate();
 }
 
@@ -268,11 +246,11 @@ void DiffView::RefreshDiff()
 	fDiffRunner.reset();
 	fDiffPending = false;
 	fChunks.clear();
-	if (fDocument != nullptr) {
+	if (HasModels()) {
 		try {
-			fChunks = ComputeChunks(ModelText(*fViews[0]->Model()), ModelText(*fViews[1]->Model()), fAlgorithm);
+			fChunks = ComputeChunks(ModelText(*fModels[0]), ModelText(*fModels[1]), fAlgorithm);
 		} catch (const std::exception &e) {
-			fprintf(stderr, "Git diff: %s\n", e.what());
+			fprintf(stderr, "Diff: %s\n", e.what());
 		}
 	}
 	UpdateDecorations();
@@ -284,9 +262,9 @@ void DiffView::RefreshDiff()
 void DiffView::UpdateDecorations()
 {
 	std::vector<Decoration> decorations[2];
-	for (int pane = 0; pane < 2 && fDocument != nullptr; pane++) {
+	for (int pane = 0; pane < 2 && HasModels(); pane++) {
 		const bool onA = pane == 0;
-		TextModel &model = *fViews[pane]->Model();
+		TextModel &model = *fModels[pane];
 		ModelLock lock(model);
 		const Rope &text = model.Text();
 		for (const Chunk &chunk : fChunks) {
@@ -317,7 +295,7 @@ void DiffView::UpdateDecorations()
 std::vector<DiffView::Region> DiffView::UnchangedRegions()
 {
 	std::vector<Region> regions;
-	if (!fHideUnchanged || fDocument == nullptr) {
+	if (!fHideUnchanged || !HasModels()) {
 		return regions;
 	}
 	const size_t lineCounts[2] = {fViews[0]->LineCount(), fViews[1]->LineCount()};
@@ -408,7 +386,7 @@ void DiffView::CheckFoldChanges()
 // its middle too.
 void DiffView::SyncScroll(int from)
 {
-	if (!fSyncScrolling || fDocument == nullptr) {
+	if (!fSyncScrolling || !HasModels()) {
 		return;
 	}
 	CodeEditView *source = fViews[from];
@@ -465,96 +443,72 @@ CodeEditView *DiffView::FocusedView() const
 }
 
 
-void DiffView::WriteIndex()
-{
-	try {
-		fDocument->WriteIndex(*fRepository);
-	} catch (const std::exception &e) {
-		ShowError(e.what());
-	}
-	RefreshDiff();
-	UpdateState();
-	Window()->PostMessage(kMsgStatusChanged);
-}
-
-
-void DiffView::TransferChunks(const std::vector<size_t> &indexes, const LineRange *selection)
+void DiffView::CopyChunks(const std::vector<size_t> &indexes, int toPane, int selectionPane,
+	const LineRange *selection)
 {
 	if (indexes.empty()) {
 		return;
 	}
-	TextModel &left = *fViews[0]->Model();
-	TextModel &right = *fViews[1]->Model();
+	TextModel &left = *fModels[0];
+	TextModel &right = *fModels[1];
+	// A selection in the source pane picks the lines to copy; one in the
+	// target pane picks the lines to revert. The chunks are swapped when the
+	// left pane is the one the functions call B.
+	const bool selectionInRight = selection == nullptr || selectionPane == 1;
 	try {
-		if (fKind == DiffKind::Unstaged) {
-			ApplyToA(left, right, fChunks, indexes, selection);
+		if (toPane == 0) {
+			if (selectionInRight) {
+				ApplyToA(left, right, fChunks, indexes, selection);
+			} else {
+				RevertB(right, left, SwapSides(fChunks), indexes, selection);
+			}
 		} else {
-			RevertB(left, right, fChunks, indexes, selection);
+			if (selectionInRight) {
+				RevertB(left, right, fChunks, indexes, selection);
+			} else {
+				ApplyToA(right, left, SwapSides(fChunks), indexes, selection);
+			}
 		}
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 		return;
 	}
-	WriteIndex();
-}
-
-
-void DiffView::Stage()
-{
-	if (fDocument == nullptr || !fDocument->ReadOnlyReason().empty()) {
-		return;
-	}
-	if (fDiffPending) {
-		RefreshDiff();
-	}
-	CodeEditView *view = FocusedView();
-	const bool onA = view == fViews[0];
-	bool empty;
-	const LineRange range = SelectedLines(view, empty);
-	const std::vector<size_t> indexes = TouchedChunks(fChunks, range, onA);
-	TransferChunks(indexes, empty || onA ? nullptr : &range);
-}
-
-
-void DiffView::Revert()
-{
-	if (fDocument == nullptr || fKind != DiffKind::Unstaged || !fDocument->ReadOnlyReason().empty()
-		|| !fDocument->Exists(Side::Worktree)) {
-		return;
-	}
-	if (fDiffPending) {
-		RefreshDiff();
-	}
-	CodeEditView *view = FocusedView();
-	const bool onA = view == fViews[0];
-	bool empty;
-	const LineRange range = SelectedLines(view, empty);
-	const std::vector<size_t> indexes = TouchedChunks(fChunks, range, onA);
-	if (indexes.empty()) {
-		return;
-	}
-	try {
-		RevertB(*fViews[0]->Model(), *fViews[1]->Model(), fChunks, indexes, empty || onA ? nullptr : &range);
-	} catch (const std::exception &e) {
-		ShowError(e.what());
-	}
 	RefreshDiff();
-	UpdateState();
+	BMessage message(kMsgChangesCopied);
+	message.AddInt32("pane", toPane);
+	Window()->PostMessage(&message);
 }
 
 
-void DiffView::TransferChunk(size_t index)
+void DiffView::CopyChanges(int toPane)
 {
-	if (fDocument == nullptr || !fDocument->ReadOnlyReason().empty() || fDiffPending || index >= fChunks.size()) {
+	if (!HasModels()) {
 		return;
 	}
-	TransferChunks({index}, nullptr);
+	if (fDiffPending) {
+		RefreshDiff();
+	}
+	CodeEditView *view = FocusedView();
+	const int pane = view == fViews[0] ? 0 : 1;
+	bool empty;
+	const LineRange range = SelectedLines(view, empty);
+	const std::vector<size_t> indexes = TouchedChunks(fChunks, range, pane == 0);
+	CopyChunks(indexes, toPane, pane, empty ? nullptr : &range);
+}
+
+
+void DiffView::CopyChunk(size_t index, int toPane)
+{
+	if (!HasModels() || !fCopyTo[toPane] || fDiffPending || index >= fChunks.size()) {
+		return;
+	}
+	CopyChunks({index}, toPane, 1, nullptr);
 }
 
 
 void DiffView::GoToChunk(bool next)
 {
-	if (fDocument == nullptr) {
+	if (!HasModels()) {
 		return;
 	}
 	if (fDiffPending) {
@@ -594,7 +548,7 @@ void DiffView::MessageReceived(BMessage *message)
 	switch (message->what) {
 		case CodeEdit::kMsgContentsChanged:
 			ScheduleDiff();
-			UpdateState();
+			Window()->PostMessage(kMsgDiffEdited);
 			break;
 		case CodeEdit::kMsgViewportChanged: {
 			void *pointer = nullptr;
@@ -620,8 +574,8 @@ void DiffView::MessageReceived(BMessage *message)
 		case kMsgDiffTimer:
 			RefreshDiff();
 			break;
-		case kMsgTransferChunk:
-			TransferChunk(static_cast<size_t>(message->GetInt32("chunk", -1)));
+		case kMsgCopyChunk:
+			CopyChunk(static_cast<size_t>(message->GetInt32("chunk", -1)), message->GetInt32("pane", 0));
 			break;
 		case CodeEdit::kMsgCaretMoved:
 			break;
@@ -632,4 +586,4 @@ void DiffView::MessageReceived(BMessage *message)
 }
 
 
-} // GitDiff
+} // DiffKit

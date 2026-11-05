@@ -9,7 +9,7 @@
 #include "Git.h"
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 using CodeEdit::ModelLock;
@@ -64,6 +64,17 @@ std::vector<Chunk> ComputeChunks(std::string_view a, std::string_view b, DiffAlg
 		&options, nullptr, nullptr, AddHunk, nullptr, &chunks
 	), "Cannot compare the texts");
 	return chunks;
+}
+
+
+std::vector<Chunk> SwapSides(const std::vector<Chunk> &chunks)
+{
+	std::vector<Chunk> swapped;
+	swapped.reserve(chunks.size());
+	for (const Chunk &chunk : chunks) {
+		swapped.push_back({chunk.bFirst, chunk.bCount, chunk.aFirst, chunk.aCount});
+	}
+	return swapped;
 }
 
 
@@ -210,4 +221,4 @@ void RevertB(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
 }
 
 
-} // GitDiff
+} // DiffKit

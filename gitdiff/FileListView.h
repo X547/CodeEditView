@@ -8,7 +8,7 @@
 #include <ListItem.h>
 #include <OutlineListView.h>
 
-#include "DiffView.h"
+#include "FileDocument.h"
 #include "Repository.h"
 
 

@@ -13,6 +13,9 @@
 namespace GitDiff {
 
 
+using namespace DiffKit;
+
+
 // One changed file, like a line of `git status --short`.
 struct StatusEntry {
 	std::string path;
@@ -77,9 +80,6 @@ public:
 	// Why the file cannot be edited as text here (filter attributes); empty
 	// if it can.
 	std::string FilterProblem(const std::string &path);
-
-	// Git's rule: a NUL byte in the first 8000 bytes.
-	static bool IsBinary(std::string_view data);
 };
 
 

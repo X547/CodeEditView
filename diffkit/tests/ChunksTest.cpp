@@ -11,7 +11,7 @@
 #include "Git.h"
 
 
-namespace GitDiff {
+namespace DiffKit {
 
 
 using CodeEdit::ModelLock;
@@ -146,6 +146,17 @@ TEST_CASE("transferring selected lines")
 	const LineRange second {2, 2};
 	RevertB(*a, *b, chunks, {0}, &second);
 	CHECK(Text(*b) == "1\n2\nx\n3\n");
+	{
+		ModelLock lock(*b);
+		b->Undo();
+	}
+
+	// The other way: copying line 2 of A replaces the chunk's B lines.
+	const std::vector<Chunk> swapped = SwapSides(chunks);
+	CHECK(swapped == std::vector<Chunk> {{1, 2, 1, 1}});
+	const LineRange third {1, 1};
+	ApplyToA(*b, *a, swapped, {0}, &third);
+	CHECK(Text(*b) == "1\n2\n3\n");
 }
 
 
@@ -211,8 +222,18 @@ TEST_CASE("randomized transfers")
 			ApplyToA(*a, *b, chunks, {i});
 		}
 		CHECK(Text(*a) == bText);
+
+		// The other way with swapped chunks.
+		const std::vector<Chunk> swapped = SwapSides(chunks);
+		a = MakeModel(aText);
+		b = MakeModel(bText);
+		ApplyToA(*b, *a, swapped, All(swapped));
+		CHECK(Text(*b) == aText);
+		b = MakeModel(bText);
+		RevertB(*b, *a, swapped, All(swapped));
+		CHECK(Text(*a) == bText);
 	}
 }
 
 
-} // GitDiff
+} // DiffKit

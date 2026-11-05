@@ -160,6 +160,9 @@ pane (writes the index in the staged diff), Cmd+Shift+S saves all.
 Binary files, files with mixed line endings, conflicts, symbolic links,
 submodules and files with filter attributes are shown read-only.
 
+The two-pane diff view, its link map and the chunk diff live in `diffkit/`,
+a static library for diff apps.
+
 
 ## Building
 

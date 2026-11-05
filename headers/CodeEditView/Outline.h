@@ -16,6 +16,13 @@ enum class OutlineKind {
 	Union,
 	Enum,
 	Function,
+	// A named "#pragma mark" (also as a "//" comment); holds the items after
+	// it up to the next mark, the end of its preprocessor branch or the end
+	// of the enclosing item.
+	Section,
+	// An unnamed "#pragma mark -": a divider with no children and an empty
+	// range (start == end).
+	Separator,
 };
 
 
@@ -24,6 +31,7 @@ enum class OutlineKind {
 struct OutlineItem {
 	OutlineKind kind {};
 	// The name; functions add their parameter list, e.g. "Draw(BRect rect)".
+	// For a section the mark text without surrounding spaces and dashes.
 	std::string label;
 	size_t start {};
 	size_t end {};

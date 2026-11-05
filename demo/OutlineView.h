@@ -23,11 +23,13 @@ private:
 	size_t fEnd;
 	size_t fNameStart;
 	size_t fNameEnd;
+	// Identifies the item across rebuilds for keeping it collapsed.
+	std::string fPath;
 
 	friend class OutlineView;
 
 public:
-	OutlineListItem(const CodeEdit::OutlineItem &item, uint32 level, bool expanded);
+	OutlineListItem(const CodeEdit::OutlineItem &item, uint32 level, bool expanded, const std::string &path);
 
 	size_t Start() const {return fStart;}
 	size_t End() const {return fEnd;}

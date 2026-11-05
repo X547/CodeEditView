@@ -103,6 +103,114 @@ TEST_CASE("outline of definitions")
 }
 
 
+static constexpr const char *kMarks =
+	"#include <stdio.h>\n"
+	"// #pragma mark -\n"
+	"void A() {}\n"
+	"//#pragma mark - First\n"
+	"void B() {}\n"
+	"void C() {}\n"
+	"// #pragma mark -\n"
+	"void D() {}\n"
+	"#pragma mark -\n"
+	"#pragma mark ----- Second -----\n"
+	"static const int kTable[] = {\n"
+	"\t// #pragma mark - InInitializer\n"
+	"\t1\n"
+	"};\n"
+	"void E()\n"
+	"{\n"
+	"\t//#pragma mark - InFunction\n"
+	"}\n"
+	"namespace ns {\n"
+	"//#pragma mark - Inner\n"
+	"class K {\n"
+	"//#pragma mark - Members\n"
+	"\tvoid M() {}\n"
+	"};\n"
+	"}\n"
+	"#ifdef X\n"
+	"//#pragma mark - Branch\n"
+	"void F() {}\n"
+	"#endif\n"
+	"void G() {}\n"
+	"//#pragma mark Trailing\n"
+	"//#pragma mark -\n";
+
+
+static size_t FindIn(std::string_view text, std::string_view needle)
+{
+	return text.find(needle);
+}
+
+
+TEST_CASE("outline sections from pragma marks")
+{
+	EditorCore core(MakeModel(kMarks, "cpp"));
+	const std::vector<OutlineItem> outline = core.Outline();
+	const std::string_view text(kMarks);
+
+	// A; First {B, C}; separator; D; Second {E, ns {Inner {K {Members {M}}}}};
+	// Branch {F}; G; Trailing.
+	REQUIRE(outline.size() == 8);
+	CHECK(outline[0].label == "A()");
+
+	const OutlineItem &first = outline[1];
+	CHECK(first.kind == OutlineKind::Section);
+	CHECK(first.label == "First");
+	CHECK(first.start == FindIn(text, "//#pragma mark - First"));
+	CHECK(first.end == FindIn(text, "// #pragma mark -\nvoid D"));
+	CHECK(first.nameStart == FindIn(text, "First"));
+	CHECK(first.nameEnd == FindIn(text, "First") + 5);
+	REQUIRE(first.children.size() == 2);
+	CHECK(first.children[0].label == "B()");
+	CHECK(first.children[1].label == "C()");
+
+	CHECK(outline[2].kind == OutlineKind::Separator);
+	CHECK(outline[2].start == outline[2].end);
+	CHECK(outline[2].children.empty());
+	CHECK(outline[3].label == "D()");
+
+	// The unnamed mark directly before "Second" is dropped; marks in an
+	// initializer or a function body are ignored.
+	const OutlineItem &second = outline[4];
+	CHECK(second.kind == OutlineKind::Section);
+	CHECK(second.label == "Second");
+	CHECK(second.end == FindIn(text, "//#pragma mark - Branch"));
+	REQUIRE(second.children.size() == 2);
+	CHECK(second.children[0].label == "E()");
+	CHECK(second.children[0].children.empty());
+
+	const OutlineItem &ns = second.children[1];
+	CHECK(ns.kind == OutlineKind::Namespace);
+	REQUIRE(ns.children.size() == 1);
+	CHECK(ns.children[0].kind == OutlineKind::Section);
+	CHECK(ns.children[0].label == "Inner");
+	CHECK(ns.children[0].end == ns.end);
+	REQUIRE(ns.children[0].children.size() == 1);
+	const OutlineItem &k = ns.children[0].children[0];
+	CHECK(k.label == "K");
+	REQUIRE(k.children.size() == 1);
+	CHECK(k.children[0].kind == OutlineKind::Section);
+	CHECK(k.children[0].label == "Members");
+	REQUIRE(k.children[0].children.size() == 1);
+	CHECK(k.children[0].children[0].label == "M()");
+
+	// A section in a preprocessor branch ends with the branch.
+	const OutlineItem &branch = outline[5];
+	CHECK(branch.kind == OutlineKind::Section);
+	CHECK(branch.label == "Branch");
+	REQUIRE(branch.children.size() == 1);
+	CHECK(branch.children[0].label == "F()");
+	CHECK(outline[6].label == "G()");
+
+	// The trailing unnamed mark has no items after it.
+	CHECK(outline[7].kind == OutlineKind::Section);
+	CHECK(outline[7].label == "Trailing");
+	CHECK(outline[7].children.empty());
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

@@ -15,7 +15,8 @@ class QueryCursor;
 class Rope;
 
 
-// Definitions matched by the navigation query, nested by containment.
+// Definitions matched by the navigation query, nested by containment, and
+// grouped by "#pragma mark" sections at declaration level.
 std::vector<OutlineItem> BuildOutline(const Language &language, const TSTree *tree, const Rope &text, QueryCursor &cursor);
 
 

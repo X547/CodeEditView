@@ -156,6 +156,199 @@ static std::vector<OutlineItem> Nest(std::vector<OutlineItem> &flat, size_t &ind
 }
 
 
+//#pragma mark - Section marks
+
+// A "#pragma mark" found at declaration level.
+struct Mark {
+	size_t start {};
+	// The end of the preprocessor branch holding the mark, or SIZE_MAX.
+	size_t branchEnd {};
+	std::string label;
+	size_t labelStart {};
+	size_t labelEnd {};
+};
+
+
+// Nodes whose direct children are declarations; marks are taken only there.
+static bool IsDeclarationContainer(std::string_view type)
+{
+	return type == "translation_unit" || type == "declaration_list"
+		|| type == "field_declaration_list" || type == "preproc_if" || type == "preproc_ifdef"
+		|| type == "preproc_else" || type == "preproc_elif" || type == "preproc_elifdef";
+}
+
+
+// Nodes that may hold declaration containers. Function bodies and
+// expressions are not searched.
+static bool MayHoldContainer(std::string_view type)
+{
+	return IsDeclarationContainer(type) || type == "namespace_definition"
+		|| type == "linkage_specification" || type == "class_specifier"
+		|| type == "struct_specifier" || type == "union_specifier"
+		|| type == "template_declaration" || type == "declaration"
+		|| type == "field_declaration" || type == "type_definition";
+}
+
+
+static size_t BranchEnd(TSNode container)
+{
+	if (!NodeType(container).starts_with("preproc_")) {
+		return SIZE_MAX;
+	}
+	// An #else or #elif is a child of the branch before it.
+	const TSNode alternative = ChildByField(container, "alternative");
+	return ts_node_is_null(alternative) ? ts_node_end_byte(container) : ts_node_start_byte(alternative);
+}
+
+
+static bool IsBlank(char ch)
+{
+	return ch == ' ' || ch == '\t';
+}
+
+
+// Parses "#pragma mark <label>" or "// #pragma mark <label>"; the label
+// loses surrounding spaces and dashes, so "#pragma mark -" has none.
+static std::optional<Mark> ParseMark(TSNode node, const Rope &text)
+{
+	static constexpr size_t kMaxMarkLength = 512;
+	const size_t start = ts_node_start_byte(node);
+	std::string source = text.Substring(start, std::min<size_t>(ts_node_end_byte(node) - start, kMaxMarkLength));
+	source.resize(std::min(source.size(), source.find_first_of("\r\n")));
+
+	const std::string_view line(source);
+	size_t pos = line.starts_with("//") ? 2 : 0;
+	const auto skipBlanks = [&]() {
+		while (pos < line.size() && IsBlank(line[pos])) {
+			pos++;
+		}
+	};
+	const auto skipWord = [&](std::string_view word) {
+		if (line.substr(pos, word.size()) != word) {
+			return false;
+		}
+		pos += word.size();
+		return true;
+	};
+	skipBlanks();
+	if (!skipWord("#")) {
+		return std::nullopt;
+	}
+	skipBlanks();
+	if (!skipWord("pragma") || pos >= line.size() || !IsBlank(line[pos])) {
+		return std::nullopt;
+	}
+	skipBlanks();
+	if (!skipWord("mark") || (pos < line.size() && !IsBlank(line[pos]) && line[pos] != '-')) {
+		return std::nullopt;
+	}
+
+	size_t labelStart = pos;
+	size_t labelEnd = line.size();
+	while (labelStart < labelEnd && (IsBlank(line[labelStart]) || line[labelStart] == '-')) {
+		labelStart++;
+	}
+	while (labelEnd > labelStart && (IsBlank(line[labelEnd - 1]) || line[labelEnd - 1] == '-')) {
+		labelEnd--;
+	}
+	Mark mark;
+	mark.start = start;
+	mark.label = Compact(line.substr(labelStart, labelEnd - labelStart));
+	mark.labelStart = start + labelStart;
+	mark.labelEnd = start + labelEnd;
+	return mark;
+}
+
+
+// Appends the marks below the cursor node in document order.
+static void CollectMarks(TSTreeCursor &cursor, const Rope &text, std::vector<Mark> &marks)
+{
+	const TSNode node = ts_tree_cursor_current_node(&cursor);
+	const bool container = IsDeclarationContainer(NodeType(node));
+	const size_t branchEnd = container ? BranchEnd(node) : SIZE_MAX;
+	if (!ts_tree_cursor_goto_first_child(&cursor)) {
+		return;
+	}
+	do {
+		const TSNode child = ts_tree_cursor_current_node(&cursor);
+		const std::string_view type = NodeType(child);
+		if (container && (type == "comment" || type == "preproc_call")) {
+			if (std::optional<Mark> mark = ParseMark(child, text)) {
+				mark->branchEnd = branchEnd;
+				marks.push_back(std::move(*mark));
+			}
+		} else if (MayHoldContainer(type)) {
+			CollectMarks(cursor, text, marks);
+		}
+	} while (ts_tree_cursor_goto_next_sibling(&cursor));
+	ts_tree_cursor_goto_parent(&cursor);
+}
+
+
+// Groups items of one level (and recursively their children) into sections.
+// Takes the marks starting before levelEnd; marks inside an item belong to
+// its children.
+static std::vector<OutlineItem> GroupSections(std::vector<OutlineItem> items, size_t levelEnd, const std::vector<Mark> &marks, size_t &index)
+{
+	std::vector<const Mark*> levelMarks;
+	for (OutlineItem &item : items) {
+		while (index < marks.size() && marks[index].start < item.start) {
+			levelMarks.push_back(&marks[index++]);
+		}
+		item.children = GroupSections(std::move(item.children), item.end, marks, index);
+	}
+	while (index < marks.size() && marks[index].start < levelEnd) {
+		levelMarks.push_back(&marks[index++]);
+	}
+	if (levelMarks.empty()) {
+		return items;
+	}
+
+	std::vector<OutlineItem> result;
+	size_t next = 0;
+	for (size_t i = 0; i < levelMarks.size(); i++) {
+		const Mark &mark = *levelMarks[i];
+		const size_t nextMarkStart = i + 1 < levelMarks.size() ? levelMarks[i + 1]->start : levelEnd;
+		while (next < items.size() && items[next].start < mark.start) {
+			result.push_back(std::move(items[next++]));
+		}
+
+		if (mark.label.empty()) {
+			// A divider only between items: not first, not followed directly
+			// by another mark or the end of the level.
+			const bool itemFollows = next < items.size() && items[next].start < nextMarkStart;
+			if (result.empty() || !itemFollows) {
+				continue;
+			}
+			OutlineItem separator;
+			separator.kind = OutlineKind::Separator;
+			separator.start = separator.end = mark.start;
+			separator.nameStart = separator.nameEnd = mark.start;
+			result.push_back(std::move(separator));
+			continue;
+		}
+
+		OutlineItem section;
+		section.kind = OutlineKind::Section;
+		section.label = mark.label;
+		section.start = mark.start;
+		section.end = std::min({nextMarkStart, mark.branchEnd, levelEnd});
+		section.nameStart = mark.labelStart;
+		section.nameEnd = mark.labelEnd;
+		while (next < items.size() && items[next].start < section.end) {
+			section.children.push_back(std::move(items[next++]));
+		}
+		result.push_back(std::move(section));
+	}
+	while (next < items.size()) {
+		result.push_back(std::move(items[next++]));
+	}
+	return result;
+}
+
+
+//#pragma mark - Outline
+
 std::vector<OutlineItem> BuildOutline(const Language &language, const TSTree *tree, const Rope &text, QueryCursor &cursor)
 {
 	std::vector<OutlineItem> flat;
@@ -179,7 +372,15 @@ std::vector<OutlineItem> BuildOutline(const Language &language, const TSTree *tr
 		flat.end()
 	);
 	size_t index = 0;
-	return Nest(flat, index, SIZE_MAX);
+	std::vector<OutlineItem> items = Nest(flat, index, SIZE_MAX);
+
+	const TSNode root = ts_tree_root_node(tree);
+	std::vector<Mark> marks;
+	TSTreeCursor treeCursor = ts_tree_cursor_new(root);
+	CollectMarks(treeCursor, text, marks);
+	ts_tree_cursor_delete(&treeCursor);
+	size_t markIndex = 0;
+	return GroupSections(std::move(items), ts_node_end_byte(root), marks, markIndex);
 }
 
 

@@ -41,14 +41,15 @@ static KindStyle StyleOfKind(OutlineKind kind)
 
 //#pragma mark - OutlineListItem
 
-OutlineListItem::OutlineListItem(const OutlineItem &item, uint32 level, bool expanded):
+OutlineListItem::OutlineListItem(const OutlineItem &item, uint32 level, bool expanded, const std::string &path):
 	BListItem(level, expanded),
 	fKind(item.kind),
 	fLabel(item.label),
 	fStart(item.start),
 	fEnd(item.end),
 	fNameStart(item.nameStart),
-	fNameEnd(item.nameEnd)
+	fNameEnd(item.nameEnd),
+	fPath(path)
 {
 }
 
@@ -56,9 +57,20 @@ OutlineListItem::OutlineListItem(const OutlineItem &item, uint32 level, bool exp
 void OutlineListItem::Update(BView *owner, const BFont *font)
 {
 	BListItem::Update(owner, font);
+	if (fKind == OutlineKind::Separator) {
+		SetHeight(7);
+		SetWidth(0);
+		return;
+	}
 	font_height height;
 	font->GetHeight(&height);
 	SetHeight(ceilf(height.ascent + height.descent + height.leading) + 4);
+	if (fKind == OutlineKind::Section) {
+		BFont bold(font);
+		bold.SetFace(B_BOLD_FACE);
+		SetWidth(bold.StringWidth(fLabel.c_str()) + 6);
+		return;
+	}
 	SetWidth(font->StringWidth(fLabel.c_str()) + Height() + 8);
 }
 
@@ -73,9 +85,29 @@ void OutlineListItem::DrawItem(BView *owner, BRect frame, bool complete)
 		owner->FillRect(frame);
 	}
 
+	if (fKind == OutlineKind::Separator) {
+		const float y = floorf(frame.top + frame.Height() / 2);
+		owner->SetHighColor(tint_color(background, B_DARKEN_2_TINT));
+		owner->StrokeLine(BPoint(frame.left + 2, y), BPoint(frame.right - 2, y));
+		return;
+	}
+
 	font_height height;
 	owner->GetFontHeight(&height);
 	const float baseline = floorf(frame.top + (frame.Height() + 1 + height.ascent - height.descent) / 2);
+
+	if (fKind == OutlineKind::Section) {
+		BFont font;
+		owner->GetFont(&font);
+		BFont bold(font);
+		bold.SetFace(B_BOLD_FACE);
+		owner->SetFont(&bold, B_FONT_FACE);
+		owner->SetHighColor(ui_color(IsSelected() ? B_LIST_SELECTED_ITEM_TEXT_COLOR : B_LIST_ITEM_TEXT_COLOR));
+		owner->SetLowColor(background);
+		owner->DrawString(fLabel.c_str(), BPoint(frame.left + 2, baseline));
+		owner->SetFont(&font, B_FONT_FACE);
+		return;
+	}
 
 	// A colored badge with a letter for the kind.
 	const KindStyle style = StyleOfKind(fKind);
@@ -132,6 +164,8 @@ struct FlatItem {
 	const OutlineItem *item;
 	uint32 level;
 	// Labels from the top level down, identifying the item across rebuilds.
+	// Section labels are left out of their children's paths, so adding or
+	// renaming a mark does not expand the items below it.
 	std::string path;
 };
 
@@ -139,9 +173,10 @@ struct FlatItem {
 static void Flatten(const std::vector<OutlineItem> &items, uint32 level, const std::string &parentPath, std::vector<FlatItem> &flat)
 {
 	for (const OutlineItem &item : items) {
-		std::string path = parentPath + "\n" + item.label;
+		const bool section = item.kind == OutlineKind::Section;
+		std::string path = parentPath + (section ? "\n#" : "\n") + item.label;
 		flat.push_back({&item, level, path});
-		Flatten(item.children, level + 1, path, flat);
+		Flatten(item.children, level + 1, section ? parentPath : path, flat);
 	}
 }
 
@@ -170,22 +205,10 @@ void OutlineView::SetOutline(const std::vector<OutlineItem> &items)
 	}
 
 	std::set<std::string> collapsed;
-	{
-		std::vector<std::string> paths(FullListCountItems());
-		for (int32 i = 0; i < FullListCountItems(); i++) {
-			const OutlineListItem *existing = static_cast<OutlineListItem*>(FullListItemAt(i));
-			const uint32 level = existing->OutlineLevel();
-			std::string parentPath;
-			for (int32 j = i - 1; j >= 0; j--) {
-				if (FullListItemAt(j)->OutlineLevel() < level) {
-					parentPath = paths[j];
-					break;
-				}
-			}
-			paths[i] = parentPath + "\n" + existing->fLabel;
-			if (!existing->IsExpanded()) {
-				collapsed.insert(paths[i]);
-			}
+	for (int32 i = 0; i < FullListCountItems(); i++) {
+		const OutlineListItem *existing = static_cast<OutlineListItem*>(FullListItemAt(i));
+		if (!existing->IsExpanded()) {
+			collapsed.insert(existing->fPath);
 		}
 	}
 
@@ -194,7 +217,7 @@ void OutlineView::SetOutline(const std::vector<OutlineItem> &items)
 	SetSelectionMessage(nullptr);
 	Clear();
 	for (const FlatItem &entry : flat) {
-		AddItem(new OutlineListItem(*entry.item, entry.level, collapsed.count(entry.path) == 0));
+		AddItem(new OutlineListItem(*entry.item, entry.level, collapsed.count(entry.path) == 0, entry.path));
 	}
 	ScrollTo(scrollPosition);
 	SetSelectionMessage(selectionMessage);

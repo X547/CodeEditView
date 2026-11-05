@@ -84,7 +84,9 @@ resize, lines are re-wrapped in the background, visible ones first.
 
 `CodeEditView::Outline()` returns the definitions (namespaces, classes,
 structs, unions, enums, functions) as a tree with their text ranges, e.g. for
-a navigation panel. With `SetTarget()`, the view sends `kMsgContentsChanged`
+a navigation panel. `#pragma mark Name` and `// #pragma mark Name` at
+declaration level group the following definitions into sections; an unnamed
+`#pragma mark -` between definitions becomes a separator. With `SetTarget()`, the view sends `kMsgContentsChanged`
 when the outline may have changed and `kMsgCaretMoved` when the caret moved.
 The demo shows the outline in a side panel (View > Outline).
 

@@ -57,23 +57,32 @@ static std::string Join(const std::string &directory, const std::string &name)
 
 
 bool Scan(const std::string &leftRoot, const std::string &rightRoot, const ScanOptions &options, ScanSink &sink,
-	const std::atomic<bool> &cancel)
+	const std::atomic<bool> &cancel, const std::string &start)
 {
 	const std::string roots[2] = {leftRoot, rightRoot};
-	for (const std::string &root : roots) {
-		DIR *directory = opendir(root.c_str());
-		if (directory == nullptr) {
-			throw FileError(ErrnoMessage("Cannot read the directory", root));
-		}
-		closedir(directory);
-	}
-
 	struct Directory {
 		std::string path;
 		bool onSide[2] {};
 	};
 	std::deque<Directory> queue;
-	queue.push_back({"", {true, true}});
+	if (start.empty()) {
+		for (const std::string &root : roots) {
+			DIR *directory = opendir(root.c_str());
+			if (directory == nullptr) {
+				throw FileError(ErrnoMessage("Cannot read the directory", root));
+			}
+			closedir(directory);
+		}
+		queue.push_back({"", {true, true}});
+	} else {
+		Directory directory {start, {}};
+		for (int side = 0; side < 2; side++) {
+			directory.onSide[side] = ReadEntryInfo(roots[side] + "/" + start).type == EntryType::Directory;
+		}
+		if (directory.onSide[0] || directory.onSide[1]) {
+			queue.push_back(directory);
+		}
+	}
 	std::vector<std::string> pending;
 
 	while (!queue.empty()) {

@@ -1,0 +1,87 @@
+#pragma once
+
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+
+#include <Referenceable.h>
+#include <Window.h>
+
+#include "Comparison.h"
+#include "FilePair.h"
+#include "Scanner.h"
+
+
+class BMenuBar;
+class BMenuItem;
+
+namespace DiffKit {
+class DiffView;
+}
+
+
+namespace DirCompare {
+
+
+class DirTreeView;
+
+
+// Two directories as a tree of differences and a diff of the selected file,
+// or two files as a diff only. Both sides can be edited and saved.
+class CompareWindow: public BWindow {
+private:
+	std::string fRoots[2];
+	// Comparing two files: no tree.
+	bool fFileMode {};
+	ScanOptions fOptions;
+	std::unique_ptr<Comparison> fComparison;
+	std::unique_ptr<ScanThread> fScan;
+	// The entry to select again once a new scan reports it.
+	std::optional<std::string> fReselect;
+	DirTreeView *fTree {};
+	DiffKit::DiffView *fDiffView {};
+	// Loaded file pairs by relative path; kept while shown or modified.
+	std::map<std::string, BReference<FilePair>> fPairs;
+	// The shown pair and its path.
+	BReference<FilePair> fPair;
+	std::string fPairPath;
+	BMenuItem *fShowIdenticalItem {};
+	BMenuItem *fIgnoreVcsItem {};
+	BMenuItem *fSyncScrollingItem {};
+	BMenuItem *fHideUnchangedItem {};
+	BMenuItem *fWordWrapItem {};
+	BMenuItem *fAlgorithmItems[3] {};
+
+	BMenuBar *CreateMenuBar();
+	std::string FullPath(int pane, const std::string &path) const;
+	void StartScan();
+	void TakeScanResults();
+	void Recheck(const std::string &path);
+	FilePair *PairFor(const std::string &path);
+	void ShowSelected();
+	void ShowPair(FilePair *pair, const std::string &path);
+	void UpdateDiffState();
+	void UpdateTitle();
+	bool HasModifiedPairs() const;
+	void Save(bool all);
+	void Reload();
+	void CopyEntry(int toPane);
+	void DeleteEntry(int pane);
+	void ShowInTracker(int pane);
+	void SwapSides();
+	void ReloadPairsUnder(const std::string &path);
+	bool ConfirmDiscard(const char *question);
+
+public:
+	// Compares two directories, or two files.
+	CompareWindow(const std::string &left, const std::string &right);
+	~CompareWindow() override;
+
+	void MessageReceived(BMessage *message) override;
+	void WindowActivated(bool active) override;
+	bool QuitRequested() override;
+};
+
+
+} // DirCompare

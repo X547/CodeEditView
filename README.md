@@ -164,11 +164,33 @@ The two-pane diff view, its link map and the chunk diff live in `diffkit/`,
 a static library for diff apps.
 
 
+## Directory comparison
+
+`CodeEditDirCompare [left right]` compares two directories (or two files),
+like Meld. Without arguments, or with File > New comparison, it asks for
+the two paths. The tree lists the entries that differ: different, left
+only, right only, or of different types; View > Show identical files lists
+all. Directories are scanned in the background, then files of the same
+size are compared byte by byte. Version control directories are skipped
+unless View > Ignore version control directories is off.
+
+Selecting a file shows a diff in which both sides can be edited. The arrows
+between the panes copy a change to the other side; Cmd+Option+Left/Right
+copy the change at the caret or the selected lines. Cmd+S saves the shown
+file (a file missing on one side is created), Cmd+Shift+S saves all.
+Cmd+Shift+Down/Up go to the next or previous change, Cmd+Option+Down/Up to
+the next or previous different file.
+
+The Files menu copies the selected file or directory to the other side
+(keeping permissions, times and attributes; directories are merged) or
+deletes it from one side, after asking.
+
+
 ## Building
 
 Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel`, `catch2_devel`
-(tests), `libgit2_1.9_devel` and `libpcre2_devel` (Git diff; `libgit2.pc`
-requires `libpcre2-8.pc`). The C and C++ grammars are Meson wraps; their
+(tests), `libgit2_1.9_devel` and `libpcre2_devel` (Git diff and directory
+comparison; `libgit2.pc` requires `libpcre2-8.pc`). The C and C++ grammars are Meson wraps; their
 release tarballs are downloaded on the first `meson setup`.
 
 ```sh
@@ -178,8 +200,7 @@ meson test -C build
 ```
 
 Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dgitdiff=false`,
-`-Ddircompare=false`,
-`-Dtests=false`.
+`-Ddircompare=false`, `-Dtests=false`.
 
 The demo application is `build/demo/CodeEditDemo`.
 

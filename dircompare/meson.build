@@ -3,6 +3,7 @@ dirCompareCore = static_library(
 	'dircomparecore',
 	files(
 		'Compare.cpp',
+		'Comparison.cpp',
 		'FileOps.cpp',
 		'FilePair.cpp',
 		'Scanner.cpp',
@@ -15,10 +16,25 @@ dirCompareCoreDep = declare_dependency(
 	dependencies: [diffKitDep]
 )
 
+executable(
+	'CodeEditDirCompare',
+	files(
+		'CompareWindow.cpp',
+		'DirCompareApp.cpp',
+		'DirTreeView.cpp',
+		'OpenWindow.cpp',
+	),
+	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.
+	include_directories: include_directories('/boot/system/develop/headers/private/interface'),
+	dependencies: [dirCompareCoreDep, cpp.find_library('columnlistview'), cpp.find_library('tracker')],
+	install: true
+)
+
 if get_option('tests')
 	dirCompareTests = executable(
 		'DirCompareTests',
 		files(
+			'tests/ComparisonTest.cpp',
 			'tests/FileOpsTest.cpp',
 			'tests/ScannerTest.cpp',
 		),

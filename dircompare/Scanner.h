@@ -47,9 +47,10 @@ public:
 // Walks both roots breadth first, reporting all entries, then compares the
 // contents of the Pending file pairs. Directories on one side only are
 // walked too. Returns false if cancelled. Throws FileError if a root
-// cannot be read.
+// cannot be read. With start (a relative path), only the contents of that
+// directory are scanned (on the sides where it is a directory).
 bool Scan(const std::string &leftRoot, const std::string &rightRoot, const ScanOptions &options, ScanSink &sink,
-	const std::atomic<bool> &cancel);
+	const std::atomic<bool> &cancel, const std::string &start = std::string());
 
 
 // Posted to the target when new results can be taken; at most one is

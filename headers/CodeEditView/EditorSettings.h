@@ -26,6 +26,10 @@ struct EditorSettings {
 	// Continuation rows are indented by the leading whitespace of their line
 	// plus this many cells.
 	uint32_t wrapIndent = 4;
+	// The view does not change the text: no typing, deleting, pasting,
+	// dropping, undo or input method. Selecting and copying still work. Per
+	// view, so other views of the same model may still edit it.
+	bool readOnly = false;
 
 	bool operator==(const EditorSettings &other) const = default;
 };

@@ -179,6 +179,8 @@ bool EditorCore::RewrapStep(size_t maxLines)
 void EditorCore::ResetFromModel()
 {
 	fFolds.clear();
+	fHostRegions.clear();
+	fDecorations.clear();
 	Relayout();
 	fDirty.contentsChanged = true;
 	fSelection = ClampSelection(fSelection);
@@ -239,6 +241,7 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	for (const EditRecord &edit : changes.edits) {
 		fDisplayMap.ApplyEdit(edit);
 		foldsRemoved = AdjustFolds(edit) || foldsRemoved;
+		MapDecorations(edit);
 		fSelection = MapSelection(fSelection, edit);
 		fScrollAnchor = edit.MapOffset(fScrollAnchor, Gravity::Left);
 
@@ -742,6 +745,18 @@ CaretPosition EditorCore::PositionOfOffset(size_t offset)
 }
 
 
+std::pair<size_t, size_t> EditorCore::LineRows(size_t line)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	if (line >= fDisplayMap.LineCount()) {
+		return {fDisplayMap.RowCount(), 0};
+	}
+	const size_t first = fDisplayMap.FirstRowOfLine(line);
+	return {first, fDisplayMap.FirstRowOfLine(line + 1) - first};
+}
+
+
 size_t EditorCore::OffsetAt(size_t row, float column)
 {
 	ModelLock lock(*fModel);
@@ -1134,6 +1149,9 @@ void EditorCore::Delete(Deletion deletion)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const Rope &text = fModel->Text();
 	const size_t caret = fSelection.caret;
 	const size_t selectionStart = std::min(fSelection.anchor, fSelection.caret);
@@ -1181,7 +1199,7 @@ void EditorCore::Delete(Deletion deletion)
 
 void EditorCore::InsertText(std::string_view text)
 {
-	if (text.empty()) {
+	if (text.empty() || IsReadOnly()) {
 		return;
 	}
 	ModelLock lock(*fModel);
@@ -1199,6 +1217,9 @@ void EditorCore::InsertNewline()
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const Rope &text = fModel->Text();
 	const size_t from = std::min(fSelection.anchor, fSelection.caret);
 	const size_t to = std::max(fSelection.anchor, fSelection.caret);
@@ -1222,6 +1243,9 @@ void EditorCore::InsertTab()
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const size_t from = std::min(fSelection.anchor, fSelection.caret);
 	const size_t to = std::max(fSelection.anchor, fSelection.caret);
 
@@ -1244,6 +1268,9 @@ void EditorCore::ChangeIndent(bool increase)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const Rope &text = fModel->Text();
 	const size_t start = std::min(fSelection.anchor, fSelection.caret);
 	const size_t end = std::max(fSelection.anchor, fSelection.caret);
@@ -1289,6 +1316,9 @@ void EditorCore::Paste(std::string_view text)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const size_t from = std::min(fSelection.anchor, fSelection.caret);
 	const size_t to = std::max(fSelection.anchor, fSelection.caret);
 	const std::string normalized = NormalizeLineEndings(text);
@@ -1303,6 +1333,9 @@ void EditorCore::DeleteSelection()
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const size_t from = std::min(fSelection.anchor, fSelection.caret);
 	const size_t to = std::max(fSelection.anchor, fSelection.caret);
 	if (from == to) {
@@ -1316,6 +1349,9 @@ void EditorCore::MoveText(const TextRange &source, size_t target)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const Rope &text = fModel->Text();
 	if (source.end > text.Length() || source.start >= source.end || target > text.Length()) {
 		return;
@@ -1341,6 +1377,9 @@ void EditorCore::InsertTextAt(size_t offset, std::string_view text)
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return;
+	}
 	const std::string normalized = NormalizeLineEndings(text);
 	offset = SnapToBoundary(offset);
 	if (normalized.empty()) {
@@ -1551,15 +1590,15 @@ void EditorCore::ApplyFolds()
 }
 
 
-// Keeps folds valid across an edit: folds after it shift, edits within a
-// header line keep the fold, other edits touching a fold remove it.
-bool EditorCore::AdjustFolds(const EditRecord &edit)
+// Keeps fold ranges valid across an edit: ranges after it shift, edits
+// within a header line keep the range, other edits touching it remove it.
+static bool AdjustFoldRanges(std::vector<FoldRange> &ranges, const EditRecord &edit)
 {
 	const size_t first = edit.start.line;
 	const size_t oldLast = edit.oldEnd.line;
 	const size_t newLast = edit.newEnd.line;
 	bool removed = false;
-	for (auto it = fFolds.begin(); it != fFolds.end();) {
+	for (auto it = ranges.begin(); it != ranges.end();) {
 		FoldRange &fold = *it;
 		if (oldLast < fold.headerLine) {
 			fold.headerLine = fold.headerLine - oldLast + newLast;
@@ -1569,13 +1608,20 @@ bool EditorCore::AdjustFolds(const EditRecord &edit)
 		} else if (first == fold.headerLine && oldLast == fold.headerLine && newLast == fold.headerLine) {
 			// Within the header line.
 		} else {
-			it = fFolds.erase(it);
+			it = ranges.erase(it);
 			removed = true;
 			continue;
 		}
 		++it;
 	}
 	return removed;
+}
+
+
+bool EditorCore::AdjustFolds(const EditRecord &edit)
+{
+	AdjustFoldRanges(fHostRegions, edit);
+	return AdjustFoldRanges(fFolds, edit);
 }
 
 
@@ -1655,16 +1701,43 @@ size_t EditorCore::FirstNonBlank(size_t line) const
 std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange)
 {
 	std::vector<FoldRange> candidates;
-	const SyntaxState *syntax = fModel->Syntax();
-	if (syntax == nullptr || syntax->Tree() == nullptr) {
-		return candidates;
-	}
 	const Rope &text = fModel->Text();
 	lastLine = std::min(lastLine, text.NewlineCount());
 	if (firstLine > lastLine) {
 		return candidates;
 	}
+	// Host regions come first, so they win over syntax candidates of the
+	// same size and header line.
+	for (const FoldRange &region : fHostRegions) {
+		const bool inRange = headersInRange
+			? region.headerLine >= firstLine && region.headerLine <= lastLine
+			: region.headerLine <= lastLine && region.lastLine >= firstLine;
+		if (inRange) {
+			candidates.push_back(region);
+		}
+	}
+	const SyntaxState *syntax = fModel->Syntax();
+	if (syntax != nullptr && syntax->Tree() != nullptr) {
+		AddSyntaxFoldCandidates(syntax, firstLine, lastLine, headersInRange, candidates);
+	}
 
+	std::stable_sort(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
+		return a.headerLine != b.headerLine ? a.headerLine < b.headerLine : a.lastLine > b.lastLine;
+	});
+	candidates.erase(
+		std::unique(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
+			return a.headerLine == b.headerLine;
+		}),
+		candidates.end()
+	);
+	return candidates;
+}
+
+
+void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
+	bool headersInRange, std::vector<FoldRange> &candidates)
+{
+	const Rope &text = fModel->Text();
 	TSQueryCursor *cursor = fQueryCursor.Get();
 	ts_query_cursor_set_byte_range(
 		cursor,
@@ -1698,17 +1771,6 @@ std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t
 			candidates.push_back({header, last});
 		}
 	}
-
-	std::sort(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
-		return a.headerLine != b.headerLine ? a.headerLine < b.headerLine : a.lastLine > b.lastLine;
-	});
-	candidates.erase(
-		std::unique(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
-			return a.headerLine == b.headerLine;
-		}),
-		candidates.end()
-	);
-	return candidates;
 }
 
 
@@ -1876,6 +1938,154 @@ void EditorCore::UnfoldAll()
 }
 
 
+void EditorCore::SetHostFolds(const std::vector<HostFold> &folds, bool foldAtCaret)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t anchorLine = text.LineOfOffset(fSelection.anchor);
+	const size_t caretLine = text.LineOfOffset(fSelection.caret);
+
+	fHostRegions.clear();
+	std::vector<FoldRange> result;
+	for (const FoldRange &fold : fFolds) {
+		if (fold.source == FoldSource::User) {
+			result.push_back(fold);
+		}
+	}
+	const size_t userCount = result.size();
+	for (const HostFold &hostFold : folds) {
+		const FoldRange fold {hostFold.headerLine, hostFold.lastLine, FoldSource::Host};
+		if (fold.lastLine <= fold.headerLine || fold.lastLine > text.NewlineCount()) {
+			continue;
+		}
+		fHostRegions.push_back(fold);
+		if (!hostFold.folded) {
+			continue;
+		}
+		auto hides = [&fold](size_t line) {
+			return fold.headerLine < line && line <= fold.lastLine;
+		};
+		if (!foldAtCaret && (hides(anchorLine) || hides(caretLine))) {
+			continue;
+		}
+		const bool sameHeader = std::any_of(result.begin(), result.end(), [&fold](const FoldRange &other) {
+			return other.headerLine == fold.headerLine;
+		});
+		if (!sameHeader) {
+			result.push_back(fold);
+		}
+	}
+	auto byHeader = [](const FoldRange &a, const FoldRange &b) {
+		return a.headerLine < b.headerLine;
+	};
+	std::stable_sort(fHostRegions.begin(), fHostRegions.end(), byHeader);
+	if (result.size() > userCount) {
+		std::stable_sort(result.begin(), result.end(), byHeader);
+	}
+	// The markers of regions may have changed even if the folds did not.
+	fDirty.marksChanged = true;
+	if (result == fFolds) {
+		return;
+	}
+	fFolds = std::move(result);
+	ApplyFolds();
+
+	// A hidden caret moves to the end of the header line.
+	if (const std::optional<FoldRange> hiding = HidingFold(caretLine)) {
+		const size_t headerEnd = text.LineEnd(hiding->headerLine);
+		fGoalColumn.reset();
+		SetSelectionLocked({headerEnd, headerEnd});
+	} else if (HidingFold(anchorLine).has_value()) {
+		SetSelectionLocked({fSelection.caret, fSelection.caret});
+	}
+}
+
+//#pragma mark - Decorations
+
+void EditorCore::SetDecorations(std::vector<Decoration> decorations)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const size_t length = fModel->Text().Length();
+	for (Decoration &decoration : decorations) {
+		decoration.start = std::min(decoration.start, length);
+		decoration.end = decoration.kind == DecorationKind::GapLine
+			? decoration.start
+			: std::clamp(decoration.end, decoration.start, length);
+	}
+	std::stable_sort(decorations.begin(), decorations.end(), [](const Decoration &a, const Decoration &b) {
+		return a.start < b.start;
+	});
+	if (decorations == fDecorations) {
+		return;
+	}
+	fDecorations = std::move(decorations);
+	fDirty.AddAll();
+}
+
+
+std::vector<Decoration> EditorCore::Decorations()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return fDecorations;
+}
+
+
+// Ranges shrink when text is inserted at their edges; gap lines stay before
+// text inserted at them.
+void EditorCore::MapDecorations(const EditRecord &edit)
+{
+	for (Decoration &decoration : fDecorations) {
+		if (decoration.kind == DecorationKind::GapLine) {
+			decoration.start = decoration.end = edit.MapOffset(decoration.start, Gravity::Left);
+			continue;
+		}
+		const size_t start = edit.MapOffset(decoration.start, Gravity::Right);
+		const size_t end = edit.MapOffset(decoration.end, Gravity::Left);
+		decoration.start = start;
+		decoration.end = std::max(start, end);
+	}
+}
+
+
+LineDecorations EditorCore::DecorationsOfLines(size_t firstLine, size_t lastLine)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	LineDecorations result;
+	for (const Decoration &decoration : fDecorations) {
+		const size_t startLine = text.LineOfOffset(decoration.start);
+		switch (decoration.kind) {
+			case DecorationKind::LineBackground: {
+				const size_t endLine = decoration.end > decoration.start
+					? text.LineOfOffset(decoration.end - 1)
+					: startLine;
+				for (size_t line = std::max(startLine, firstLine); line <= std::min(endLine, lastLine); line++) {
+					result.lineBackgrounds.emplace_back(line, decoration.color);
+				}
+				break;
+			}
+			case DecorationKind::RangeBackground:
+				if (decoration.end > decoration.start && startLine <= lastLine
+					&& text.LineOfOffset(decoration.end) >= firstLine) {
+					result.ranges.push_back(decoration);
+				}
+				break;
+			case DecorationKind::GapLine:
+				if (startLine >= firstLine && startLine <= lastLine) {
+					const bool bottom = decoration.start != text.LineStart(startLine);
+					result.gaps.push_back({startLine, bottom, decoration.color});
+				}
+				break;
+		}
+	}
+	return result;
+}
+
+
 void EditorCore::SelectAll()
 {
 	ModelLock lock(*fModel);
@@ -1915,6 +2125,9 @@ bool EditorCore::Undo()
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return false;
+	}
 	const std::optional<UndoResult> result = fModel->Undo();
 	if (!result.has_value()) {
 		return false;
@@ -1928,6 +2141,9 @@ bool EditorCore::Redo()
 {
 	ModelLock lock(*fModel);
 	Prepare();
+	if (IsReadOnly()) {
+		return false;
+	}
 	const std::optional<UndoResult> result = fModel->Redo();
 	if (!result.has_value()) {
 		return false;

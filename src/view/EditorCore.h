@@ -16,6 +16,7 @@
 #include <CodeEditView/Outline.h>
 #include <CodeEditView/TextModel.h>
 #include <CodeEditView/Theme.h>
+#include <CodeEditView/ViewTypes.h>
 
 #include "layout/DisplayMap.h"
 #include "layout/LineLayout.h"
@@ -70,15 +71,6 @@ struct TextRange {
 struct CellHit {
 	size_t offset {};
 	bool pastLineEnd {};
-};
-
-
-// A fold hides the lines after its header line up to lastLine.
-struct FoldRange {
-	size_t headerLine {};
-	size_t lastLine {};
-
-	bool operator==(const FoldRange &other) const = default;
 };
 
 
@@ -152,6 +144,25 @@ struct RowSpan {
 };
 
 
+// A gap line of a decoration within the drawn lines.
+struct GapMark {
+	size_t line {};
+	// At the bottom of the line instead of its top.
+	bool bottom {};
+	rgb_color color {};
+};
+
+
+// Decorations of a line range, resolved for drawing.
+struct LineDecorations {
+	// Line and color of LineBackground decorations, by line; a later one
+	// for the same line wins.
+	std::vector<std::pair<size_t, rgb_color>> lineBackgrounds;
+	std::vector<Decoration> ranges;
+	std::vector<GapMark> gaps;
+};
+
+
 // Rows that need repainting since the last TakeDirty(). last == SIZE_MAX
 // means "to the end".
 struct DirtyRows {
@@ -196,6 +207,10 @@ private:
 	std::optional<BracketPair> fBracketMatch;
 	// Sorted by header line; may nest.
 	std::vector<FoldRange> fFolds;
+	// Fold regions of the host, folded or not; sorted by header line.
+	std::vector<FoldRange> fHostRegions;
+	// Sorted by start.
+	std::vector<Decoration> fDecorations;
 
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
@@ -239,7 +254,11 @@ private:
 	size_t FirstNonBlank(size_t line) const;
 	uint32_t IndentSize() const;
 	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange);
+	void AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
+		bool headersInRange, std::vector<FoldRange> &candidates);
 	bool IsFoldedLocked(size_t headerLine) const;
+	void MapDecorations(const EditRecord &edit);
+	bool IsReadOnly() const {return fSettings.readOnly;}
 
 public:
 	explicit EditorCore(const BReference<TextModel> &model);
@@ -279,6 +298,9 @@ public:
 	std::vector<RowData> Rows(size_t first, size_t count);
 	std::vector<DisplayRow> DisplayRows(size_t first, size_t count);
 	CaretPosition PositionOfOffset(size_t offset);
+	// First display row of a line and its number of rows (0 while hidden by
+	// a fold). Past the last line: the row count and 0.
+	std::pair<size_t, size_t> LineRows(size_t line);
 	size_t OffsetAt(size_t row, float column);
 	size_t RowStartOffset(size_t row);
 	CellHit HitTestCell(size_t row, float column);
@@ -339,6 +361,17 @@ public:
 	void ToggleFold();
 	void FoldAll();
 	void UnfoldAll();
+	// Replaces the host fold regions, which become fold candidates, and
+	// folds those marked folded. Folds starting on the header line of a user
+	// fold are left out, and so are folds that would hide the caret or the
+	// selection anchor unless foldAtCaret is set (then the caret moves to
+	// the header line, as with FoldAll()).
+	void SetHostFolds(const std::vector<HostFold> &folds, bool foldAtCaret);
+
+	// Host decorations; they follow edits until replaced.
+	void SetDecorations(std::vector<Decoration> decorations);
+	std::vector<Decoration> Decorations();
+	LineDecorations DecorationsOfLines(size_t firstLine, size_t lastLine);
 
 	// Syntax navigation (no-ops without a syntax tree).
 	void ExpandSelection();

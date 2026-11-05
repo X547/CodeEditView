@@ -18,6 +18,7 @@
 #include <CodeEditView/Outline.h>
 #include <CodeEditView/TextModel.h>
 #include <CodeEditView/Theme.h>
+#include <CodeEditView/ViewTypes.h>
 
 
 class BMessageRunner;
@@ -43,6 +44,10 @@ constexpr uint32 kMsgCaretMoved = 'CEcm';
 // The gutter was clicked outside the fold markers: "line" (uint64), and
 // "buttons", "modifiers" and "clicks" (int32) of the mouse down.
 constexpr uint32 kMsgGutterClicked = 'CEgc';
+// The vertical position of lines in the view changed: it scrolled, or rows
+// were added or removed (edits, folds, wrapping, resizing). "scrolled" (bool)
+// is true if the view scrolled. Bursts are coalesced into one message.
+constexpr uint32 kMsgViewportChanged = 'CEvc';
 
 
 class EditorCore;
@@ -87,6 +92,8 @@ private:
 	float fOriginY {};
 	bool fCaretVisible {};
 	bool fRewrapPosted {};
+	bool fViewportNotifyPosted {};
+	bool fViewportScrolled {};
 
 	friend class CodeEditScrollView;
 	friend class CodeEdit::GutterView;
@@ -98,6 +105,8 @@ private:
 	void InvalidateCaret();
 	void RestartCaretBlink();
 	void UpdateScrollBars();
+	void UpdateInputMethodFlag();
+	void ViewportChanged(bool scrolled);
 	float ContentWidth();
 	void UpdateWrapColumns();
 	void ScheduleRewrap();
@@ -145,6 +154,10 @@ public:
 	~CodeEditView() override;
 
 	CodeEdit::TextModel *Model() const;
+	// Shows another model (nullptr: a new empty one). Settings, theme and
+	// mark styles stay; selection, folds, decorations and the scroll position
+	// start anew.
+	void SetModel(CodeEdit::TextModel *model);
 
 	const CodeEdit::EditorSettings &Settings() const;
 	void SetSettings(const CodeEdit::EditorSettings &settings);
@@ -169,6 +182,30 @@ public:
 	void SetTarget(const BMessenger &target) {fTarget = target;}
 	// Definitions in the text, from the syntax tree; empty without one.
 	std::vector<CodeEdit::OutlineItem> Outline();
+
+	// Folds of this view, sorted by header line.
+	std::vector<CodeEdit::FoldRange> Folds();
+	// Replaces the fold regions of the host. Each region gets a fold marker
+	// in the gutter, like the folds of the syntax tree, and those marked
+	// folded are folded (FoldSource::Host); user folds stay. The user can
+	// unfold and fold them again like any other. Folds starting on the
+	// header line of a user fold are left out, and so are folds that would
+	// hide the caret or the selection anchor unless foldAtCaret is set
+	// (then the caret moves to the header line).
+	void SetHostFolds(const std::vector<CodeEdit::HostFold> &folds, bool foldAtCaret = false);
+
+	// Replaces the host decorations. They follow edits until replaced.
+	void SetDecorations(std::vector<CodeEdit::Decoration> decorations);
+
+	// Vertical geometry of lines in view coordinates. LineTop(line + 1) is
+	// the bottom of the line; hidden (folded) lines have no height, and
+	// LineTop(LineCount()) is the bottom of the text.
+	size_t LineCount();
+	float LineTop(size_t line);
+	CodeEdit::LinePosition LineAtY(float y);
+	// Scrolls so that the position is at viewY from the top of the visible
+	// area, and the left edge of the visible area is at left (clamped).
+	void ScrollLineTo(const CodeEdit::LinePosition &position, float viewY, float left);
 
 	float LineHeight() const {return fLineHeight;}
 	float CellWidth() const {return fCellWidth;}

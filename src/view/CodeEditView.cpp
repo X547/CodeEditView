@@ -31,6 +31,7 @@ static constexpr uint32 kMsgDropMove = 'CEdm';
 static constexpr uint32 kMsgDropCopy = 'CEdc';
 static constexpr uint32 kMsgKeyBinding = 'CEkb';
 static constexpr uint32 kMsgRewrap = 'CErw';
+static constexpr uint32 kMsgNotifyViewport = 'CEnv';
 
 static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
@@ -67,8 +68,12 @@ struct DrawContext {
 	std::optional<BracketPair> brackets;
 	rgb_color bracket;
 	std::vector<size_t> foldedHeaders;
-	// Line backgrounds of marks, mixed into the document background.
+	// Line backgrounds of marks and decorations (marks win), mixed into the
+	// document background.
 	std::map<size_t, rgb_color> lineBackgrounds;
+	// RangeBackground decorations, with the color as given.
+	std::vector<Decoration> ranges;
+	std::vector<GapMark> gaps;
 	std::optional<size_t> preeditRow;
 	// Byte offset of the input method text in the spliced row text.
 	size_t preeditStart {};
@@ -167,12 +172,73 @@ const CodeEdit::EditorSettings &CodeEditView::Settings() const
 }
 
 
+void CodeEditView::SetModel(CodeEdit::TextModel *model)
+{
+	CommitInputMethod();
+	StopAutoScroll();
+	fMouse->mode = CodeEdit::TrackMode::None;
+	fMouse->dropOffset.reset();
+
+	const CodeEdit::EditorSettings settings = fCore->Settings();
+	const bool attached = Window() != nullptr;
+	if (attached) {
+		fCore->Detach();
+	}
+	fCore = std::make_unique<CodeEdit::EditorCore>(CodeEdit::ModelReference(model));
+	fCore->SetSettings(settings);
+	fOriginY = 0;
+	fNotifiedCaret = SIZE_MAX;
+	if (!attached) {
+		return;
+	}
+
+	fCore->Attach(BMessenger(this));
+	fCore->UpdateBracketMatch();
+	fCore->TakeDirty();
+	UpdateScrollBars();
+	UpdateWrapColumns();
+	ScrollTo(BPoint(0, 0));
+	Invalidate();
+	if (fGutter != nullptr) {
+		fGutter->Invalidate();
+	}
+	if (fScrollView != nullptr) {
+		fScrollView->ContentsChanged();
+		fScrollView->CaretChanged();
+	}
+	RestartCaretBlink();
+	if (fTarget.IsValid()) {
+		BMessage message(CodeEdit::kMsgContentsChanged);
+		message.AddPointer("view", this);
+		fTarget.SendMessage(&message);
+	}
+	ViewportChanged(true);
+}
+
+
 void CodeEditView::SetSettings(const CodeEdit::EditorSettings &settings)
 {
+	if (settings.readOnly) {
+		CommitInputMethod();
+	}
 	fCore->SetSettings(settings);
+	UpdateInputMethodFlag();
 	if (Window() != nullptr) {
 		UpdateWrapColumns();
 		ApplyDirty();
+	}
+}
+
+
+// A read-only view takes no input method text.
+void CodeEditView::UpdateInputMethodFlag()
+{
+	const uint32 flags = Flags();
+	const uint32 newFlags = fCore->Settings().readOnly
+		? flags & ~B_INPUT_METHOD_AWARE
+		: flags | B_INPUT_METHOD_AWARE;
+	if (newFlags != flags) {
+		SetFlags(newFlags);
 	}
 }
 
@@ -280,6 +346,82 @@ std::vector<CodeEdit::OutlineItem> CodeEditView::Outline()
 }
 
 
+std::vector<CodeEdit::FoldRange> CodeEditView::Folds()
+{
+	return fCore->Folds();
+}
+
+
+void CodeEditView::SetHostFolds(const std::vector<CodeEdit::HostFold> &folds, bool foldAtCaret)
+{
+	fCore->SetHostFolds(folds, foldAtCaret);
+	if (Window() != nullptr) {
+		ApplyDirty();
+	}
+}
+
+
+void CodeEditView::SetDecorations(std::vector<CodeEdit::Decoration> decorations)
+{
+	fCore->SetDecorations(std::move(decorations));
+	if (Window() != nullptr) {
+		ApplyDirty();
+	}
+}
+
+
+size_t CodeEditView::LineCount()
+{
+	return fCore->LineCount();
+}
+
+
+float CodeEditView::LineTop(size_t line)
+{
+	return RowTop(fCore->LineRows(line).first);
+}
+
+
+CodeEdit::LinePosition CodeEditView::LineAtY(float y)
+{
+	const size_t rowCount = fCore->RowCount();
+	const float row = std::max(0.0f, (y - fOriginY) / fLineHeight);
+	if (row >= rowCount) {
+		return {fCore->LineCount(), 0};
+	}
+	const size_t wholeRow = static_cast<size_t>(row);
+	const std::vector<CodeEdit::DisplayRow> rows = fCore->DisplayRows(wholeRow, 1);
+	if (rows.empty()) {
+		return {fCore->LineCount(), 0};
+	}
+	const size_t lineRows = std::max<size_t>(1, fCore->LineRows(rows.front().line).second);
+	const float fraction = (rows.front().subRow + (row - wholeRow)) / lineRows;
+	return {rows.front().line, std::min(fraction, 1.0f)};
+}
+
+
+void CodeEditView::ScrollLineTo(const CodeEdit::LinePosition &position, float viewY, float left)
+{
+	const float top = LineTop(position.line);
+	const float bottom = LineTop(position.line + 1);
+	ScrollToClamped(left, top + position.fraction * (bottom - top) - viewY);
+}
+
+
+// Tells the target once per message loop iteration.
+void CodeEditView::ViewportChanged(bool scrolled)
+{
+	if (!fTarget.IsValid() || Window() == nullptr) {
+		return;
+	}
+	fViewportScrolled = fViewportScrolled || scrolled;
+	if (!fViewportNotifyPosted) {
+		fViewportNotifyPosted = true;
+		BMessenger(this).SendMessage(kMsgNotifyViewport);
+	}
+}
+
+
 //#pragma mark - Drawing
 
 std::pair<float, float> CodeEditView::GlyphMetrics(char32_t codePoint, const char *bytes, int32 length)
@@ -332,6 +474,15 @@ void CodeEditView::Draw(BRect updateRect)
 	const size_t lastRow = RowAtY(updateRect.bottom);
 	std::vector<RowData> rows = fCore->Rows(firstRow, lastRow - firstRow + 1);
 	if (!rows.empty()) {
+		LineDecorations decorations = fCore->DecorationsOfLines(rows.front().line, rows.back().line);
+		for (const auto &[line, color] : decorations.lineBackgrounds) {
+			rgb_color mixed = mix_color(context.background, color, color.alpha);
+			mixed.alpha = 255;
+			context.lineBackgrounds[line] = mixed;
+		}
+		context.ranges = std::move(decorations.ranges);
+		context.gaps = std::move(decorations.gaps);
+
 		std::map<size_t, int32_t> priorities;
 		for (const MarkInfo &mark : fCore->Marks(rows.front().line, rows.back().line)) {
 			const MarkStyle style = GetMarkStyle(mark.kind);
@@ -392,20 +543,36 @@ void CodeEditView::DrawRow(
 	const bool isCaretRow = row == context.caretRow;
 	const bool hasSelection = context.selectionStart != context.selectionEnd;
 
+	rgb_color rowBackground;
 	const auto lineBackground = context.lineBackgrounds.find(data.line);
 	if (lineBackground != context.lineBackgrounds.end()) {
-		SetHighColor(isCaretRow && !hasSelection
+		rowBackground = isCaretRow && !hasSelection
 			? mix_color(lineBackground->second, context.text, 12)
-			: lineBackground->second);
+			: lineBackground->second;
 	} else {
-		SetHighColor(isCaretRow && !hasSelection ? context.currentLine : context.background);
+		rowBackground = isCaretRow && !hasSelection ? context.currentLine : context.background;
 	}
+	SetHighColor(rowBackground);
 	FillRect(BRect(updateRect.left, top, updateRect.right, bottom));
 
 	// The row covers [rowStart, rowEnd) of the text; past its end is the
 	// newline, or the continuation in the next row.
 	const size_t rowStart = data.lineStart + data.rowStart;
 	const size_t rowEnd = data.lineStart + data.rowEnd;
+
+	if (context.preeditRow != row) {
+		for (const Decoration &range : context.ranges) {
+			if (range.end <= rowStart || range.start >= rowEnd) {
+				continue;
+			}
+			const float left = data.DisplayColumn(std::max(range.start, rowStart) - data.lineStart) * fCellWidth;
+			const float right = data.DisplayColumn(std::min(range.end, rowEnd) - data.lineStart) * fCellWidth - 1;
+			rgb_color color = mix_color(rowBackground, range.color, range.color.alpha);
+			color.alpha = 255;
+			SetHighColor(color);
+			FillRect(BRect(left, top, right, bottom));
+		}
+	}
 	const bool selectsBreak = data.lastRow
 		? data.hasNewline && context.selectionStart <= rowEnd && context.selectionEnd > rowEnd
 		: context.selectionStart < rowEnd && context.selectionEnd > rowEnd;
@@ -416,6 +583,16 @@ void CodeEditView::DrawRow(
 			: data.DisplayColumn(std::min(context.selectionEnd, rowEnd) - data.lineStart) * fCellWidth - 1;
 		SetHighColor(context.selection);
 		FillRect(BRect(left, top, right, bottom));
+	}
+
+	for (const GapMark &gap : context.gaps) {
+		if (gap.line != data.line || (gap.bottom ? !data.lastRow : data.subRow != 0)) {
+			continue;
+		}
+		const float thickness = std::max(1.0f, roundf(fLineHeight / 12));
+		const float y = gap.bottom ? bottom - thickness + 1 : top;
+		SetHighColor(gap.color);
+		FillRect(BRect(updateRect.left, y, updateRect.right, y + thickness - 1));
 	}
 
 	if (context.brackets.has_value() && context.preeditRow != row) {
@@ -727,6 +904,7 @@ void CodeEditView::ScrollTo(BPoint where)
 		fGutter->ScrollTo(BPoint(0, where.y));
 	}
 	fCore->SetScrollAnchor(fCore->RowStartOffset(TopRow()));
+	ViewportChanged(true);
 
 	// Scrolling (e.g. by the mouse wheel) moves the text under a stationary
 	// pointer without MouseMoved(); follow it while tracking.
@@ -809,6 +987,9 @@ void CodeEditView::ApplyDirty()
 		fOriginY -= (static_cast<float>(anchorRow) - static_cast<float>(topRow)) * fLineHeight;
 		UpdateScrollBars();
 		ScrollToClamped(Bounds().left, Bounds().top);
+	}
+	if (anchorRow != topRow || dirty.scrollRangeChanged) {
+		ViewportChanged(false);
 	}
 	if (dirty.scrollRangeChanged) {
 		UpdateScrollBars();
@@ -1047,6 +1228,9 @@ void CodeEditView::Copy()
 
 void CodeEditView::Cut()
 {
+	if (fCore->Settings().readOnly) {
+		return;
+	}
 	CommitInputMethod();
 	Copy();
 	fCore->DeleteSelection();
@@ -1058,6 +1242,9 @@ void CodeEditView::Cut()
 
 void CodeEditView::Paste()
 {
+	if (fCore->Settings().readOnly) {
+		return;
+	}
 	CommitInputMethod();
 	std::string text;
 	if (!be_clipboard->Lock()) {
@@ -1278,6 +1465,7 @@ void CodeEditView::FrameResized(float width, float height)
 	BView::FrameResized(width, height);
 	UpdateWrapColumns();
 	UpdateScrollBars();
+	ViewportChanged(false);
 }
 
 
@@ -1293,7 +1481,7 @@ void CodeEditView::KeyDown(const char *bytes, int32 numBytes)
 		ExecuteCommand(binding->command, binding->extend);
 		return;
 	}
-	if ((modifiers & (B_COMMAND_KEY | B_CONTROL_KEY)) != 0) {
+	if ((modifiers & (B_COMMAND_KEY | B_CONTROL_KEY)) != 0 || fCore->Settings().readOnly) {
 		BView::KeyDown(bytes, numBytes);
 		return;
 	}
@@ -1484,7 +1672,7 @@ void CodeEditView::MouseMoved(BPoint where, uint32 transit, const BMessage *drag
 	using namespace CodeEdit;
 
 	if (dragMessage != nullptr) {
-		if (dragMessage->HasData("text/plain", B_MIME_TYPE)) {
+		if (dragMessage->HasData("text/plain", B_MIME_TYPE) && !fCore->Settings().readOnly) {
 			HandleDragOver(where, transit);
 		}
 		return;
@@ -1803,10 +1991,24 @@ void CodeEditView::WindowActivated(bool active)
 void CodeEditView::MessageReceived(BMessage *message)
 {
 	if (message->WasDropped() && message->HasData("text/plain", B_MIME_TYPE)) {
-		HandleDrop(message);
+		if (!fCore->Settings().readOnly) {
+			HandleDrop(message);
+		}
 		return;
 	}
 	switch (message->what) {
+		case kMsgNotifyViewport: {
+			fViewportNotifyPosted = false;
+			if (!fTarget.IsValid()) {
+				break;
+			}
+			BMessage notification(CodeEdit::kMsgViewportChanged);
+			notification.AddPointer("view", this);
+			notification.AddBool("scrolled", fViewportScrolled);
+			fViewportScrolled = false;
+			fTarget.SendMessage(&notification);
+			break;
+		}
 		case kMsgAutoScroll:
 			AutoScrollTick();
 			break;

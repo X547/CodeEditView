@@ -502,4 +502,110 @@ TEST_CASE("dirty rows and scroll anchor")
 }
 
 
+TEST_CASE("read-only view")
+{
+	BReference<TextModel> model = MakeModel("abc\ndef");
+	EditorCore core(model);
+	EditorCore other(model);
+	EditorSettings settings = core.Settings();
+	settings.readOnly = true;
+	core.SetSettings(settings);
+
+	Place(core, 1);
+	core.InsertText("x");
+	core.InsertNewline();
+	core.InsertTab();
+	core.Delete(Deletion::CharacterLeft);
+	core.Paste("y");
+	core.ChangeIndent(true);
+	core.SetSelection({0, 2});
+	core.DeleteSelection();
+	core.MoveText({0, 2}, 5);
+	core.InsertTextAt(0, "z");
+	CHECK(Text(*model) == "abc\ndef");
+
+	// Navigation and selection still work.
+	CHECK(core.GetSelection() == Selection {0, 2});
+	Place(core, 2);
+	core.Move(Movement::NextLine, false, {});
+	CHECK(Caret(core) == 6);
+
+	// Other views of the model still edit, but this one does not undo.
+	Place(other, 0);
+	other.InsertText("1");
+	CHECK_FALSE(core.Undo());
+	CHECK(Text(*model) == "1abc\ndef");
+	CHECK(other.Undo());
+	CHECK(Text(*model) == "abc\ndef");
+}
+
+
+TEST_CASE("line rows")
+{
+	BReference<TextModel> model = MakeModel("a\nb\nc\nd\ne\n");
+	EditorCore core(model);
+	CHECK(core.LineRows(0) == std::pair<size_t, size_t> {0, 1});
+	CHECK(core.LineRows(5) == std::pair<size_t, size_t> {5, 1});
+	CHECK(core.LineRows(6) == std::pair<size_t, size_t> {6, 0});
+	CHECK(core.LineRows(100) == std::pair<size_t, size_t> {6, 0});
+
+	core.Fold({1, 3});
+	CHECK(core.LineRows(1) == std::pair<size_t, size_t> {1, 1});
+	CHECK(core.LineRows(2) == std::pair<size_t, size_t> {2, 0});
+	CHECK(core.LineRows(3) == std::pair<size_t, size_t> {2, 0});
+	CHECK(core.LineRows(4) == std::pair<size_t, size_t> {2, 1});
+}
+
+
+TEST_CASE("decorations follow edits")
+{
+	// Lines: 0 "aa", 1 "bb", 2 "cc", 3 "dd".
+	BReference<TextModel> model = MakeModel("aa\nbb\ncc\ndd");
+	EditorCore core(model);
+	EditorCore other(model);
+	const rgb_color color {1, 2, 3, 100};
+	core.SetDecorations({
+		{DecorationKind::LineBackground, 3, 9, color},
+		{DecorationKind::RangeBackground, 4, 5, color},
+		{DecorationKind::GapLine, 9, 9, color},
+		{DecorationKind::GapLine, 11, 0, color},
+	});
+
+	LineDecorations lines = core.DecorationsOfLines(0, 3);
+	REQUIRE(lines.lineBackgrounds.size() == 2);
+	CHECK(lines.lineBackgrounds[0].first == 1);
+	CHECK(lines.lineBackgrounds[1].first == 2);
+	REQUIRE(lines.ranges.size() == 1);
+	REQUIRE(lines.gaps.size() == 2);
+	CHECK(lines.gaps[0].line == 3);
+	CHECK_FALSE(lines.gaps[0].bottom);
+	// The end of a text without final newline: below the last line.
+	CHECK(lines.gaps[1].line == 3);
+	CHECK(lines.gaps[1].bottom);
+	CHECK(core.DecorationsOfLines(0, 0).lineBackgrounds.empty());
+
+	// Lines inserted above move them; text inserted at a range start stays
+	// outside, at a gap line after it.
+	Place(other, 0);
+	other.InsertText("x\n");
+	Place(other, 5);
+	other.InsertText("y");
+	Place(other, 12);
+	other.InsertText("z");
+	const std::vector<Decoration> decorations = core.Decorations();
+	REQUIRE(decorations.size() == 4);
+	CHECK(decorations[0].start == 6);
+	CHECK(decorations[0].end == 12);
+	CHECK(decorations[1].start == 7);
+	CHECK(decorations[1].end == 8);
+	CHECK(decorations[2].start == 12);
+	CHECK(decorations[3].start == 15);
+	lines = core.DecorationsOfLines(0, 4);
+	REQUIRE(lines.lineBackgrounds.size() == 2);
+	CHECK(lines.lineBackgrounds[0].first == 2);
+	CHECK(lines.gaps[0].line == 4);
+	CHECK_FALSE(lines.gaps[0].bottom);
+}
+
+
 } // CodeEdit

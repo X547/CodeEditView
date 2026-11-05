@@ -221,6 +221,61 @@ TEST_CASE("toggle fold at the caret and manual folds")
 }
 
 
+TEST_CASE("host folds")
+{
+	BReference<TextModel> model = MakeModel("a\nb\nc\nd\ne\nf\ng\nh\n", nullptr);
+	EditorCore core(model);
+	core.Fold({4, 6});
+
+	// Not over the caret, not on the header of a user fold.
+	core.SetSelection({LineStart(*model, 2), LineStart(*model, 2)});
+	core.SetHostFolds({{0, 2}, {4, 5}, {6, 7}}, false);
+	CHECK(core.Folds() == std::vector<FoldRange> {
+		{4, 6, FoldSource::User},
+		{6, 7, FoldSource::Host},
+	});
+	// The region over the caret is still a candidate.
+	CHECK(core.FoldMarkers(0, 0) == std::vector<FoldMarker> {{0, false}});
+
+	core.SetSelection({0, 0});
+	core.SetHostFolds({{0, 2}}, false);
+	CHECK(core.Folds() == std::vector<FoldRange> {
+		{0, 2, FoldSource::Host},
+		{4, 6, FoldSource::User},
+	});
+	CHECK(core.RowCount() == 5);
+
+	// The user unfolds and folds them again like other folds.
+	core.ToggleFoldAtLine(0);
+	CHECK(core.Folds() == std::vector<FoldRange> {{4, 6}});
+	CHECK(core.FoldMarkers(0, 0) == std::vector<FoldMarker> {{0, false}});
+	core.ToggleFoldAtLine(0);
+	CHECK(core.Folds() == std::vector<FoldRange> {
+		{0, 2, FoldSource::Host},
+		{4, 6, FoldSource::User},
+	});
+
+	// Unfolded regions keep their markers; edits move them.
+	core.SetHostFolds({{1, 3, false}}, false);
+	CHECK(core.Folds() == std::vector<FoldRange> {{4, 6}});
+	{
+		ModelLock lock(*model);
+		model->Insert(0, "x\n");
+	}
+	CHECK(core.FoldMarkers(0, 3) == std::vector<FoldMarker> {{2, false}});
+
+	// Folding at the caret moves it to the header line.
+	core.SetSelection({LineStart(*model, 3), LineStart(*model, 3)});
+	core.SetHostFolds({{2, 4}}, true);
+	CHECK(core.Folds().front() == FoldRange {2, 4, FoldSource::Host});
+	CHECK(core.GetSelection().caret == LineEnd(*model, 2));
+
+	core.SetHostFolds({}, false);
+	CHECK(core.Folds() == std::vector<FoldRange> {{5, 7}});
+	CHECK(core.FoldMarkers(0, 3).empty());
+}
+
+
 TEST_CASE("fold all and per-view folds")
 {
 	BReference<TextModel> model = MakeModel(kSample, "cpp");

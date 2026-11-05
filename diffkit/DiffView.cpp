@@ -291,7 +291,9 @@ void DiffView::UpdateDecorations()
 
 
 // Runs of unchanged lines long enough to hide, leaving context lines next to
-// the chunks visible. A run has the same length in both views.
+// the chunks visible. A run has the same length in both views. The selection
+// of either view stays visible with context lines around it, e.g. after its
+// lines were copied and became unchanged; the run is split around it.
 std::vector<DiffView::Region> DiffView::UnchangedRegions()
 {
 	std::vector<Region> regions;
@@ -299,6 +301,11 @@ std::vector<DiffView::Region> DiffView::UnchangedRegions()
 		return regions;
 	}
 	const size_t lineCounts[2] = {fViews[0]->LineCount(), fViews[1]->LineCount()};
+	LineRange selections[2];
+	for (int pane = 0; pane < 2; pane++) {
+		bool empty;
+		selections[pane] = SelectedLines(fViews[pane], empty);
+	}
 	size_t a = 0;
 	size_t b = 0;
 	for (size_t i = 0; i <= fChunks.size(); i++) {
@@ -311,12 +318,45 @@ std::vector<DiffView::Region> DiffView::UnchangedRegions()
 		const size_t header = atStart ? 0 : kContextLines - 1;
 		const size_t keepAfter = atEnd ? 0 : kContextLines;
 		if (count > header + keepAfter + kMinHiddenLines) {
-			const size_t last = count - keepAfter - 1;
-			Region region;
-			region.key = a;
-			region.folds[0] = {a + header, a + last, FoldSource::Host};
-			region.folds[1] = {b + header, b + last, FoldSource::Host};
-			regions.push_back(region);
+			const size_t hiddenFirst = header + 1;
+			const size_t hiddenLast = count - keepAfter - 1;
+			// Offsets kept visible for selections that would be hidden.
+			std::vector<LineRange> keep;
+			const size_t runStarts[2] = {a, b};
+			for (int pane = 0; pane < 2; pane++) {
+				const LineRange &selection = selections[pane];
+				const size_t start = runStarts[pane];
+				if (selection.last < start + hiddenFirst || selection.first > start + hiddenLast) {
+					continue;
+				}
+				const size_t first = std::max(selection.first, start) - start;
+				const size_t last = std::min(selection.last, start + count - 1) - start;
+				keep.push_back({first > kContextLines ? first - kContextLines : 0, last + kContextLines});
+			}
+			std::sort(keep.begin(), keep.end(), [](const LineRange &x, const LineRange &y) {
+				return x.first < y.first;
+			});
+
+			auto addRegion = [&](size_t first, size_t last) {
+				if (last + 1 < first + kMinHiddenLines) {
+					return;
+				}
+				Region region;
+				region.key = a + first;
+				region.folds[0] = {a + first - 1, a + last, FoldSource::Host};
+				region.folds[1] = {b + first - 1, b + last, FoldSource::Host};
+				regions.push_back(region);
+			};
+			size_t next = hiddenFirst;
+			for (const LineRange &range : keep) {
+				if (range.first > next) {
+					addRegion(next, std::min(range.first - 1, hiddenLast));
+				}
+				next = std::max(next, range.last + 1);
+			}
+			if (next <= hiddenLast) {
+				addRegion(next, hiddenLast);
+			}
 		}
 		if (!atEnd) {
 			a = fChunks[i].aFirst + fChunks[i].aCount;

@@ -178,6 +178,7 @@ meson test -C build
 ```
 
 Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dgitdiff=false`,
+`-Ddircompare=false`,
 `-Dtests=false`.
 
 The demo application is `build/demo/CodeEditDemo`.

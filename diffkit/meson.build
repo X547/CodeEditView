@@ -7,6 +7,7 @@ diffKit = static_library(
 	files(
 		'Chunks.cpp',
 		'DiffView.cpp',
+		'FileIO.cpp',
 		'Git.cpp',
 		'LinkMapView.cpp',
 		'TextSide.cpp',

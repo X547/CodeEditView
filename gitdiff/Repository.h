@@ -71,7 +71,8 @@ public:
 	// by content.
 	void WriteIndex(const std::string &path, std::string_view data, uint32_t mode);
 	void RemoveFromIndex(const std::string &path);
-	// Replaces the file through a temporary file, keeping its permissions.
+	// Replaces the file through a temporary file, keeping its permissions
+	// and attributes.
 	void WriteWorktree(const std::string &path, std::string_view data);
 
 	// Working tree data converted as `git add` would store it (line ending

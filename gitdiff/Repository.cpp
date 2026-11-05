@@ -1,21 +1,16 @@
 #include "Repository.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 
+#include "FileIO.h"
+
 
 namespace GitDiff {
-
-
-static std::string ErrnoMessage(const std::string &what, const std::string &path)
-{
-	return what + " " + path + ": " + strerror(errno);
-}
 
 
 Repository::Repository(const std::string &path)
@@ -208,23 +203,11 @@ std::optional<FileContent> Repository::ReadWorktree(const std::string &path)
 	}
 	content.mode = (info.st_mode & S_IXUSR) != 0 ? GIT_FILEMODE_BLOB_EXECUTABLE : GIT_FILEMODE_BLOB;
 
-	const int fd = open(fullPath.c_str(), O_RDONLY);
-	if (fd < 0) {
-		throw GitError(ErrnoMessage("Cannot open", fullPath));
+	std::optional<std::string> data = ReadFile(fullPath);
+	if (!data.has_value()) {
+		return std::nullopt;
 	}
-	char buffer[64 * 1024];
-	for (;;) {
-		const ssize_t size = read(fd, buffer, sizeof(buffer));
-		if (size < 0) {
-			close(fd);
-			throw GitError(ErrnoMessage("Cannot read", fullPath));
-		}
-		if (size == 0) {
-			break;
-		}
-		content.data.append(buffer, size);
-	}
-	close(fd);
+	content.data = std::move(*data);
 	return content;
 }
 
@@ -260,33 +243,7 @@ void Repository::RemoveFromIndex(const std::string &path)
 
 void Repository::WriteWorktree(const std::string &path, std::string_view data)
 {
-	const std::string fullPath = fWorkdir + path;
-	mode_t permissions = 0644;
-	struct stat info;
-	if (stat(fullPath.c_str(), &info) == 0) {
-		permissions = info.st_mode & 07777;
-	}
-
-	const std::string tempPath = fullPath + ".gitdiff-tmp";
-	const int fd = open(tempPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, permissions);
-	if (fd < 0) {
-		throw GitError(ErrnoMessage("Cannot create", tempPath));
-	}
-	size_t written = 0;
-	while (written < data.size()) {
-		const ssize_t size = write(fd, data.data() + written, data.size() - written);
-		if (size < 0) {
-			close(fd);
-			unlink(tempPath.c_str());
-			throw GitError(ErrnoMessage("Cannot write", tempPath));
-		}
-		written += size;
-	}
-	fchmod(fd, permissions);
-	if (close(fd) != 0 || rename(tempPath.c_str(), fullPath.c_str()) != 0) {
-		unlink(tempPath.c_str());
-		throw GitError(ErrnoMessage("Cannot save", fullPath));
-	}
+	WriteFile(fWorkdir + path, data);
 }
 
 

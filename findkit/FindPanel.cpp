@@ -101,21 +101,17 @@ FindPanel::FindPanel():
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 	BButton *findButton = new BButton("find", "Find", new BMessage(kMsgFindAgain));
-	// The labels stay at the top of their rows, which grow with the window.
-	BStringView *findLabel = new BStringView("findLabel", "Find:");
-	BStringView *replaceLabel = new BStringView("replaceLabel", "Replace:");
-	for (BStringView *label: {findLabel, replaceLabel}) {
-		label->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNLIMITED));
-		label->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
-	}
 
+	// The fields share the height the window grows by.
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
-		.AddGrid(B_USE_DEFAULT_SPACING, B_USE_SMALL_SPACING)
-			.Add(findLabel, 0, 0)
-			.Add(new BScrollView("findScroll", fFindField, 0, false, true), 1, 0)
-			.Add(replaceLabel, 0, 1)
-			.Add(new BScrollView("replaceScroll", fReplaceField, 0, false, true), 1, 1)
+		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1.0f)
+			.Add(new BStringView("findLabel", "Find:"))
+			.Add(new BScrollView("findScroll", fFindField, 0, false, true), 1.0f)
+		.End()
+		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1.0f)
+			.Add(new BStringView("replaceLabel", "Replace:"))
+			.Add(new BScrollView("replaceScroll", fReplaceField, 0, false, true), 1.0f)
 		.End()
 		.AddGrid(B_USE_BIG_SPACING, 0)
 			.Add(fRegexBox, 0, 0)
@@ -238,6 +234,23 @@ bool FindPanel::QuitRequested()
 	}
 	FindState::SetWatcher(BMessenger());
 	return true;
+}
+
+
+void FindPanel::DispatchMessage(BMessage *message, BHandler *target)
+{
+	// Tab and Shift+Tab move the focus out of a field (BView's default key
+	// handling navigates) instead of inserting a tab; a tab in a pattern is
+	// \t in regex mode.
+	if (message->what == B_KEY_DOWN && (target == fFindField || target == fReplaceField)) {
+		const uint32 modifiers = message->GetInt32("modifiers", 0);
+		if (message->GetInt32("raw_char", 0) == B_TAB
+			&& (modifiers & (B_COMMAND_KEY | B_CONTROL_KEY | B_OPTION_KEY)) == 0) {
+			static_cast<BView*>(target)->BView::KeyDown("\t", 1);
+			return;
+		}
+	}
+	BWindow::DispatchMessage(message, target);
 }
 
 

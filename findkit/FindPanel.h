@@ -40,6 +40,7 @@ public:
 	static void ShowPanel();
 
 	bool QuitRequested() final;
+	void DispatchMessage(BMessage *message, BHandler *target) final;
 	void MessageReceived(BMessage *message) final;
 	void WindowActivated(bool active) final;
 };

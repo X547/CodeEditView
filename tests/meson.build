@@ -1,10 +1,9 @@
-catch2Dep = dependency('catch2-with-main', version: '>= 3.0')
-
 codeEditTests = executable(
 	'CodeEditTests',
 	files(
 		'DapTest.cpp',
 		'DebugSessionTest.cpp',
+	'EditorCommandsTest.cpp',
 		'EditorCoreTest.cpp',
 		'FoldTest.cpp',
 		'LineLayoutTest.cpp',

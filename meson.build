@@ -27,6 +27,12 @@ privateInc = include_directories('src')
 
 subdir('src')
 
+if get_option('tests')
+	catch2Dep = dependency('catch2-with-main', version: '>= 3.0')
+endif
+
+subdir('findkit')
+
 if get_option('demo')
 	subdir('demo')
 endif

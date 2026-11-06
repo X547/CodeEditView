@@ -166,6 +166,12 @@ CodeEdit::TextModel *CodeEditView::Model() const
 }
 
 
+CodeEdit::ObserverId CodeEditView::EditOwner() const
+{
+	return fCore->Observer();
+}
+
+
 const CodeEdit::EditorSettings &CodeEditView::Settings() const
 {
 	return fCore->Settings();

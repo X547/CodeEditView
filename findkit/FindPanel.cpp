@@ -102,15 +102,23 @@ FindPanel::FindPanel():
 
 	BButton *findButton = new BButton("find", "Find", new BMessage(kMsgFindAgain));
 
+	// A label's maximum width is its text width by default, which would limit
+	// the width of its group and so the window's.
+	BStringView *findLabel = new BStringView("findLabel", "Find:");
+	BStringView *replaceLabel = new BStringView("replaceLabel", "Replace:");
+	for (BStringView *label: {findLabel, replaceLabel}) {
+		label->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+	}
+
 	// The fields share the height the window grows by.
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
-		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1.0f)
-			.Add(new BStringView("findLabel", "Find:"))
+		.AddGroup(B_VERTICAL, 0, 1.0f)
+			.Add(findLabel)
 			.Add(new BScrollView("findScroll", fFindField, 0, false, true), 1.0f)
 		.End()
-		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1.0f)
-			.Add(new BStringView("replaceLabel", "Replace:"))
+		.AddGroup(B_VERTICAL, 0, 1.0f)
+			.Add(replaceLabel)
 			.Add(new BScrollView("replaceScroll", fReplaceField, 0, false, true), 1.0f)
 		.End()
 		.AddGrid(B_USE_BIG_SPACING, 0)

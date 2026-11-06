@@ -11,8 +11,8 @@
 #include <LayoutBuilder.h>
 #include <Locker.h>
 #include <Messenger.h>
-#include <RadioButton.h>
 #include <ScrollView.h>
+#include <SpaceLayoutItem.h>
 #include <StringView.h>
 
 #include <CodeEditView/CodeEditView.h>
@@ -87,22 +87,27 @@ FindPanel::FindPanel():
 	fFindField = CreateField("findField");
 	fReplaceField = CreateField("replaceField");
 
-	fExactButton = new BRadioButton("exact", "Exact", new BMessage(kMsgOptionChanged));
-	fRegexButton = new BRadioButton("regex", "Regular expression", new BMessage(kMsgOptionChanged));
+	fRegexBox = new BCheckBox("regex", "Regular expression", new BMessage(kMsgOptionChanged));
 	fIgnoreCaseBox = new BCheckBox("ignoreCase", "Ignore case", new BMessage(kMsgOptionChanged));
 	fWrapBox = new BCheckBox("wrap", "Wrap around", new BMessage(kMsgOptionChanged));
 	fBackwardBox = new BCheckBox("backward", "Backwards", new BMessage(kMsgOptionChanged));
 	fInSelectionBox = new BCheckBox("inSelection", "Replace all in selection", new BMessage(kMsgOptionChanged));
 
+	// Between the buttons; long messages are truncated, the tool tip has the
+	// whole text.
 	fStatus = new BStringView("status", "");
-	fStatus->SetExplicitMinSize(BSize(B_SIZE_UNSET, FontLineHeight(*be_plain_font)));
+	fStatus->SetTruncation(B_TRUNCATE_END);
+	fStatus->SetExplicitMinSize(BSize(be_plain_font->StringWidth("Not found"), B_SIZE_UNSET));
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 	BButton *findButton = new BButton("find", "Find", new BMessage(kMsgFindAgain));
+	// The labels stay at the top of their rows, which grow with the window.
 	BStringView *findLabel = new BStringView("findLabel", "Find:");
 	BStringView *replaceLabel = new BStringView("replaceLabel", "Replace:");
-	findLabel->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
-	replaceLabel->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
+	for (BStringView *label: {findLabel, replaceLabel}) {
+		label->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNLIMITED));
+		label->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
+	}
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
@@ -112,24 +117,17 @@ FindPanel::FindPanel():
 			.Add(replaceLabel, 0, 1)
 			.Add(new BScrollView("replaceScroll", fReplaceField, 0, false, true), 1, 1)
 		.End()
-		.AddGroup(B_HORIZONTAL, B_USE_BIG_SPACING)
-			.AddGroup(B_VERTICAL, 0)
-				.Add(fExactButton)
-				.Add(fRegexButton)
-				.AddGlue()
-			.End()
-			.AddGroup(B_VERTICAL, 0)
-				.Add(fIgnoreCaseBox)
-				.Add(fWrapBox)
-				.Add(fBackwardBox)
-				.Add(fInSelectionBox)
-			.End()
-			.AddGlue()
+		.AddGrid(B_USE_BIG_SPACING, 0)
+			.Add(fRegexBox, 0, 0)
+			.Add(fIgnoreCaseBox, 1, 0)
+			.Add(fWrapBox, 2, 0)
+			.Add(fBackwardBox, 0, 1)
+			.Add(fInSelectionBox, 1, 1, 2)
+			.Add(BSpaceLayoutItem::CreateGlue(), 3, 0)
 		.End()
-		.Add(fStatus)
 		.AddGroup(B_HORIZONTAL)
 			.Add(new BButton("replaceAll", "Replace all", new BMessage(kMsgReplaceAll)))
-			.AddGlue()
+			.Add(fStatus)
 			.Add(new BButton("replace", "Replace", new BMessage(kMsgReplace)))
 			.Add(new BButton("replaceAndFind", "Replace & find", new BMessage(kMsgReplaceAndFind)))
 			.Add(findButton)
@@ -174,8 +172,7 @@ void FindPanel::LoadState()
 	const FindSettings settings = FindState::Get();
 	SetFieldText(fFindField, settings.findText);
 	SetFieldText(fReplaceField, settings.replaceText);
-	fExactButton->SetValue(settings.regex ? B_CONTROL_OFF : B_CONTROL_ON);
-	fRegexButton->SetValue(settings.regex ? B_CONTROL_ON : B_CONTROL_OFF);
+	fRegexBox->SetValue(settings.regex ? B_CONTROL_ON : B_CONTROL_OFF);
 	fIgnoreCaseBox->SetValue(settings.ignoreCase ? B_CONTROL_ON : B_CONTROL_OFF);
 	fWrapBox->SetValue(settings.wrap ? B_CONTROL_ON : B_CONTROL_OFF);
 	fBackwardBox->SetValue(settings.backward ? B_CONTROL_ON : B_CONTROL_OFF);
@@ -188,7 +185,7 @@ void FindPanel::StoreState()
 	FindSettings settings;
 	settings.findText = NormalizeLineEndings(FieldText(fFindField));
 	settings.replaceText = NormalizeLineEndings(FieldText(fReplaceField));
-	settings.regex = fRegexButton->Value() == B_CONTROL_ON;
+	settings.regex = fRegexBox->Value() == B_CONTROL_ON;
 	settings.ignoreCase = fIgnoreCaseBox->Value() == B_CONTROL_ON;
 	settings.wrap = fWrapBox->Value() == B_CONTROL_ON;
 	settings.backward = fBackwardBox->Value() == B_CONTROL_ON;
@@ -224,6 +221,7 @@ void FindPanel::FocusFindField()
 void FindPanel::SetStatus(const char *status, bool error)
 {
 	fStatus->SetText(status);
+	fStatus->SetToolTip(status[0] != '\0' ? status : nullptr);
 	fStatus->SetHighUIColor(error ? B_FAILURE_COLOR : B_PANEL_TEXT_COLOR);
 }
 

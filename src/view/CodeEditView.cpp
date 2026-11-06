@@ -140,8 +140,10 @@ static BReference<TextModel> ModelReference(TextModel *model)
 } // CodeEdit
 
 
+// B_SCROLL_VIEW_AWARE: the view sets the range of its scroll bars itself; a
+// BScrollView would otherwise derive it from PreferredSize() when resized.
 CodeEditView::CodeEditView(const char *name, CodeEdit::TextModel *model):
-	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE | B_INPUT_METHOD_AWARE),
+	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE | B_INPUT_METHOD_AWARE | B_SCROLL_VIEW_AWARE),
 	fCore(std::make_unique<CodeEdit::EditorCore>(CodeEdit::ModelReference(model))),
 	fKeyMap(std::make_unique<CodeEdit::KeyMap>(CodeEdit::KeyMap::Default())),
 	fMouse(std::make_unique<CodeEdit::MouseState>()),

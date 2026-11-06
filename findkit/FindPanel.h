@@ -3,9 +3,7 @@
 #include <Window.h>
 
 
-class BButton;
 class BCheckBox;
-class BRadioButton;
 class BStringView;
 class CodeEditView;
 
@@ -21,8 +19,7 @@ class FindPanel: public BWindow {
 private:
 	CodeEditView *fFindField {};
 	CodeEditView *fReplaceField {};
-	BRadioButton *fExactButton {};
-	BRadioButton *fRegexButton {};
+	BCheckBox *fRegexBox {};
 	BCheckBox *fIgnoreCaseBox {};
 	BCheckBox *fWrapBox {};
 	BCheckBox *fBackwardBox {};

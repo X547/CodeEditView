@@ -58,3 +58,7 @@ endif
 if get_option('dircompare')
 	subdir('dircompare')
 endif
+
+if get_option('coverage')
+	subdir('coverage')
+endif

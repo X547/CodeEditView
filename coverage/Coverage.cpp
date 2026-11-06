@@ -226,8 +226,15 @@ static void AddLineBackgrounds(
 }
 
 
+static bool IsBlank(const std::string &text)
+{
+	return text.find_first_not_of(" \t") == std::string::npos;
+}
+
+
 // Regions with a count of 0 where they lie on executed lines; on lines not
-// executed the line background shows it already.
+// executed the line background shows it already. Pieces of only white space
+// (e.g. the indentation before the next case label) are left out.
 static void AddUncoveredRegions(
 	const FileCoverage &coverage,
 	const std::vector<LineState> &lines,
@@ -256,7 +263,7 @@ static void AddUncoveredRegions(
 			}
 			const size_t pieceStart = std::max(start, text.LineStart(line));
 			const size_t pieceEnd = std::min(end, text.LineEnd(line));
-			if (pieceEnd > pieceStart) {
+			if (pieceEnd > pieceStart && !IsBlank(text.Substring(pieceStart, pieceEnd - pieceStart))) {
 				decorations.push_back({DecorationKind::RangeBackground, pieceStart, pieceEnd, colors.uncoveredRegion});
 			}
 		}

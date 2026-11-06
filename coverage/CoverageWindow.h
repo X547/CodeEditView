@@ -39,10 +39,14 @@ private:
 	std::unique_ptr<Summary> fSummary;
 	std::string fPath;
 	std::vector<LineState> fLines;
-	uint64_t fRequest {};
+	// Changes when the file to show or its data changes; replies of older
+	// generations are dropped.
+	uint64_t fGeneration {};
+	bool fFileRequestPending {};
 
 	void LoadSummary();
 	void ShowFile(const std::string &path);
+	void RequestFileCoverage();
 	void SummaryLoaded(BMessage *message);
 	void FileLoaded(BMessage *message);
 	void GoToUncovered(bool forward);

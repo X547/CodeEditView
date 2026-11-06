@@ -17,6 +17,7 @@
 #include <Looper.h>
 #include <MenuBar.h>
 #include <Path.h>
+#include <ScrollBar.h>
 #include <SplitView.h>
 #include <StringView.h>
 
@@ -79,7 +80,7 @@ public:
 				const std::string path = message->GetString("path", "");
 				BMessage reply(kMsgFileLoaded);
 				reply.AddString("path", path.c_str());
-				reply.AddUInt64("request", message->GetUInt64("request", 0));
+				reply.AddUInt64("generation", message->GetUInt64("generation", 0));
 				Reply<FileCoverage>(reply, [this, &path]() {return fCov.LoadFile(path);});
 				break;
 			}
@@ -185,7 +186,9 @@ CoverageWindow::CoverageWindow(const std::string &binary, const std::string &pro
 			.Add(split)
 		.End()
 		.AddGroup(B_HORIZONTAL)
-			.SetInsets(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING / 2, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING / 2)
+			// The right inset keeps the text clear of the window's resize
+			// corner.
+			.SetInsets(B_USE_SMALL_SPACING, 2, B_V_SCROLL_BAR_WIDTH + 2, 2)
 			.Add(fStatus)
 		.End();
 	split->AddChild(fFileList, 2);
@@ -216,6 +219,7 @@ void CoverageWindow::ShowFile(const std::string &path)
 	}
 	fPath = path;
 	fLines.clear();
+	fGeneration++;
 	BReference<TextModel> model(new TextModel(), true);
 	try {
 		BFile file(path.c_str(), B_READ_ONLY);
@@ -235,11 +239,23 @@ void CoverageWindow::ShowFile(const std::string &path)
 	fModel = model;
 	fEditor->SetModel(fModel.Get());
 
-	BMessage request(kMsgLoadFile);
-	request.AddString("path", path.c_str());
-	request.AddUInt64("request", ++fRequest);
-	fWorker->PostMessage(&request);
+	RequestFileCoverage();
 	SetStatus(FileStatus() + " · loading" B_UTF8_ELLIPSIS);
+}
+
+
+// At most one llvm-cov run for a file at a time: while one runs, selecting
+// other files only changes what is requested when it ends.
+void CoverageWindow::RequestFileCoverage()
+{
+	if (fFileRequestPending || fPath.empty()) {
+		return;
+	}
+	fFileRequestPending = true;
+	BMessage request(kMsgLoadFile);
+	request.AddString("path", fPath.c_str());
+	request.AddUInt64("generation", fGeneration);
+	fWorker->PostMessage(&request);
 }
 
 
@@ -265,7 +281,10 @@ void CoverageWindow::FileLoaded(BMessage *message)
 	void *pointer = nullptr;
 	message->FindPointer("result", &pointer);
 	std::unique_ptr<FileCoverage> coverage(static_cast<FileCoverage*>(pointer));
-	if (message->GetUInt64("request", 0) != fRequest) {
+	fFileRequestPending = false;
+	if (message->GetUInt64("generation", 0) != fGeneration) {
+		// Another file was selected (or reloaded) meanwhile.
+		RequestFileCoverage();
 		return;
 	}
 	if (coverage == nullptr) {

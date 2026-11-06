@@ -25,7 +25,7 @@ constexpr uint32 kMsgPreviousUncovered = 'COpu';
 // the receiver) or "error" (string).
 constexpr uint32 kMsgLoadSummary = 'COls';
 constexpr uint32 kMsgSummaryLoaded = 'COsl';
-// "path" (string), "request" (uint64).
+// "path" (string), "generation" (uint64).
 constexpr uint32 kMsgLoadFile = 'COlf';
 constexpr uint32 kMsgFileLoaded = 'COfl';
 

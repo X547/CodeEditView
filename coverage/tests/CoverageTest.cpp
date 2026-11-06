@@ -168,6 +168,26 @@ TEST_CASE("an unexecuted region on unexecuted lines needs no range")
 }
 
 
+TEST_CASE("unexecuted regions covering only white space are not marked")
+{
+	// The region of count 0 after "a;" ends at the next statement, so on line
+	// 2 it covers only the indentation.
+	const Rope text("a;\n    b;\n");
+	FileCoverage coverage;
+	coverage.segments = {
+		{1, 1, 3, true, true, false},
+		{1, 3, 0, true, false, false},
+		{2, 5, 3, true, true, false},
+		{2, 7, 0, false, false, false},
+	};
+	const std::vector<LineState> states = ComputeLineStates(coverage.segments, text.LineCount());
+	REQUIRE(states[1] == LineState::Covered);
+	for (const Decoration &decoration: MakeDecorations(coverage, states, text, DefaultColors())) {
+		CHECK(decoration.kind == DecorationKind::LineBackground);
+	}
+}
+
+
 TEST_CASE("the summary lists files and totals")
 {
 	const Summary summary = ParseSummary(R"({"data": [{"files": [

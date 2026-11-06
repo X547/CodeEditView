@@ -10,6 +10,7 @@
 
 #include <Autolock.h>
 #include <Message.h>
+#include <image.h>
 
 
 namespace Debugger {
@@ -51,6 +52,20 @@ std::string DapFrame(std::string_view body)
 }
 
 
+// Moves the descriptor to a number above stdin, stdout and stderr.
+static void MoveAboveStdio(int &fd)
+{
+	if (fd > STDERR_FILENO) {
+		return;
+	}
+	const int moved = fcntl(fd, F_DUPFD, STDERR_FILENO + 1);
+	if (moved >= 0) {
+		close(fd);
+		fd = moved;
+	}
+}
+
+
 //#pragma mark - DapClient
 
 DapClient::DapClient(const BMessenger &target):
@@ -83,39 +98,46 @@ status_t DapClient::Start(const std::vector<std::string> &argv)
 		return error;
 	}
 
-	std::vector<char*> args;
+	// Our ends stay here; the adapter's ends are inherited and must not be
+	// stdin or stdout already (the redirections below would mix them up).
+	fcntl(toChild[1], F_SETFD, FD_CLOEXEC);
+	fcntl(fromChild[0], F_SETFD, FD_CLOEXEC);
+	MoveAboveStdio(toChild[0]);
+	MoveAboveStdio(fromChild[1]);
+
+	// No fork(): in a team with several threads, Haiku's fork() can hit
+	// "mutex was not actually locked!" (the heap counts its locks before
+	// and after the fork; the count changes when the first secondary thread
+	// starts in between), and posix_spawn() with file actions forks too and
+	// allocates in the child. Instead a shell started by load_image()
+	// connects the inherited pipe ends to stdin and stdout and replaces
+	// itself with the adapter ("$0" "$@", searched in PATH).
+	const std::string in = std::to_string(toChild[0]);
+	const std::string out = std::to_string(fromChild[1]);
+	const std::string script = "exec \"$0\" \"$@\" <&" + in + " >&" + out + " " + in + "<&- " + out + ">&-";
+	std::vector<const char*> args {"/bin/sh", "-c", script.c_str()};
 	for (const std::string &arg : argv) {
-		args.push_back(const_cast<char*>(arg.c_str()));
+		args.push_back(arg.c_str());
 	}
 	args.push_back(nullptr);
 
-	const pid_t pid = fork();
-	if (pid < 0) {
-		const status_t error = errno;
-		close(toChild[0]);
-		close(toChild[1]);
-		close(fromChild[0]);
-		close(fromChild[1]);
-		return error;
-	}
-	if (pid == 0) {
-		dup2(toChild[0], STDIN_FILENO);
-		dup2(fromChild[1], STDOUT_FILENO);
-		close(toChild[0]);
-		close(toChild[1]);
-		close(fromChild[0]);
-		close(fromChild[1]);
-		// A new process group, so signals for the debugger do not reach it.
-		setpgid(0, 0);
-		execvp(args[0], args.data());
-		_exit(127);
-	}
-
+	const thread_id team = load_image(
+		static_cast<int32>(args.size() - 1),
+		args.data(),
+		const_cast<const char**>(environ)
+	);
 	close(toChild[0]);
 	close(fromChild[1]);
-	fcntl(toChild[1], F_SETFD, FD_CLOEXEC);
-	fcntl(fromChild[0], F_SETFD, FD_CLOEXEC);
-	fPid = pid;
+	if (team < 0) {
+		close(toChild[1]);
+		close(fromChild[0]);
+		return team;
+	}
+	// A new process group, so signals for the debugger do not reach it.
+	setpgid(team, team);
+	resume_thread(team);
+
+	fPid = team;
 	fInput = toChild[1];
 	fOutput = fromChild[0];
 	fNextSeq = 1;

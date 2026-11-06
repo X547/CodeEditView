@@ -13,6 +13,7 @@
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
 
+#include "FindPanel.h"
 #include "FindState.h"
 #include "ModelSearch.h"
 #include "Search.h"
@@ -133,6 +134,8 @@ static bool ExecuteReplace(CodeEditView *view, const FindSettings &settings)
 		return false;
 	}
 	if (!after.has_value()) {
+		beep();
+		FindState::ReportStatus("The selection is not a match", false);
 		return false;
 	}
 	view->SetSelection(*after);
@@ -205,13 +208,6 @@ static bool SelectionIsMatch(CodeEditView *view, const FindSettings &settings)
 }
 
 
-static void ShowPanel()
-{
-	// TODO: show the find panel.
-	beep();
-}
-
-
 class FindCommandSet: public EditorCommandSet {
 public:
 	bool Handles(uint32 what) const final;
@@ -272,7 +268,7 @@ bool FindCommandSet::IsEnabled(uint32 what, CodeEditView *view)
 void FindCommandSet::Execute(BMessage *message, CodeEditView *view)
 {
 	if (message->what == kMsgFind) {
-		ShowPanel();
+		FindPanel::ShowPanel();
 		return;
 	}
 	if (view == nullptr) {
@@ -304,14 +300,12 @@ void FindCommandSet::Execute(BMessage *message, CodeEditView *view)
 		}
 		case kMsgReplace:
 			if (!ExecuteReplace(view, settings)) {
-				ShowPanel();
+				FindPanel::ShowPanel();
 			}
 			break;
 		case kMsgReplaceAndFind:
 			if (ExecuteReplace(view, settings)) {
 				ExecuteFind(view, settings, settings.backward);
-			} else {
-				beep();
 			}
 			break;
 		case kMsgReplaceAll:

@@ -35,7 +35,8 @@ namespace FindState {
 
 
 FindSettings Get();
-void Set(const FindSettings &settings);
+// The watcher is notified of changes unless it made them itself.
+void Set(const FindSettings &settings, bool notifyWatcher = true);
 
 // The find panel; receives the messages above.
 void SetWatcher(const BMessenger &watcher);

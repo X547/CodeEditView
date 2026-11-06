@@ -23,7 +23,7 @@ FindSettings Get()
 }
 
 
-void Set(const FindSettings &settings)
+void Set(const FindSettings &settings, bool notifyWatcher)
 {
 	BMessenger watcher;
 	{
@@ -32,7 +32,9 @@ void Set(const FindSettings &settings)
 			return;
 		}
 		sSettings = settings;
-		watcher = sWatcher;
+		if (notifyWatcher) {
+			watcher = sWatcher;
+		}
 	}
 	watcher.SendMessage(kMsgFindSettingsChanged);
 }

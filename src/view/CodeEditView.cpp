@@ -10,6 +10,7 @@
 #include <Clipboard.h>
 #include <Cursor.h>
 #include <Input.h>
+#include <LayoutUtils.h>
 #include <MenuItem.h>
 #include <MessageRunner.h>
 #include <PopUpMenu.h>
@@ -2104,11 +2105,11 @@ void CodeEditView::MessageReceived(BMessage *message)
 
 BSize CodeEditView::MinSize()
 {
-	return BSize(fCellWidth * 10, fLineHeight * 2);
+	return BLayoutUtils::ComposeSize(ExplicitMinSize(), BSize(fCellWidth * 10, fLineHeight * 2));
 }
 
 
 BSize CodeEditView::PreferredSize()
 {
-	return BSize(fCellWidth * 80, fLineHeight * 25);
+	return BLayoutUtils::ComposeSize(ExplicitPreferredSize(), BSize(fCellWidth * 80, fLineHeight * 25));
 }

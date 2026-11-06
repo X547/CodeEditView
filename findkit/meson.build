@@ -6,6 +6,7 @@ findKit = static_library(
 	'findkit',
 	files(
 		'FindCommands.cpp',
+		'FindPanel.cpp',
 		'FindState.cpp',
 		'ModelSearch.cpp',
 		'Search.cpp',

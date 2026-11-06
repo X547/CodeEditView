@@ -7,6 +7,6 @@ executable(
 		'DemoWindow.cpp',
 		'OutlineView.cpp',
 	),
-	dependencies: [codeEditViewDep, trackerDep],
+	dependencies: [codeEditViewDep, findKitDep, trackerDep],
 	install: true
 )

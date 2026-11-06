@@ -68,6 +68,7 @@ private:
 	BMenuItem *fWordWrapItem {};
 	bool fWordWrap {};
 
+	CodeEditView *CommandTarget();
 	CodeEditScrollView *CreatePane();
 	void UpdateTitle();
 	void Save();
@@ -89,6 +90,8 @@ public:
 	~DemoWindow() override;
 
 	void MessageReceived(BMessage *message) final;
+	void MenusBeginning() final;
+	void WindowActivated(bool active) final;
 };
 
 

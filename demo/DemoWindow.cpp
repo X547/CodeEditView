@@ -18,8 +18,10 @@
 
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/EditorCommands.h>
 #include <CodeEditView/Language.h>
 
+#include "FindCommands.h"
 #include "OutlineView.h"
 
 
@@ -46,6 +48,7 @@ DemoWindow::DemoWindow(DemoDocument *document):
 	fDocument(document)
 {
 	BMenuBar *menuBar = new BMenuBar("menuBar");
+	BMenu *searchMenu = nullptr;
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
 			.AddItem("New", kMsgNewDocument, 'N')
@@ -71,6 +74,9 @@ DemoWindow::DemoWindow(DemoDocument *document):
 			.AddItem("Shift left", CodeEdit::kMsgIndentLess, '[')
 			.AddItem("Shift right", CodeEdit::kMsgIndentMore, ']')
 		.End()
+		.AddMenu("Search")
+			.GetMenu(searchMenu)
+		.End()
 		.AddMenu("View")
 			.AddItem("Split view", kMsgToggleSplit, 'T', B_SHIFT_KEY)
 			.AddItem("Word wrap", kMsgToggleWordWrap)
@@ -94,6 +100,7 @@ DemoWindow::DemoWindow(DemoDocument *document):
 			.AddItem("Continue to breakpoint (fake)", kMsgContinue)
 			.AddItem("Stop", kMsgStop)
 		.End();
+	FindKit::AddFindItems(searchMenu);
 
 	CodeEditScrollView *pane = CreatePane();
 	fFirstPane = pane;
@@ -124,6 +131,15 @@ DemoWindow::DemoWindow(DemoDocument *document):
 DemoWindow::~DemoWindow()
 {
 	be_app->PostMessage(kMsgWindowClosed);
+}
+
+
+// The focused edit view, else the last active one (e.g. while the outline has
+// the focus).
+CodeEditView *DemoWindow::CommandTarget()
+{
+	CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this);
+	return focused != nullptr ? focused : fActiveView;
 }
 
 
@@ -507,7 +523,25 @@ void DemoWindow::MessageReceived(BMessage *message)
 			break;
 		}
 		default:
-			BWindow::MessageReceived(message);
+			if (!CodeEdit::EditorCommands::Dispatch(message, CommandTarget())) {
+				BWindow::MessageReceived(message);
+			}
 			break;
 	}
+}
+
+
+void DemoWindow::MenusBeginning()
+{
+	CodeEdit::EditorCommands::UpdateMenu(KeyMenuBar(), CommandTarget());
+	BWindow::MenusBeginning();
+}
+
+
+void DemoWindow::WindowActivated(bool active)
+{
+	if (active) {
+		CodeEdit::EditorCommands::SetActiveHost(this);
+	}
+	BWindow::WindowActivated(active);
 }

@@ -5,6 +5,8 @@ pcre2Dep = dependency('libpcre2-8', version: '>= 10.34')
 findKit = static_library(
 	'findkit',
 	files(
+		'FindCommands.cpp',
+		'FindState.cpp',
 		'ModelSearch.cpp',
 		'Search.cpp',
 	),

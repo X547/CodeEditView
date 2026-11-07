@@ -293,4 +293,54 @@ TEST_CASE("line endings and read-only files")
 }
 
 
+static git_oid ParentOf(git_repository *repository, const git_oid &id)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &id), "lookup");
+	CommitPtr commitPtr(commit);
+	REQUIRE(git_commit_parentcount(commit) == 1);
+	return *git_commit_parent_id(commit, 0);
+}
+
+
+TEST_CASE("commit and amend")
+{
+	TestRepository test;
+	test.Write("a.txt", "1\n");
+	test.Add("a.txt");
+	test.Commit();
+
+	Repository repository(test.Directory());
+	git_config *config = nullptr;
+	Check(git_repository_config(&config, repository.Get()), "config");
+	ConfigPtr configPtr(config);
+	Check(git_config_set_string(config, "user.name", "Committer"), "name");
+	Check(git_config_set_string(config, "user.email", "committer@example.com"), "email");
+
+	CHECK_THROWS_AS(repository.Commit("Nothing", false), GitError);
+	repository.WriteIndex("a.txt", "2\n", GIT_FILEMODE_BLOB);
+	CHECK_THROWS_AS(repository.Commit("  \n", false), GitError);
+
+	const git_oid first = repository.Commit("Change a\n\n  ", false);
+	CHECK(repository.HeadMessage() == "Change a\n");
+	CHECK(repository.ReadHead("a.txt")->data == "2\n");
+	// The file on disk still differs; nothing is staged.
+	const std::vector<StatusEntry> status = repository.Status();
+	CHECK(*FindEntry(status, "a.txt") == StatusEntry {"a.txt", ' ', 'M', false});
+
+	repository.WriteIndex("a.txt", "3\n", GIT_FILEMODE_BLOB);
+	const git_oid amended = repository.Commit("Change a again", true);
+	CHECK_FALSE(git_oid_equal(&first, &amended));
+	CHECK(repository.HeadMessage() == "Change a again\n");
+	CHECK(repository.ReadHead("a.txt")->data == "3\n");
+	const git_oid firstParent = ParentOf(repository.Get(), first);
+	const git_oid amendedParent = ParentOf(repository.Get(), amended);
+	CHECK(git_oid_equal(&firstParent, &amendedParent));
+
+	// Amending with nothing staged only changes the message.
+	repository.Commit("Reworded", true);
+	CHECK(repository.HeadMessage() == "Reworded\n");
+}
+
+
 } // GitDiff

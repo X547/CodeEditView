@@ -81,6 +81,15 @@ public:
 	// Why the file cannot be edited as text here (filter attributes); empty
 	// if it can.
 	std::string FilterProblem(const std::string &path);
+
+	// The message of the HEAD commit; empty without commits.
+	std::string HeadMessage();
+	// Commits the index on the HEAD branch with the configured identity;
+	// the parents of a merge in progress are added and the merge state is
+	// cleared. amend replaces the HEAD commit instead, keeping its author.
+	// Throws if the index has conflicts or, without amend, nothing is
+	// staged.
+	git_oid Commit(const std::string &message, bool amend);
 };
 
 

@@ -283,5 +283,98 @@ std::string Repository::FilterProblem(const std::string &path)
 }
 
 
+std::string Repository::HeadMessage()
+{
+	git_object *head = nullptr;
+	if (git_revparse_single(&head, fRepository.get(), "HEAD^{commit}") < 0) {
+		git_error_clear();
+		return std::string();
+	}
+	ObjectPtr headPtr(head);
+	const char *message = git_commit_message(reinterpret_cast<git_commit*>(head));
+	return message != nullptr ? message : "";
+}
+
+
+static int AddMergeHead(const git_oid *id, void *data)
+{
+	static_cast<std::vector<git_oid>*>(data)->push_back(*id);
+	return 0;
+}
+
+
+git_oid Repository::Commit(const std::string &message, bool amend)
+{
+	git_repository *repository = fRepository.get();
+	GitBuf buffer;
+	Check(git_message_prettify(buffer.Get(), message.c_str(), 0, '#'), "Cannot format the message");
+	const std::string cleanMessage = buffer.String();
+	if (cleanMessage.empty()) {
+		throw GitError("Enter a commit message");
+	}
+
+	IndexPtr index = Index();
+	if (git_index_has_conflicts(index.get())) {
+		throw GitError("Resolve the conflicts before committing");
+	}
+	git_oid treeId;
+	Check(git_index_write_tree(&treeId, index.get()), "Cannot write the tree");
+	git_tree *tree = nullptr;
+	Check(git_tree_lookup(&tree, repository, &treeId), "Cannot read the tree");
+	TreePtr treePtr(tree);
+
+	git_signature *signature = nullptr;
+	if (git_signature_default(&signature, repository) < 0) {
+		git_error_clear();
+		throw GitError("Set user.name and user.email in the Git configuration to commit");
+	}
+	SignaturePtr signaturePtr(signature);
+
+	git_object *headObject = nullptr;
+	if (git_revparse_single(&headObject, repository, "HEAD^{commit}") < 0) {
+		git_error_clear();
+		headObject = nullptr;
+	}
+	ObjectPtr headPtr(headObject);
+	git_commit *head = reinterpret_cast<git_commit*>(headObject);
+
+	git_oid id;
+	if (amend) {
+		if (head == nullptr) {
+			throw GitError("There is no commit to amend");
+		}
+		Check(git_commit_amend(&id, head, "HEAD", nullptr, signature, nullptr, cleanMessage.c_str(), tree),
+			"Cannot amend the commit");
+		return id;
+	}
+
+	std::vector<git_oid> mergeHeads;
+	const bool merging = git_repository_state(repository) == GIT_REPOSITORY_STATE_MERGE;
+	if (merging) {
+		Check(git_repository_mergehead_foreach(repository, AddMergeHead, &mergeHeads), "Cannot read the merge heads");
+	}
+	if (head != nullptr && mergeHeads.empty() && git_oid_equal(&treeId, git_commit_tree_id(head))) {
+		throw GitError("Nothing is staged");
+	}
+
+	std::vector<CommitPtr> mergeCommits;
+	std::vector<const git_commit*> parents;
+	if (head != nullptr) {
+		parents.push_back(head);
+	}
+	for (const git_oid &mergeHead : mergeHeads) {
+		git_commit *commit = nullptr;
+		Check(git_commit_lookup(&commit, repository, &mergeHead), "Cannot read the merged commit");
+		mergeCommits.emplace_back(commit);
+		parents.push_back(commit);
+	}
+	Check(git_commit_create(&id, repository, "HEAD", signature, signature, nullptr, cleanMessage.c_str(), tree,
+		parents.size(), parents.data()), "Cannot create the commit");
+	if (merging) {
+		Check(git_repository_state_cleanup(repository), "Cannot clear the merge state");
+	}
+	return id;
+}
+
 
 } // GitDiff

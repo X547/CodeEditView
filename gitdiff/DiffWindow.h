@@ -13,8 +13,11 @@
 #include "Repository.h"
 
 
+class BButton;
+class BCheckBox;
 class BMenuItem;
 class BMessageRunner;
+class BTextView;
 
 
 namespace GitDiff {
@@ -40,6 +43,8 @@ private:
 	BMenuItem *fWordWrapItem {};
 	BMenuItem *fAlgorithmItems[3] {};
 	node_ref fGitDirNode {};
+	BTextView *fMessage {};
+	BCheckBox *fAmend {};
 
 	FileDocument *DocumentFor(const std::string &path);
 	void UpdateDiffState();
@@ -52,6 +57,8 @@ private:
 	void Save(bool all);
 	void ReloadDocument();
 	void StageFile();
+	void AmendToggled();
+	void Commit();
 	bool ConfirmClose();
 
 public:

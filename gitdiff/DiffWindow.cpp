@@ -7,6 +7,8 @@
 
 #include <Alert.h>
 #include <Application.h>
+#include <Button.h>
+#include <CheckBox.h>
 #include <Entry.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
@@ -16,6 +18,8 @@
 #include <Path.h>
 #include <ScrollView.h>
 #include <SplitView.h>
+#include <StringView.h>
+#include <TextView.h>
 
 #include <CodeEditView/CodeEditView.h>
 
@@ -68,6 +72,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 			.AddItem("Stage/unstage chunk or selected lines", kMsgStage, 'T')
 			.AddItem("Revert chunk or selected lines", kMsgRevert, 'R')
 			.AddItem("Stage/unstage file", kMsgStageFile, 'T', B_SHIFT_KEY)
+			.AddItem("Commit staged changes", kMsgCommit, 'K')
 			.AddSeparator()
 			.AddItem("Next change", kMsgNextChunk, B_DOWN_ARROW, B_SHIFT_KEY)
 			.AddItem("Previous change", kMsgPreviousChunk, B_UP_ARROW, B_SHIFT_KEY)
@@ -98,6 +103,27 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fHideUnchangedItem->SetMarked(true);
 
 	fFileList = new FileListView();
+	fMessage = new BTextView("message");
+	fMessage->SetWordWrap(true);
+	fMessage->SetDoesUndo(true);
+	BScrollView *messageScroll = new BScrollView("messageScroll", fMessage, 0, false, true);
+	messageScroll->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
+	fAmend = new BCheckBox("amend", "Amend last commit", new BMessage(kMsgAmendToggled));
+	BButton *commitButton = new BButton("commit", "Commit", new BMessage(kMsgCommit));
+	BGroupView *commitBox = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
+	BLayoutBuilder::Group<>(commitBox)
+		.SetInsets(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING)
+		.Add(new BStringView("messageLabel", "Commit message:"))
+		.Add(messageScroll)
+		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
+			.Add(fAmend)
+			.AddGlue()
+			.Add(commitButton)
+		.End();
+	BSplitView *leftSplit = new BSplitView(B_VERTICAL, 0);
+	BLayoutBuilder::Split<>(leftSplit)
+		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 3)
+		.Add(commitBox, 1);
 	fDiffView = new DiffView();
 	BSplitView *splitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
@@ -111,7 +137,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 			.Add(splitView)
 		.End();
 	splitView->SetInsets(0, -1, 0, 0);
-	splitView->AddChild(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 1);
+	splitView->AddChild(leftSplit, 1);
 	splitView->AddChild(fDiffView, 4);
 
 	// The index is replaced through index.lock, so the directory is watched.
@@ -347,6 +373,53 @@ void DiffWindow::StageFile()
 }
 
 
+// Amending starts from the message of the commit being replaced.
+void DiffWindow::AmendToggled()
+{
+	const std::string headMessage = fRepository->HeadMessage();
+	if (fAmend->Value() == B_CONTROL_ON) {
+		if (fMessage->TextLength() == 0) {
+			fMessage->SetText(headMessage.c_str());
+		}
+	} else if (headMessage == fMessage->Text()) {
+		fMessage->SetText("");
+	}
+}
+
+
+// Commits the index; staged versions edited here are written first.
+void DiffWindow::Commit()
+{
+	bool indexModified = false;
+	for (const auto &[path, document] : fDocuments) {
+		indexModified = indexModified || document->IsModified(Side::Index);
+	}
+	try {
+		if (indexModified) {
+			BAlert *alert = new BAlert("Git diff", "Some staged versions are edited but not written to the index. "
+				"Write them and commit?", "Cancel", "Write and commit", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			if (alert->Go() != 1) {
+				return;
+			}
+			for (const auto &[path, document] : fDocuments) {
+				if (document->IsModified(Side::Index)) {
+					document->WriteIndex(*fRepository);
+				}
+			}
+		}
+		fRepository->Commit(fMessage->Text(), fAmend->Value() == B_CONTROL_ON);
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+		Refresh();
+		return;
+	}
+	fMessage->SetText("");
+	fAmend->SetValue(B_CONTROL_OFF);
+	Refresh();
+}
+
+
 bool DiffWindow::ConfirmClose()
 {
 	bool modified = false;
@@ -441,6 +514,12 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgStageFile:
 			StageFile();
 			break;
+		case kMsgCommit:
+			Commit();
+			break;
+		case kMsgAmendToggled:
+			AmendToggled();
+			break;
 		case kMsgNextChunk:
 		case kMsgPreviousChunk:
 			fDiffView->GoToChunk(message->what == kMsgNextChunk);
@@ -467,7 +546,7 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case B_PASTE:
 		case B_SELECT_ALL: {
 			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
+			if (dynamic_cast<CodeEditView*>(focus) != nullptr || dynamic_cast<BTextView*>(focus) != nullptr) {
 				PostMessage(message, focus);
 			}
 			break;

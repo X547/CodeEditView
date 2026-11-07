@@ -8,6 +8,7 @@
 
 #include "HistoryEdit.h"
 #include "Snapshot.h"
+#include "StepEditor.h"
 
 
 class BButton;
@@ -25,9 +26,9 @@ class CommitList;
 
 // The history of a branch, remote copy, tag or commit. In edit mode (local
 // branches) the commits can be reordered by drag and drop, removed,
-// combined and reworded; commits dropped from another history window are
-// copied in. Apply rewrites the branch once. Has its own repository
-// handle.
+// combined, reworded, edited, split and their conflicts resolved; commits
+// dropped from another history window are copied in. Apply rewrites the
+// branch once. Has its own repository handle.
 class HistoryWindow: public BWindow {
 private:
 	std::string fRepositoryPath;
@@ -48,6 +49,9 @@ private:
 	BButton *fRemove {};
 	BButton *fCombine {};
 	BButton *fReword {};
+	BButton *fEditContents {};
+	BButton *fSplit {};
+	BButton *fResolve {};
 	BButton *fReset {};
 	BButton *fApply {};
 
@@ -63,6 +67,8 @@ private:
 	void Remove();
 	void Combine();
 	void Reword();
+	void OpenStepEditor(StepEditMode mode);
+	void StepEdited(BMessage *message);
 	void Apply();
 	void ShowChanges();
 

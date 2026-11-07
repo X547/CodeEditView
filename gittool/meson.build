@@ -29,6 +29,7 @@ executable(
 		'HistoryWindow.cpp',
 		'MainWindow.cpp',
 		'NetworkTask.cpp',
+		'StepEditor.cpp',
 	),
 	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface'),

@@ -245,9 +245,15 @@ static std::string StateText(const EditStep &step, const StepResult &result)
 	switch (result.state) {
 		case StepState::Kept:
 			break;
-		case StepState::Rewritten:
-			text = step.squash ? "combined" : step.message.has_value() ? "reworded" : "rewritten";
+		case StepState::Rewritten: {
+			bool resolved = false;
+			for (const auto &[path, file] : step.files) {
+				resolved = resolved || file.resolves.has_value();
+			}
+			text = step.squash ? "combined" : step.completesPrevious ? "split, rest" : resolved ? "resolved"
+				: !step.files.empty() ? "edited" : step.message.has_value() ? "reworded" : "rewritten";
 			break;
+		}
 		case StepState::Empty:
 			text = "empty, left out";
 			break;
@@ -294,10 +300,14 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 
 	fStatus = new BStringView("status", "");
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
-	fShowChanges = new BButton("Show changes" B_UTF8_ELLIPSIS, new BMessage(kMsgShowCommit));
+	fShowChanges = new BButton("Changes" B_UTF8_ELLIPSIS, new BMessage(kMsgShowCommit));
 	fRemove = new BButton("Remove", new BMessage(kMsgRemoveSteps));
-	fCombine = new BButton("Combine with older", new BMessage(kMsgCombineStep));
+	fCombine = new BButton("Combine", new BMessage(kMsgCombineStep));
 	fReword = new BButton("Reword" B_UTF8_ELLIPSIS, new BMessage(kMsgRewordStep));
+	fEditContents = new BButton("Edit" B_UTF8_ELLIPSIS, new BMessage(kMsgEditContents));
+	fSplit = new BButton("Split" B_UTF8_ELLIPSIS, new BMessage(kMsgSplitStep));
+	fResolve = new BButton("Resolve" B_UTF8_ELLIPSIS, new BMessage(kMsgResolveStep));
+	fCombine->SetToolTip("Combine the commit with the older one before it");
 	fReset = new BButton("Reset", new BMessage(kMsgResetEdits));
 	fApply = new BButton("Apply" B_UTF8_ELLIPSIS, new BMessage(kMsgApplyEdits));
 
@@ -316,6 +326,9 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 			.Add(fRemove)
 			.Add(fCombine)
 			.Add(fReword)
+			.Add(fEditContents)
+			.Add(fSplit)
+			.Add(fResolve)
 			.AddGlue()
 			.Add(fReset)
 			.Add(fApply)
@@ -447,10 +460,16 @@ void HistoryWindow::UpdateControls()
 	fRemove->SetEnabled(editing && !steps.empty());
 	fCombine->SetEnabled(editing && steps.size() == 1 && steps[0] > 0);
 	fReword->SetEnabled(editing && steps.size() == 1);
+	const StepResult *result = editing && steps.size() == 1 ? &fEdit->Results()[steps[0]] : nullptr;
+	const bool replayed = result != nullptr && result->state != StepState::Conflict
+		&& result->state != StepState::Pending;
+	fEditContents->SetEnabled(replayed);
+	fSplit->SetEnabled(replayed && result->state != StepState::Empty);
+	fResolve->SetEnabled(result != nullptr && result->state == StepState::Conflict && !result->conflictFiles.empty());
 	fReset->SetEnabled(editing && fEdit->HasChanges());
 	fApply->SetEnabled(editing && fEdit->HasChanges() && fEdit->Problem().empty());
 	if (editing && steps.size() == 1) {
-		fCombine->SetLabel(fEdit->Steps()[steps[0]].squash ? "Separate from older" : "Combine with older");
+		fCombine->SetLabel(fEdit->Steps()[steps[0]].squash ? "Separate" : "Combine");
 	}
 
 	std::string status;
@@ -596,6 +615,67 @@ void HistoryWindow::Reword()
 }
 
 
+void HistoryWindow::OpenStepEditor(StepEditMode mode)
+{
+	const std::vector<size_t> steps = SelectedSteps();
+	if (fEdit == nullptr || steps.size() != 1) {
+		return;
+	}
+	const StepResult &result = fEdit->Results()[steps[0]];
+	StepEditorInput input;
+	input.mode = mode;
+	input.step = steps[0];
+	input.result = result.commit;
+	input.parent = result.parent;
+	input.conflicts = result.conflictFiles;
+	input.message = fEdit->Message(steps[0]);
+	try {
+		(new StepEditor(this, fRepositoryPath, input))->Show();
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
+}
+
+
+void HistoryWindow::StepEdited(BMessage *message)
+{
+	const int32 step = message->GetInt32("step", -1);
+	if (fEdit == nullptr || step < 0 || static_cast<size_t>(step) >= fEdit->Steps().size()) {
+		return;
+	}
+	const StepEditMode mode = static_cast<StepEditMode>(message->GetInt32("mode", 0));
+	const StepResult &result = fEdit->Results()[step];
+	std::map<std::string, FileOverride> files;
+	const char *path = nullptr;
+	for (int32 i = 0; message->FindString("path", i, &path) == B_OK; i++) {
+		FileOverride file;
+		const void *data = nullptr;
+		ssize_t size = 0;
+		if (!message->GetBool("deleted", i, false) && message->FindData("blob", B_RAW_TYPE, i, &data, &size) == B_OK
+			&& size == sizeof(git_oid)) {
+			file.blob = *static_cast<const git_oid*>(data);
+		}
+		int32 fileMode = GIT_FILEMODE_BLOB;
+		message->FindInt32("fileMode", i, &fileMode);
+		file.mode = static_cast<uint32_t>(fileMode);
+		if (mode == StepEditMode::Resolve) {
+			for (const ConflictFile &conflict : result.conflictFiles) {
+				if (conflict.path == path) {
+					file.resolves = conflict;
+				}
+			}
+		}
+		files[path] = file;
+	}
+	if (mode == StepEditMode::Split) {
+		fEdit->Split(step, files, message->GetString("message", ""));
+	} else {
+		fEdit->SetFiles(step, files);
+	}
+	FillList();
+}
+
+
 void HistoryWindow::Apply()
 {
 	Reload();
@@ -678,6 +758,18 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgApplyEdits:
 			Apply();
+			break;
+		case kMsgEditContents:
+			OpenStepEditor(StepEditMode::Edit);
+			break;
+		case kMsgSplitStep:
+			OpenStepEditor(StepEditMode::Split);
+			break;
+		case kMsgResolveStep:
+			OpenStepEditor(StepEditMode::Resolve);
+			break;
+		case kMsgStepEdited:
+			StepEdited(message);
 			break;
 		case kMsgDragCommits:
 			Dropped(message);

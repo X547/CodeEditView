@@ -61,6 +61,19 @@ constexpr uint32 kMsgApplyEdits = 'GTap';
 // (messenger of the window), "step" (int32, repeated, in edit mode); when
 // dropped, "index" (int32): the row the commits go above.
 constexpr uint32 kMsgDragCommits = 'GTdg';
+constexpr uint32 kMsgEditContents = 'GTec';
+constexpr uint32 kMsgSplitStep = 'GTsl';
+constexpr uint32 kMsgResolveStep = 'GTrv';
+
+// Step editor.
+// To the history window; see StepEditor.
+constexpr uint32 kMsgStepEdited = 'GTsd';
+constexpr uint32 kMsgStepFileSelected = 'GTsf';
+// "version" (int32).
+constexpr uint32 kMsgLeftVersion = 'GTlv';
+constexpr uint32 kMsgDeleteToggled = 'GTdt';
+constexpr uint32 kMsgTakeLeft = 'GTtl';
+constexpr uint32 kMsgAddFile = 'GTaf';
 
 
 } // GitTool

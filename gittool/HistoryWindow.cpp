@@ -508,8 +508,6 @@ void HistoryWindow::FillList()
 			info = ReadCommit(fRepository.get(), commit);
 		} catch (const GitError &e) {
 		}
-		row->SetField(new BStringField(state.c_str()), kStateColumn);
-		row->SetField(new BStringField(ShortId(commit).c_str()), kCommitColumn);
 		std::string labels;
 		const auto found = fLabels.find(OidString(statsCommit));
 		if (found != fLabels.end()) {
@@ -521,13 +519,16 @@ void HistoryWindow::FillList()
 				labels += " +" + std::to_string(names.size() - kShownLabels);
 			}
 		}
-		row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
+		// BRow takes fields in the order of their indexes only.
+		row->SetField(new BStringField(state.c_str()), kStateColumn);
+		row->SetField(new BStringField(ShortId(commit).c_str()), kCommitColumn);
 		row->SetField(new BStringField(summary.empty() ? info.summary.c_str() : summary.c_str()), kSummaryColumn);
 		row->SetField(new BStringField(info.author.c_str()), kAuthorColumn);
 		row->SetField(new BStringField(FormatTime(info.time).c_str()), kDateColumn);
 		for (int32 column : {kAddedColumn, kDeletedColumn, kFilesColumn}) {
 			row->SetField(new StatsField(statsCommit), column);
 		}
+		row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
 		fList->AddRow(row);
 		return row;
 	};

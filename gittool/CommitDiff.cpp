@@ -117,6 +117,30 @@ std::vector<FileChange> ChangesBetween(git_repository *repository, const std::op
 }
 
 
+CommitStats ReadCommitStats(git_repository *repository, const git_oid &commitId)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &commitId), "Cannot read the commit");
+	CommitPtr commitPtr(commit);
+	TreePtr tree = TreeOfCommit(repository, commitId);
+	TreePtr parentTree;
+	if (git_commit_parentcount(commit) > 0) {
+		parentTree = TreeOfCommit(repository, *git_commit_parent_id(commit, 0));
+	}
+	git_diff *diff = nullptr;
+	Check(git_diff_tree_to_tree(&diff, repository, parentTree.get(), tree.get(), nullptr), "Cannot compare the commits");
+	DiffPtr diffPtr(diff);
+	git_diff_stats *stats = nullptr;
+	Check(git_diff_get_stats(&stats, diff), "Cannot count the changes");
+	CommitStats result;
+	result.files = git_diff_stats_files_changed(stats);
+	result.added = git_diff_stats_insertions(stats);
+	result.deleted = git_diff_stats_deletions(stats);
+	git_diff_stats_free(stats);
+	return result;
+}
+
+
 std::optional<FileVersion> ReadPath(git_repository *repository, const std::optional<git_oid> &commit,
 	const std::string &path)
 {

@@ -57,6 +57,17 @@ std::vector<FileChange> ChangesBetween(git_repository *repository, const std::op
 	const git_oid &newCommit);
 
 
+struct CommitStats {
+	size_t files {};
+	size_t added {};
+	size_t deleted {};
+};
+
+// Changed files and added and deleted lines of a commit against its first
+// parent (an empty tree for a root commit).
+CommitStats ReadCommitStats(git_repository *repository, const git_oid &commit);
+
+
 struct FileVersion {
 	git_oid id {};
 	uint32_t mode {};

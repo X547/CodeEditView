@@ -61,6 +61,8 @@ constexpr uint32 kMsgApplyEdits = 'GTap';
 // (messenger of the window), "step" (int32, repeated, in edit mode); when
 // dropped, "index" (int32): the row the commits go above.
 constexpr uint32 kMsgDragCommits = 'GTdg';
+// StatsLoader: "commit" (raw git_oid).
+constexpr uint32 kMsgStatsReady = 'GTsr';
 constexpr uint32 kMsgEditContents = 'GTec';
 constexpr uint32 kMsgSplitStep = 'GTsl';
 constexpr uint32 kMsgResolveStep = 'GTrv';

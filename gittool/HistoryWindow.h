@@ -8,6 +8,7 @@
 
 #include "HistoryEdit.h"
 #include "Snapshot.h"
+#include "StatsLoader.h"
 #include "StepEditor.h"
 
 
@@ -39,6 +40,7 @@ private:
 	// View mode rows.
 	std::vector<CommitInfo> fCommits;
 	std::unique_ptr<HistoryEdit> fEdit;
+	std::unique_ptr<StatsLoader> fStats;
 
 	BMenuField *fRefField {};
 	BTextControl *fSpecField {};
@@ -71,6 +73,7 @@ private:
 	void StepEdited(BMessage *message);
 	void Apply();
 	void ShowChanges();
+	void StatsReady(BMessage *message);
 
 public:
 	// edit starts in edit mode if spec is a local branch.

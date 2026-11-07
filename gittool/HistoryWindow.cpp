@@ -38,6 +38,9 @@ enum {
 	kSummaryColumn,
 	kAuthorColumn,
 	kDateColumn,
+	kAddedColumn,
+	kDeletedColumn,
+	kFilesColumn,
 };
 
 
@@ -46,11 +49,86 @@ public:
 	git_oid commit;
 	// Index in the edited steps; -1 for a row that is not a step.
 	int32 step;
+	// The commit whose statistics the row shows: the rewritten one for a
+	// replayed step.
+	git_oid statsCommit;
 
-	CommitRow(const git_oid &rowCommit, int32 rowStep):
+	CommitRow(const git_oid &rowCommit, int32 rowStep, const git_oid &rowStatsCommit):
 		commit(rowCommit),
-		step(rowStep)
+		step(rowStep),
+		statsCommit(rowStatsCommit)
 	{
+	}
+};
+
+
+class StatsField: public BField {
+public:
+	git_oid commit;
+
+	explicit StatsField(const git_oid &fieldCommit):
+		commit(fieldCommit)
+	{
+	}
+};
+
+
+// Added or deleted lines or changed files of the row's commit. They are
+// computed in the background when first drawn; "…" until then.
+class StatsColumn: public BTitledColumn {
+public:
+	enum class Kind {
+		Added,
+		Deleted,
+		Files,
+	};
+
+private:
+	Kind fKind;
+	StatsLoader &fLoader;
+
+public:
+	StatsColumn(const char *title, float width, Kind kind, StatsLoader &loader):
+		BTitledColumn(title, width, 30, 200, B_ALIGN_RIGHT),
+		fKind(kind),
+		fLoader(loader)
+	{
+	}
+
+	void DrawField(BField *field, BRect rect, BView *parent) final
+	{
+		const git_oid &commit = static_cast<StatsField*>(field)->commit;
+		const std::optional<CommitStats> stats = StatsLoader::Cached(commit);
+		const rgb_color textColor = parent->HighColor();
+		std::string text;
+		rgb_color color = textColor;
+		if (!stats.has_value()) {
+			fLoader.Request(commit);
+			text = B_UTF8_ELLIPSIS;
+			color = mix_color(textColor, parent->LowColor(), 128);
+		} else {
+			switch (fKind) {
+				case Kind::Added:
+					text = stats->added > 0 ? "+" + std::to_string(stats->added) : std::string();
+					color = ui_color(B_SUCCESS_COLOR);
+					break;
+				case Kind::Deleted:
+					text = stats->deleted > 0 ? "−" + std::to_string(stats->deleted) : std::string();
+					color = ui_color(B_FAILURE_COLOR);
+					break;
+				case Kind::Files:
+					text = std::to_string(stats->files);
+					break;
+			}
+		}
+		parent->SetHighColor(color);
+		DrawString(text.c_str(), parent, rect);
+		parent->SetHighColor(textColor);
+	}
+
+	bool AcceptsField(const BField *field) const final
+	{
+		return dynamic_cast<const StatsField*>(field) != nullptr;
 	}
 };
 
@@ -279,7 +357,8 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
 	),
 	fRepositoryPath(repositoryPath),
-	fRepository(OpenRepository(repositoryPath))
+	fRepository(OpenRepository(repositoryPath)),
+	fStats(std::make_unique<StatsLoader>(repositoryPath, BMessenger(this)))
 {
 	Reload();
 	fRefField = new BMenuField("refs", "History of:", RefMenu(fSnapshot, spec));
@@ -292,6 +371,9 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fList->AddColumn(new BStringColumn("Edit", 110, 40, 300, B_TRUNCATE_END), kStateColumn);
 	fList->AddColumn(new BStringColumn("Commit", 70, 40, 200, B_TRUNCATE_END), kCommitColumn);
 	fList->AddColumn(new BStringColumn("Summary", 380, 60, 2000, B_TRUNCATE_END), kSummaryColumn);
+	fList->AddColumn(new StatsColumn("Added", 60, StatsColumn::Kind::Added, *fStats), kAddedColumn);
+	fList->AddColumn(new StatsColumn("Deleted", 60, StatsColumn::Kind::Deleted, *fStats), kDeletedColumn);
+	fList->AddColumn(new StatsColumn("Files", 45, StatsColumn::Kind::Files, *fStats), kFilesColumn);
 	fList->AddColumn(new BStringColumn("Author", 120, 40, 400, B_TRUNCATE_END), kAuthorColumn);
 	fList->AddColumn(new BStringColumn("Date", 120, 40, 200, B_TRUNCATE_END), kDateColumn);
 	fList->SetSortingEnabled(false);
@@ -382,8 +464,10 @@ void HistoryWindow::FillList()
 	fList->SetColumnVisible(kStateColumn, fEdit != nullptr);
 	fList->SetDropLimit(fEdit != nullptr ? static_cast<int32>(fEdit->Steps().size()) : -1);
 
-	auto addRow = [this](const git_oid &commit, int32 step, const std::string &state, const std::string &summary) {
-		CommitRow *row = new CommitRow(commit, step);
+	fStats->Clear();
+	auto addRow = [this](const git_oid &commit, int32 step, const std::string &state, const std::string &summary,
+		const git_oid &statsCommit) {
+		CommitRow *row = new CommitRow(commit, step, statsCommit);
 		CommitInfo info;
 		try {
 			info = ReadCommit(fRepository.get(), commit);
@@ -394,6 +478,9 @@ void HistoryWindow::FillList()
 		row->SetField(new BStringField(summary.empty() ? info.summary.c_str() : summary.c_str()), kSummaryColumn);
 		row->SetField(new BStringField(info.author.c_str()), kAuthorColumn);
 		row->SetField(new BStringField(FormatTime(info.time).c_str()), kDateColumn);
+		for (int32 column : {kAddedColumn, kDeletedColumn, kFilesColumn}) {
+			row->SetField(new StatsField(statsCommit), column);
+		}
 		fList->AddRow(row);
 		return row;
 	};
@@ -403,15 +490,16 @@ void HistoryWindow::FillList()
 		const std::vector<EditStep> &steps = fEdit->Steps();
 		const std::vector<StepResult> &results = fEdit->Results();
 		for (size_t i = steps.size(); i-- > 0;) {
+			const git_oid statsCommit = results[i].state == StepState::Rewritten ? results[i].commit : steps[i].commit;
 			rows.push_back(addRow(steps[i].commit, static_cast<int32>(i), StateText(steps[i], results[i]),
-				FirstLine(fEdit->Message(i))));
+				FirstLine(fEdit->Message(i)), statsCommit));
 		}
 		if (fEdit->Base().has_value()) {
-			rows.push_back(addRow(*fEdit->Base(), -1, "not editable", std::string()));
+			rows.push_back(addRow(*fEdit->Base(), -1, "not editable", std::string(), *fEdit->Base()));
 		}
 	} else {
 		for (const CommitInfo &commit : fCommits) {
-			rows.push_back(addRow(commit.id, -1, std::string(), std::string()));
+			rows.push_back(addRow(commit.id, -1, std::string(), std::string(), commit.id));
 		}
 	}
 	for (CommitRow *row : rows) {
@@ -701,6 +789,24 @@ void HistoryWindow::Apply()
 }
 
 
+// Redraws the rows that show the commit's statistics.
+void HistoryWindow::StatsReady(BMessage *message)
+{
+	const void *data = nullptr;
+	ssize_t size = 0;
+	if (message->FindData("commit", B_RAW_TYPE, &data, &size) != B_OK || size != sizeof(git_oid)) {
+		return;
+	}
+	const git_oid *commit = static_cast<const git_oid*>(data);
+	for (int32 i = 0; i < fList->CountRows(); i++) {
+		CommitRow *row = dynamic_cast<CommitRow*>(fList->RowAt(i));
+		if (row != nullptr && git_oid_equal(&row->statsCommit, commit)) {
+			fList->InvalidateRow(row);
+		}
+	}
+}
+
+
 // The commit as it is shown: the rewritten one for a replayed step.
 void HistoryWindow::ShowChanges()
 {
@@ -770,6 +876,9 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgStepEdited:
 			StepEdited(message);
+			break;
+		case kMsgStatsReady:
+			StatsReady(message);
 			break;
 		case kMsgDragCommits:
 			Dropped(message);

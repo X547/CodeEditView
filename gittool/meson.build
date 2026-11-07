@@ -29,6 +29,7 @@ executable(
 		'HistoryWindow.cpp',
 		'MainWindow.cpp',
 		'NetworkTask.cpp',
+		'StatsLoader.cpp',
 		'StepEditor.cpp',
 	),
 	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.

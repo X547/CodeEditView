@@ -695,6 +695,15 @@ TEST_CASE("Commit changes", "[gittool]")
 	CHECK(ReadFileVersion(repository, modified[0].oldId, modified[0].oldMode) == "a1\n");
 	CHECK(ReadFileVersion(repository, modified[0].newId, modified[0].newMode) == "a2\n");
 
+	const CommitStats rootStats = ReadCommitStats(repository, fixture.first);
+	CHECK(rootStats.files == 2);
+	CHECK(rootStats.added == 2);
+	CHECK(rootStats.deleted == 0);
+	const CommitStats modifiedStats = ReadCommitStats(repository, fixture.second);
+	CHECK(modifiedStats.files == 1);
+	CHECK(modifiedStats.added == 1);
+	CHECK(modifiedStats.deleted == 1);
+
 	std::filesystem::rename(fixture.directory + "/b.txt", fixture.directory + "/renamed.txt");
 	WriteFile(fixture.directory + "/new.txt", "new\n");
 	const git_oid third = CommitAll(repository, "rename\n\nWith a body.");

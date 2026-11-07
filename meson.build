@@ -47,7 +47,7 @@ endif
 
 # The diff apps and their shared library need libgit2; they use the test
 # setup above.
-if get_option('gitdiff') or get_option('dircompare')
+if get_option('gitdiff') or get_option('dircompare') or get_option('gittool')
 	subdir('diffkit')
 endif
 
@@ -57,6 +57,10 @@ endif
 
 if get_option('dircompare')
 	subdir('dircompare')
+endif
+
+if get_option('gittool')
+	subdir('gittool')
 endif
 
 if get_option('coverage')

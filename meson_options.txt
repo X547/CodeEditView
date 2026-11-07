@@ -4,3 +4,4 @@ option('debugger', type: 'boolean', value: true, description: 'Build the CodeEdi
 option('gitdiff', type: 'boolean', value: true, description: 'Build the CodeEditGitDiff application (needs libgit2)')
 option('coverage', type: 'boolean', value: true, description: 'Build the CodeEditCoverage application (needs llvm-cov at run time)')
 option('dircompare', type: 'boolean', value: true, description: 'Build the CodeEditDirCompare application (needs libgit2)')
+option('gittool', type: 'boolean', value: true, description: 'Build the CodeEditGitTool application (needs libgit2)')

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <ControlLook.h>
+#include <LayoutUtils.h>
 #include <ScrollBar.h>
 
 #include <CodeEditView/CodeEditView.h>
@@ -90,17 +91,17 @@ void CodeEditScrollView::Draw(BRect updateRect)
 
 BSize CodeEditScrollView::MinSize()
 {
-	return BSize(120, 80);
+	return BLayoutUtils::ComposeSize(ExplicitMinSize(), BSize(120, 80));
 }
 
 
 BSize CodeEditScrollView::PreferredSize()
 {
 	const BSize editSize = fEditView->PreferredSize();
-	return BSize(
+	return BLayoutUtils::ComposeSize(ExplicitPreferredSize(), BSize(
 		fGutter->PreferredWidth() + editSize.width + be_control_look->GetScrollBarWidth(B_VERTICAL) + 2,
 		editSize.height + be_control_look->GetScrollBarWidth(B_HORIZONTAL) + 2
-	);
+	));
 }
 
 

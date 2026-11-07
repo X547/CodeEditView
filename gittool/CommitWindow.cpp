@@ -1,7 +1,10 @@
 #include "CommitWindow.h"
 
+#include <math.h>
+
 #include <exception>
 
+#include <Font.h>
 #include <LayoutBuilder.h>
 #include <ListView.h>
 #include <MenuBar.h>
@@ -9,7 +12,6 @@
 #include <ScrollView.h>
 #include <SplitView.h>
 
-#include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
 #include "CommitMessage.h"
@@ -39,6 +41,20 @@ static std::optional<std::string> DisplayData(const std::optional<std::string> &
 		return data;
 	}
 	return "(binary file, " + std::to_string(data->size()) + " bytes)\n";
+}
+
+
+// A commit message editor in a scroll view, without line numbers. Split
+// views start items at their minimum size, so that is a usable height.
+static BScrollView *MessageScrollView(const char *name, CodeEditView *view, int rows)
+{
+	font_height height;
+	be_fixed_font->GetHeight(&height);
+	const float lineHeight = ceilf(height.ascent + height.descent + height.leading);
+	const float cellWidth = be_fixed_font->StringWidth("M");
+	view->SetExplicitMinSize(BSize(cellWidth * 10, lineHeight * 6));
+	view->SetExplicitPreferredSize(BSize(cellWidth * (GitDiff::kBodyLimit + 2), lineHeight * rows));
+	return new BScrollView(name, view, 0, false, true);
 }
 
 
@@ -107,8 +123,7 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	fFiles->SetSelectionMessage(new BMessage(kMsgCommitFileSelected));
 	fDiffView = new DiffView();
 
-	CodeEditScrollView *headerScroll = new CodeEditScrollView("headerScroll", fHeader);
-	headerScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 120));
+	BScrollView *headerScroll = MessageScrollView("headerScroll", fHeader, 10);
 	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Split<>(filesSplit)
 		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 1)

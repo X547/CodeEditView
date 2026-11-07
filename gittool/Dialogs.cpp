@@ -127,6 +127,15 @@ static BGroupLayout *ButtonRow(BButton *cancel, BButton *ok)
 }
 
 
+// A label that does not limit the width of the column or group it is in.
+static BStringView *Label(const char *name, const char *text)
+{
+	BStringView *label = new BStringView(name, text);
+	label->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+	return label;
+}
+
+
 static BScrollView *ReadOnlyText(BTextView *&textView, const std::string &text, float width, float height)
 {
 	textView = new BTextView("text");
@@ -307,7 +316,7 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 				break;
 			}
 			case FieldKind::Label:
-				grid->AddView(new BStringView("label", field.label.c_str()), 0, row, 3, 1);
+				grid->AddView(Label("label", field.label.c_str()), 0, row, 3, 1);
 				break;
 		}
 		if (focus == nullptr && control != nullptr && field.kind != FieldKind::Check && field.kind != FieldKind::Choice) {
@@ -680,7 +689,7 @@ PlanDialog::PlanDialog(const Plan &plan, git_repository *repository, Resolution 
 
 	const bool canRun = plan.blocked.empty();
 	if (canRun && (plan.NeedsResolution() || plan.FilesLocked())) {
-		layout->AddView(new BStringView("resolutionLabel", "The files of a worktree cannot simply be updated:"));
+		layout->AddView(Label("resolutionLabel", "The files of a worktree cannot simply be updated:"));
 		BRadioButton *cancel = ResolutionButton("Cancel", Resolution::Cancel);
 		cancel->SetValue(B_CONTROL_ON);
 		layout->AddView(cancel);

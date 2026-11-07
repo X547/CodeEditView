@@ -1,5 +1,6 @@
 #include "DiffWindow.h"
 
+#include <math.h>
 #include <stdio.h>
 
 #include <exception>
@@ -10,6 +11,7 @@
 #include <Button.h>
 #include <CheckBox.h>
 #include <Entry.h>
+#include <Font.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
@@ -21,7 +23,6 @@
 #include <StringView.h>
 #include <TextView.h>
 
-#include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
 #include "CommitMessage.h"
@@ -35,6 +36,20 @@ namespace GitDiff {
 // Delay before refreshing after the window was activated or the index
 // changed; changes come in bursts.
 static constexpr bigtime_t kRefreshDelay = 300000;
+
+
+// A commit message editor in a scroll view, without line numbers. Split
+// views start items at their minimum size, so that is a usable height.
+static BScrollView *MessageScrollView(const char *name, CodeEditView *view, int rows)
+{
+	font_height height;
+	be_fixed_font->GetHeight(&height);
+	const float lineHeight = ceilf(height.ascent + height.descent + height.leading);
+	const float cellWidth = be_fixed_font->StringWidth("M");
+	view->SetExplicitMinSize(BSize(cellWidth * 10, lineHeight * 6));
+	view->SetExplicitPreferredSize(BSize(cellWidth * (GitDiff::kBodyLimit + 2), lineHeight * rows));
+	return new BScrollView(name, view, 0, false, true);
+}
 
 
 DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string &relativePath):
@@ -109,15 +124,16 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fMessage = new CodeEditView("message", fMessageModel.Get());
 	fMessage->SetSettings(CommitMessageSettings());
 	fMessage->SetTarget(BMessenger(this));
-	CodeEditScrollView *messageScroll = new CodeEditScrollView("messageScroll", fMessage);
-	messageScroll->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
-	messageScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 120));
+	BScrollView *messageScroll = MessageScrollView("messageScroll", fMessage, 8);
+	// The label would limit the width of the column to its own.
+	BStringView *messageLabel = new BStringView("messageLabel", "Commit message:");
+	messageLabel->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fAmend = new BCheckBox("amend", "Amend last commit", new BMessage(kMsgAmendToggled));
 	BButton *commitButton = new BButton("commit", "Commit", new BMessage(kMsgCommit));
 	BGroupView *commitBox = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Group<>(commitBox)
 		.SetInsets(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING)
-		.Add(new BStringView("messageLabel", "Commit message:"))
+		.Add(messageLabel)
 		.Add(messageScroll)
 		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 			.Add(fAmend)

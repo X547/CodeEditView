@@ -8,10 +8,11 @@
 #include <MenuItem.h>
 #include <ScrollView.h>
 #include <SplitView.h>
-#include <TextView.h>
 
+#include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
+#include "CommitMessage.h"
 #include "DiffView.h"
 #include "Dialogs.h"
 #include "Messages.h"
@@ -97,14 +98,16 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 		parentMenu->AddItem(item);
 	}
 
-	fHeader = new BTextView("header");
-	fHeader->MakeEditable(false);
-	fHeader->SetWordWrap(true);
+	fHeaderModel.SetTo(new CodeEdit::TextModel(), true);
+	fHeader = new CodeEditView("header", fHeaderModel.Get());
+	CodeEdit::EditorSettings settings = GitDiff::CommitMessageSettings();
+	settings.readOnly = true;
+	fHeader->SetSettings(settings);
 	fFiles = new BListView("files", B_SINGLE_SELECTION_LIST);
 	fFiles->SetSelectionMessage(new BMessage(kMsgCommitFileSelected));
 	fDiffView = new DiffView();
 
-	BScrollView *headerScroll = new BScrollView("headerScroll", fHeader, 0, false, true);
+	CodeEditScrollView *headerScroll = new CodeEditScrollView("headerScroll", fHeader);
 	headerScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 120));
 	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Split<>(filesSplit)
@@ -138,8 +141,21 @@ void CommitWindow::ShowHeader()
 		|| fDetails.committer.time != fDetails.author.time) {
 		text += "Committer " + SignatureText(fDetails.committer) + "\n";
 	}
-	text += "\n" + fDetails.message;
-	fHeader->SetText(text.c_str());
+	// The message follows the commit details; its lines are checked against
+	// the conventions of commit messages.
+	text += "\n";
+	const size_t messageStart = text.size();
+	text += fDetails.message;
+	{
+		CodeEdit::ModelLock lock(*fHeaderModel);
+		fHeaderModel->SetText(text);
+	}
+	std::vector<CodeEdit::Decoration> decorations = GitDiff::CommitMessageDecorations(fDetails.message);
+	for (CodeEdit::Decoration &decoration : decorations) {
+		decoration.start += messageStart;
+		decoration.end += messageStart;
+	}
+	fHeader->SetDecorations(std::move(decorations));
 }
 
 
@@ -240,7 +256,7 @@ void CommitWindow::MessageReceived(BMessage *message)
 		case B_COPY:
 		case B_SELECT_ALL: {
 			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr || dynamic_cast<BTextView*>(focus) != nullptr) {
+			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
 				PostMessage(message, focus);
 			}
 			break;

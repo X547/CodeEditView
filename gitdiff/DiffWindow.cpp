@@ -21,8 +21,10 @@
 #include <StringView.h>
 #include <TextView.h>
 
+#include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
+#include "CommitMessage.h"
 #include "FileListView.h"
 #include "Messages.h"
 
@@ -103,11 +105,13 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fHideUnchangedItem->SetMarked(true);
 
 	fFileList = new FileListView();
-	fMessage = new BTextView("message");
-	fMessage->SetWordWrap(true);
-	fMessage->SetDoesUndo(true);
-	BScrollView *messageScroll = new BScrollView("messageScroll", fMessage, 0, false, true);
+	fMessageModel.SetTo(new CodeEdit::TextModel(), true);
+	fMessage = new CodeEditView("message", fMessageModel.Get());
+	fMessage->SetSettings(CommitMessageSettings());
+	fMessage->SetTarget(BMessenger(this));
+	CodeEditScrollView *messageScroll = new CodeEditScrollView("messageScroll", fMessage);
 	messageScroll->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
+	messageScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 120));
 	fAmend = new BCheckBox("amend", "Amend last commit", new BMessage(kMsgAmendToggled));
 	BButton *commitButton = new BButton("commit", "Commit", new BMessage(kMsgCommit));
 	BGroupView *commitBox = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
@@ -373,16 +377,39 @@ void DiffWindow::StageFile()
 }
 
 
+std::string DiffWindow::MessageText() const
+{
+	CodeEdit::ModelLock lock(*fMessageModel);
+	return fMessageModel->Text().ToString();
+}
+
+
+void DiffWindow::SetMessageText(const std::string &text)
+{
+	{
+		CodeEdit::ModelLock lock(*fMessageModel);
+		fMessageModel->SetText(text);
+	}
+	UpdateMessageDecorations();
+}
+
+
+void DiffWindow::UpdateMessageDecorations()
+{
+	fMessage->SetDecorations(CommitMessageDecorations(MessageText()));
+}
+
+
 // Amending starts from the message of the commit being replaced.
 void DiffWindow::AmendToggled()
 {
 	const std::string headMessage = fRepository->HeadMessage();
 	if (fAmend->Value() == B_CONTROL_ON) {
-		if (fMessage->TextLength() == 0) {
-			fMessage->SetText(headMessage.c_str());
+		if (MessageText().empty()) {
+			SetMessageText(headMessage);
 		}
-	} else if (headMessage == fMessage->Text()) {
-		fMessage->SetText("");
+	} else if (headMessage == MessageText()) {
+		SetMessageText(std::string());
 	}
 }
 
@@ -408,13 +435,13 @@ void DiffWindow::Commit()
 				}
 			}
 		}
-		fRepository->Commit(fMessage->Text(), fAmend->Value() == B_CONTROL_ON);
+		fRepository->Commit(MessageText(), fAmend->Value() == B_CONTROL_ON);
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 		Refresh();
 		return;
 	}
-	fMessage->SetText("");
+	SetMessageText(std::string());
 	fAmend->SetValue(B_CONTROL_OFF);
 	Refresh();
 }
@@ -520,6 +547,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgAmendToggled:
 			AmendToggled();
 			break;
+		case CodeEdit::kMsgContentsChanged:
+			UpdateMessageDecorations();
+			break;
 		case kMsgNextChunk:
 		case kMsgPreviousChunk:
 			fDiffView->GoToChunk(message->what == kMsgNextChunk);
@@ -546,7 +576,7 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case B_PASTE:
 		case B_SELECT_ALL: {
 			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr || dynamic_cast<BTextView*>(focus) != nullptr) {
+			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
 				PostMessage(message, focus);
 			}
 			break;

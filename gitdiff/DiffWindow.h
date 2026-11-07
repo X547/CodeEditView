@@ -17,7 +17,7 @@ class BButton;
 class BCheckBox;
 class BMenuItem;
 class BMessageRunner;
-class BTextView;
+class CodeEditView;
 
 
 namespace GitDiff {
@@ -43,7 +43,8 @@ private:
 	BMenuItem *fWordWrapItem {};
 	BMenuItem *fAlgorithmItems[3] {};
 	node_ref fGitDirNode {};
-	BTextView *fMessage {};
+	BReference<CodeEdit::TextModel> fMessageModel;
+	CodeEditView *fMessage {};
 	BCheckBox *fAmend {};
 
 	FileDocument *DocumentFor(const std::string &path);
@@ -57,6 +58,9 @@ private:
 	void Save(bool all);
 	void ReloadDocument();
 	void StageFile();
+	std::string MessageText() const;
+	void SetMessageText(const std::string &text);
+	void UpdateMessageDecorations();
 	void AmendToggled();
 	void Commit();
 	bool ConfirmClose();

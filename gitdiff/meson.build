@@ -2,6 +2,7 @@
 gitDiffCore = static_library(
 	'gitdiffcore',
 	files(
+		'CommitMessage.cpp',
 		'FileDocument.cpp',
 		'Repository.cpp',
 	),
@@ -43,6 +44,7 @@ if get_option('tests')
 	gitDiffTests = executable(
 		'GitDiffTests',
 		files(
+			'tests/CommitMessageTest.cpp',
 			'tests/RepositoryTest.cpp',
 		),
 		dependencies: [gitDiffCoreDep, catch2Dep]

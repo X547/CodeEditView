@@ -14,7 +14,7 @@
 
 class BListView;
 class BMenuItem;
-class BTextView;
+class CodeEditView;
 
 
 namespace DiffKit {
@@ -39,7 +39,8 @@ private:
 	// The loaded versions of the files shown, by index in fChanges.
 	std::map<size_t, Sides> fSides;
 
-	BTextView *fHeader {};
+	BReference<CodeEdit::TextModel> fHeaderModel;
+	CodeEditView *fHeader {};
 	BListView *fFiles {};
 	DiffKit::DiffView *fDiffView {};
 	BMenuItem *fSyncScrollingItem {};

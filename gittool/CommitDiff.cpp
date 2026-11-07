@@ -54,23 +54,39 @@ static char StatusLetter(git_delta_t status)
 }
 
 
-std::vector<FileChange> CommitChanges(git_repository *repository, const git_oid &id, size_t parent)
+static TreePtr TreeOfCommit(git_repository *repository, const git_oid &id)
 {
 	git_commit *commit = nullptr;
 	Check(git_commit_lookup(&commit, repository, &id), "Cannot read the commit");
 	CommitPtr commitPtr(commit);
 	git_tree *tree = nullptr;
 	Check(git_commit_tree(&tree, commit), "Cannot read the commit tree");
-	TreePtr treePtr(tree);
-	TreePtr parentTree;
+	return TreePtr(tree);
+}
+
+
+std::vector<FileChange> CommitChanges(git_repository *repository, const git_oid &id, size_t parent)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &id), "Cannot read the commit");
+	CommitPtr commitPtr(commit);
+	std::optional<git_oid> parentId;
 	if (parent < git_commit_parentcount(commit)) {
-		git_commit *parentCommit = nullptr;
-		Check(git_commit_parent(&parentCommit, commit, static_cast<unsigned>(parent)), "Cannot read the parent");
-		CommitPtr parentPtr(parentCommit);
-		git_tree *oldTree = nullptr;
-		Check(git_commit_tree(&oldTree, parentCommit), "Cannot read the parent tree");
-		parentTree.reset(oldTree);
+		parentId = *git_commit_parent_id(commit, static_cast<unsigned>(parent));
 	}
+	return ChangesBetween(repository, parentId, id);
+}
+
+
+std::vector<FileChange> ChangesBetween(git_repository *repository, const std::optional<git_oid> &oldCommit,
+	const git_oid &newCommit)
+{
+	TreePtr parentTree;
+	if (oldCommit.has_value()) {
+		parentTree = TreeOfCommit(repository, *oldCommit);
+	}
+	TreePtr treePtr = TreeOfCommit(repository, newCommit);
+	git_tree *tree = treePtr.get();
 
 	git_diff *diff = nullptr;
 	Check(git_diff_tree_to_tree(&diff, repository, parentTree.get(), tree, nullptr), "Cannot compare the commits");
@@ -98,6 +114,28 @@ std::vector<FileChange> CommitChanges(git_repository *repository, const git_oid 
 		changes.push_back(std::move(change));
 	}
 	return changes;
+}
+
+
+std::optional<FileVersion> ReadPath(git_repository *repository, const std::optional<git_oid> &commit,
+	const std::string &path)
+{
+	if (!commit.has_value()) {
+		return std::nullopt;
+	}
+	TreePtr tree = TreeOfCommit(repository, *commit);
+	git_tree_entry *entry = nullptr;
+	const int result = git_tree_entry_bypath(&entry, tree.get(), path.c_str());
+	if (result == GIT_ENOTFOUND) {
+		git_error_clear();
+		return std::nullopt;
+	}
+	Check(result, "Cannot read the file");
+	TreeEntryPtr entryPtr(entry);
+	FileVersion version;
+	version.id = *git_tree_entry_id(entry);
+	version.mode = git_tree_entry_filemode(entry);
+	return version;
 }
 
 

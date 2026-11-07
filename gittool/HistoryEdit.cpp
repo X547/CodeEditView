@@ -129,6 +129,40 @@ void HistoryEdit::SetSquash(size_t index, bool squash)
 }
 
 
+bool ConflictFile::SameVersions(const ConflictFile &other) const
+{
+	return path == other.path && git_oid_equal(&ancestor, &other.ancestor) && git_oid_equal(&ours, &other.ours)
+		&& git_oid_equal(&theirs, &other.theirs);
+}
+
+
+void HistoryEdit::SetFiles(size_t index, const std::map<std::string, FileOverride> &files)
+{
+	EditStep &step = fSteps.at(index);
+	for (const auto &[path, file] : files) {
+		step.files[path] = file;
+	}
+	Replay();
+}
+
+
+void HistoryEdit::Split(size_t index, const std::map<std::string, FileOverride> &firstPart,
+	const std::string &firstMessage)
+{
+	EditStep first = fSteps.at(index);
+	EditStep second = first;
+	for (const auto &[path, file] : firstPart) {
+		first.files[path] = file;
+	}
+	first.message = firstMessage;
+	second.squash = false;
+	second.completesPrevious = true;
+	fSteps[index] = first;
+	fSteps.insert(fSteps.begin() + index + 1, second);
+	Replay();
+}
+
+
 void HistoryEdit::SetMessage(size_t index, const std::string &message)
 {
 	EditStep &step = fSteps.at(index);
@@ -156,7 +190,8 @@ std::optional<size_t> HistoryEdit::FirstChanged() const
 			// The commit it is combined with changes too.
 			return i - 1;
 		}
-		if (!git_oid_equal(&step.commit, &fOriginal[i]) || step.squash || step.message.has_value() || step.copied) {
+		if (!git_oid_equal(&step.commit, &fOriginal[i]) || step.squash || step.message.has_value() || step.copied
+			|| !step.files.empty() || step.completesPrevious) {
 			return i;
 		}
 	}
@@ -176,25 +211,78 @@ std::string HistoryEdit::Message(size_t index) const
 }
 
 
-static std::vector<std::string> ConflictPaths(git_index *index)
+static std::vector<ConflictFile> Conflicts(git_index *index)
 {
-	std::vector<std::string> paths;
+	std::vector<ConflictFile> conflicts;
 	git_index_conflict_iterator *iterator = nullptr;
 	if (git_index_conflict_iterator_new(&iterator, index) < 0) {
 		git_error_clear();
-		return paths;
+		return conflicts;
 	}
 	const git_index_entry *ancestor = nullptr;
 	const git_index_entry *ours = nullptr;
 	const git_index_entry *theirs = nullptr;
 	while (git_index_conflict_next(&ancestor, &ours, &theirs, iterator) == 0) {
+		ConflictFile conflict;
 		const git_index_entry *entry = theirs != nullptr ? theirs : ours != nullptr ? ours : ancestor;
-		if (entry != nullptr) {
-			paths.push_back(entry->path);
+		conflict.path = entry->path;
+		if (ancestor != nullptr) {
+			conflict.ancestor = ancestor->id;
+			conflict.ancestorMode = ancestor->mode;
 		}
+		if (ours != nullptr) {
+			conflict.ours = ours->id;
+			conflict.oursMode = ours->mode;
+		}
+		if (theirs != nullptr) {
+			conflict.theirs = theirs->id;
+			conflict.theirsMode = theirs->mode;
+		}
+		conflicts.push_back(std::move(conflict));
 	}
 	git_index_conflict_iterator_free(iterator);
-	return paths;
+	return conflicts;
+}
+
+
+static void ApplyOverride(git_index *index, const std::string &path, const FileOverride &file)
+{
+	if (!file.blob.has_value()) {
+		if (git_index_remove(index, path.c_str(), 0) < 0) {
+			git_error_clear();
+		}
+		return;
+	}
+	git_index_entry entry {};
+	entry.path = path.c_str();
+	entry.mode = file.mode;
+	entry.id = *file.blob;
+	Check(git_index_add(index, &entry), "Cannot apply the edited file");
+}
+
+
+// Resolves the conflicts the step has overrides for, then applies its other
+// overrides; returns the conflicts that remain.
+static std::vector<ConflictFile> ApplyOverrides(git_index *index, const EditStep &step)
+{
+	std::vector<ConflictFile> remaining;
+	for (const ConflictFile &conflict : Conflicts(index)) {
+		const auto found = step.files.find(conflict.path);
+		const bool resolved = found != step.files.end()
+			&& (!found->second.resolves.has_value() || found->second.resolves->SameVersions(conflict));
+		if (!resolved) {
+			remaining.push_back(conflict);
+			continue;
+		}
+		Check(git_index_conflict_remove(index, conflict.path.c_str()), "Cannot resolve the conflict");
+		ApplyOverride(index, conflict.path, found->second);
+	}
+	for (const auto &[path, file] : step.files) {
+		if (!file.resolves.has_value()) {
+			ApplyOverride(index, path, file);
+		}
+	}
+	return remaining;
 }
 
 
@@ -207,6 +295,7 @@ void HistoryEdit::Replay()
 	const size_t replayStart = first.value_or(fSteps.size());
 	for (size_t i = 0; i < replayStart && i < fSteps.size(); i++) {
 		fResults[i].commit = fSteps[i].commit;
+		fResults[i].parent = i == 0 ? fBase : std::optional<git_oid>(fSteps[i - 1].commit);
 	}
 	if (!first.has_value()) {
 		fNewTip = fTip;
@@ -225,6 +314,9 @@ void HistoryEdit::Replay()
 	}
 	SignaturePtr committer(committerSignature);
 
+	// The commit the previous step was replayed onto, for completing a
+	// split.
+	std::optional<git_oid> previousBase;
 	// The commit at current when this replay created it, for squashing.
 	std::vector<size_t> group;
 	std::optional<git_oid> groupParent;
@@ -244,11 +336,21 @@ void HistoryEdit::Replay()
 				CommitPtr parent = LookupCommit(fRepository, *git_commit_parent_id(commit.get(), 0));
 				ancestor = CommitTree(parent.get());
 			}
-			CommitPtr currentCommit;
+			// The second part of a split applies the whole change onto what the
+			// first part was applied onto; the first part is already in it.
+			const bool completes = step.completesPrevious && i > 0
+				&& git_oid_equal(&fSteps[i - 1].commit, &step.commit);
+			const std::optional<git_oid> onto = completes ? previousBase : current;
+			previousBase = current;
 			TreePtr ours;
+			if (onto.has_value()) {
+				CommitPtr ontoCommit = LookupCommit(fRepository, *onto);
+				ours = CommitTree(ontoCommit.get());
+			}
+			TreePtr currentTree;
 			if (current.has_value()) {
-				currentCommit = LookupCommit(fRepository, *current);
-				ours = CommitTree(currentCommit.get());
+				CommitPtr currentCommit = LookupCommit(fRepository, *current);
+				currentTree = CommitTree(currentCommit.get());
 			}
 			TreePtr theirs = CommitTree(commit.get());
 
@@ -257,9 +359,14 @@ void HistoryEdit::Replay()
 			Check(git_merge_trees(&index, fRepository, ancestor.get(), ours.get(), theirs.get(), &options),
 				"Cannot apply the commit");
 			IndexPtr indexPtr(index);
-			if (git_index_has_conflicts(index)) {
+			const std::vector<ConflictFile> conflicts = ApplyOverrides(index, step);
+			if (!conflicts.empty()) {
 				result.state = StepState::Conflict;
-				result.conflicts = ConflictPaths(index);
+				result.parent = current;
+				result.conflictFiles = conflicts;
+				for (const ConflictFile &conflict : conflicts) {
+					result.conflicts.push_back(conflict.path);
+				}
 				for (size_t j = i + 1; j < fSteps.size(); j++) {
 					fResults[j].state = StepState::Pending;
 				}
@@ -269,9 +376,11 @@ void HistoryEdit::Replay()
 			Check(git_index_write_tree_to(&treeId, index, fRepository), "Cannot write the tree");
 
 			const bool squash = step.squash && !group.empty();
-			if (ours != nullptr && git_oid_equal(&treeId, git_tree_id(ours.get())) && !step.message.has_value()) {
+			if (currentTree != nullptr && git_oid_equal(&treeId, git_tree_id(currentTree.get()))
+				&& !step.message.has_value()) {
 				result.state = StepState::Empty;
 				result.commit = current.value_or(git_oid {});
+				result.parent = current;
 				continue;
 			}
 
@@ -301,6 +410,7 @@ void HistoryEdit::Replay()
 			if (squash) {
 				for (size_t member : group) {
 					fResults[member].commit = newId;
+					fResults[member].parent = parentId;
 				}
 				group.push_back(i);
 			} else {
@@ -314,8 +424,10 @@ void HistoryEdit::Replay()
 			current = newId;
 			result.state = StepState::Rewritten;
 			result.commit = newId;
+			result.parent = parentId;
 		} catch (const GitError &e) {
 			result.state = StepState::Conflict;
+			result.parent = current;
 			result.conflicts = {e.what()};
 			for (size_t j = i + 1; j < fSteps.size(); j++) {
 				fResults[j].state = StepState::Pending;

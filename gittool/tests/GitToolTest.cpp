@@ -827,4 +827,104 @@ TEST_CASE("History edits", "[gittool]")
 }
 
 
+static FileOverride Content(git_repository *repository, const std::string &data)
+{
+	FileOverride file;
+	git_oid blob;
+	Check(git_blob_create_from_buffer(&blob, repository, data.data(), data.size()), "blob");
+	file.blob = blob;
+	return file;
+}
+
+
+static std::optional<std::string> FileAt(git_repository *repository, const git_oid &commit, const std::string &path)
+{
+	const std::optional<FileVersion> version = ReadPath(repository, commit, path);
+	if (!version.has_value()) {
+		return std::nullopt;
+	}
+	return ReadFileVersion(repository, version->id, version->mode);
+}
+
+
+TEST_CASE("History content edits", "[gittool]")
+{
+	// main: first, m1 (c.txt c1), m2 (d.txt d1), m3 (c.txt c2).
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+	WriteFile(fixture.directory + "/c.txt", "c1\n");
+	const git_oid m1 = CommitAll(repository, "m1");
+	WriteFile(fixture.directory + "/d.txt", "d1\n");
+	CommitAll(repository, "m2");
+	WriteFile(fixture.directory + "/c.txt", "c2\n");
+	CommitAll(repository, "m3");
+	HistoryEdit edit(repository, "main", 100);
+
+	SECTION("Edit a file; newer commits are replayed on it") {
+		edit.SetFiles(2, {{"d.txt", Content(repository, "d2\n")}});
+		CHECK(edit.FirstChanged() == 2);
+		CHECK(edit.Results()[2].state == StepState::Rewritten);
+		CHECK(git_oid_equal(&*edit.Results()[2].parent, &m1));
+		REQUIRE(edit.NewTip().has_value());
+		CHECK(FileAt(repository, *edit.NewTip(), "d.txt") == "d2\n");
+		CHECK(FileAt(repository, *edit.NewTip(), "c.txt") == "c2\n");
+	}
+
+	SECTION("Delete and add files") {
+		FileOverride deleted;
+		edit.SetFiles(3, {{"d.txt", deleted}, {"new.txt", Content(repository, "new\n")}});
+		REQUIRE(edit.NewTip().has_value());
+		CHECK_FALSE(FileAt(repository, *edit.NewTip(), "d.txt").has_value());
+		CHECK(FileAt(repository, *edit.NewTip(), "new.txt") == "new\n");
+	}
+
+	SECTION("An edit that makes a newer commit conflict, resolved") {
+		edit.SetFiles(1, {{"c.txt", Content(repository, "cX\n")}});
+		REQUIRE(edit.Results()[3].state == StepState::Conflict);
+		REQUIRE(edit.Results()[3].conflictFiles.size() == 1);
+		const ConflictFile conflict = edit.Results()[3].conflictFiles[0];
+		CHECK(conflict.path == "c.txt");
+		CHECK(ReadFileVersion(repository, conflict.ours, conflict.oursMode) == "cX\n");
+		CHECK(ReadFileVersion(repository, conflict.theirs, conflict.theirsMode) == "c2\n");
+
+		// A resolution of other versions does not apply.
+		FileOverride stale = Content(repository, "c3\n");
+		stale.resolves = conflict;
+		stale.resolves->ours = conflict.theirs;
+		edit.SetFiles(3, {{"c.txt", stale}});
+		CHECK(edit.Results()[3].state == StepState::Conflict);
+
+		FileOverride resolution = Content(repository, "c3\n");
+		resolution.resolves = conflict;
+		edit.SetFiles(3, {{"c.txt", resolution}});
+		CHECK(edit.Results()[3].state == StepState::Rewritten);
+		CHECK(edit.Problem().empty());
+		CHECK(FileAt(repository, *edit.NewTip(), "c.txt") == "c3\n");
+	}
+
+	SECTION("Split") {
+		// m4 changes two files; the first part takes c.txt only.
+		WriteFile(fixture.directory + "/c.txt", "c3\n");
+		WriteFile(fixture.directory + "/d.txt", "d3\n");
+		const git_oid m4 = CommitAll(repository, "m4");
+		HistoryEdit splitting(repository, "main", 100);
+		std::map<std::string, FileOverride> firstPart;
+		firstPart["c.txt"] = Content(repository, "c3\n");
+		firstPart["d.txt"] = Content(repository, "d1\n");
+		splitting.Split(4, firstPart, "m4 part 1");
+		REQUIRE(splitting.Steps().size() == 6);
+		CHECK(splitting.Problem().empty());
+		REQUIRE(splitting.NewTip().has_value());
+		CHECK(Summaries(repository, *splitting.NewTip())
+			== std::vector<std::string> {"first", "m1", "m2", "m3", "m4 part 1", "m4"});
+		const git_oid partOne = splitting.Results()[4].commit;
+		CHECK(FileAt(repository, partOne, "c.txt") == "c3\n");
+		CHECK(FileAt(repository, partOne, "d.txt") == "d1\n");
+		CHECK(FileAt(repository, *splitting.NewTip(), "d.txt") == "d3\n");
+		// The result has the same contents as before.
+		CHECK(ChangesBetween(repository, m4, *splitting.NewTip()).empty());
+	}
+}
+
+
 } // GitTool

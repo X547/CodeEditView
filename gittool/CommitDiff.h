@@ -51,6 +51,22 @@ CommitDetails ReadCommitDetails(git_repository *repository, const git_oid &id);
 // are detected.
 std::vector<FileChange> CommitChanges(git_repository *repository, const git_oid &id, size_t parent);
 
+// The files that differ between two commits (oldCommit none: an empty
+// tree), with renames detected.
+std::vector<FileChange> ChangesBetween(git_repository *repository, const std::optional<git_oid> &oldCommit,
+	const git_oid &newCommit);
+
+
+struct FileVersion {
+	git_oid id {};
+	uint32_t mode {};
+};
+
+// The version of a path in a commit; none if it is not there (or commit is
+// none).
+std::optional<FileVersion> ReadPath(git_repository *repository, const std::optional<git_oid> &commit,
+	const std::string &path);
+
 // The content of a file version; none for a zero id. A submodule is shown
 // as its commit.
 std::optional<std::string> ReadFileVersion(git_repository *repository, const git_oid &id, uint32_t mode);

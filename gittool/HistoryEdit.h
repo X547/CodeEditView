@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -9,6 +10,33 @@
 
 
 namespace GitTool {
+
+
+// The versions of a conflicted file: zero ids for a missing side.
+struct ConflictFile {
+	std::string path;
+	// The commit's parent (what the change was made on), the history it is
+	// replayed onto, and the commit.
+	git_oid ancestor {};
+	git_oid ours {};
+	git_oid theirs {};
+	uint32_t ancestorMode {};
+	uint32_t oursMode {};
+	uint32_t theirsMode {};
+
+	bool SameVersions(const ConflictFile &other) const;
+};
+
+
+// The content a step gives a file instead of the replayed one.
+struct FileOverride {
+	// None: the file is deleted.
+	std::optional<git_oid> blob;
+	uint32_t mode = GIT_FILEMODE_BLOB;
+	// A conflict resolution: it applies only while the file conflicts with
+	// these versions.
+	std::optional<ConflictFile> resolves;
+};
 
 
 // One commit of an edited history.
@@ -21,6 +49,12 @@ struct EditStep {
 	std::optional<std::string> message;
 	// Copied from another history.
 	bool copied {};
+	// Edited contents and conflict resolutions, by path. Contents are kept
+	// as written: later edits of older commits do not change them.
+	std::map<std::string, FileOverride> files;
+	// The second part of a split: completes the change of the commit that
+	// the step before it (the first part, the same commit) applied in part.
+	bool completesPrevious {};
 };
 
 
@@ -44,8 +78,12 @@ struct StepResult {
 	// commit when kept, the new one when rewritten (shared by the steps
 	// combined into it).
 	git_oid commit {};
+	// The commit the step's result is based on; none for an empty history.
+	std::optional<git_oid> parent;
 	// Conflicting paths, or why the step cannot be replayed.
 	std::vector<std::string> conflicts;
+	// The versions of the conflicting files.
+	std::vector<ConflictFile> conflictFiles;
 };
 
 
@@ -91,6 +129,11 @@ public:
 	void Remove(const std::vector<size_t> &indexes);
 	void SetSquash(size_t index, bool squash);
 	void SetMessage(size_t index, const std::string &message);
+	// Sets or replaces overrides of a step's files.
+	void SetFiles(size_t index, const std::map<std::string, FileOverride> &files);
+	// Splits a step in two: the first applies the commit with firstPart for
+	// the files it changes, the second completes the commit.
+	void Split(size_t index, const std::map<std::string, FileOverride> &firstPart, const std::string &firstMessage);
 	void Reset();
 
 	// The oldest position whose step differs from the original list; none

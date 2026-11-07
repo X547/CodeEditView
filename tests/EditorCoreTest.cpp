@@ -265,6 +265,46 @@ TEST_CASE("newline, tab and paste")
 }
 
 
+TEST_CASE("hard wrap while typing")
+{
+	BReference<TextModel> model = MakeModel("subject line that is long\n\n  body");
+	EditorCore core(model);
+	EditorSettings settings;
+	settings.hardWrapColumn = 10;
+	settings.hardWrapFirstLine = 1;
+	core.SetSettings(settings);
+
+	// The first line is not wrapped.
+	Place(core, 25);
+	core.InsertText("x");
+	CHECK(Text(*model) == "subject line that is longx\n\n  body");
+
+	// Typing past the column moves the last word to a new line with the
+	// same indentation; the caret follows the typed text.
+	const std::string start = Text(*model);
+	Place(core, start.size());
+	for (const char *typed : {" ", "t", "e", "x"}) {
+		core.InsertText(typed);
+	}
+	CHECK(Text(*model) == start + " tex");
+	core.InsertText("t");
+	CHECK(Text(*model) == start + "\n  text");
+	CHECK(Caret(core) == Text(*model).size());
+
+	CHECK(core.Undo());
+	CHECK(Text(*model).find("\n  t") == std::string::npos);
+	CHECK(core.Redo());
+	CHECK(Text(*model) == start + "\n  text");
+
+	// A word longer than the column is not broken.
+	Place(core, Text(*model).size());
+	for (const char *typed : {"a", "b", "c", "d", "e", "f"}) {
+		core.InsertText(typed);
+	}
+	CHECK(Text(*model) == start + "\n  textabcdef");
+}
+
+
 TEST_CASE("cores sharing a model follow each other's edits")
 {
 	BReference<TextModel> model = MakeModel("hello world");

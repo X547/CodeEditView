@@ -1210,6 +1210,67 @@ void EditorCore::InsertText(std::string_view text)
 		text,
 		EditKind::Typing
 	);
+	if (fSettings.hardWrapColumn > 0 && text.find('\n') == std::string_view::npos) {
+		HardWrapCaretLine();
+	}
+}
+
+
+static bool IsBlank(char ch)
+{
+	return ch == ' ' || ch == '\t';
+}
+
+
+void EditorCore::HardWrapCaretLine()
+{
+	const Rope &text = fModel->Text();
+	const size_t caret = fSelection.caret;
+	const size_t line = text.LineOfOffset(caret);
+	const uint32_t limit = fSettings.hardWrapColumn;
+	if (line < fSettings.hardWrapFirstLine || LineColumnOfOffset(caret) <= limit) {
+		return;
+	}
+
+	// The leading blanks are kept and copied to the new line.
+	const size_t lineStart = text.LineStart(line);
+	size_t contentStart = lineStart;
+	while (contentStart < caret && IsBlank(text.ByteAt(contentStart))) {
+		contentStart++;
+	}
+	// The last blank run before the caret that starts within the limit.
+	std::optional<std::pair<size_t, size_t>> blanks;
+	for (size_t pos = contentStart; pos < caret;) {
+		if (!IsBlank(text.ByteAt(pos))) {
+			pos++;
+			continue;
+		}
+		size_t end = pos;
+		while (end < caret && IsBlank(text.ByteAt(end))) {
+			end++;
+		}
+		if (end < caret && LineColumnOfOffset(pos) <= limit) {
+			blanks = std::pair(pos, end);
+		}
+		pos = end;
+	}
+	if (!blanks.has_value()) {
+		return;
+	}
+
+	std::string inserted = "\n";
+	if (fSettings.autoIndent) {
+		for (size_t pos = lineStart; pos < contentStart; pos++) {
+			inserted += text.ByteAt(pos);
+		}
+	}
+	const auto [from, to] = *blanks;
+	const size_t caretAfter = caret - (to - from) + inserted.size();
+	fModel->BeginGroup(fObserver, EditKind::Typing, fSelection);
+	fModel->Replace(from, to - from, inserted);
+	fModel->EndGroup({caretAfter, caretAfter});
+	SyncLocked();
+	SetSelectionLocked(ClampSelection({caretAfter, caretAfter}));
 }
 
 

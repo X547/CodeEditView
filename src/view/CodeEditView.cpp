@@ -68,6 +68,9 @@ struct DrawContext {
 	std::optional<CaretPosition> dropCaret;
 	std::optional<BracketPair> brackets;
 	rgb_color bracket;
+	// EditorSettings::marginColumn; 0 for none.
+	uint32_t marginColumn {};
+	rgb_color margin;
 	std::vector<size_t> foldedHeaders;
 	// Line backgrounds of marks and decorations (marks win), mixed into the
 	// document background.
@@ -478,6 +481,8 @@ void CodeEditView::Draw(BRect updateRect)
 		context.foldedHeaders.push_back(fold.headerLine);
 	}
 	context.bracket = mix_color(context.background, ui_color(B_KEYBOARD_NAVIGATION_COLOR), 56);
+	context.marginColumn = fCore->Settings().marginColumn;
+	context.margin = mix_color(context.background, context.text, 48);
 
 	const size_t firstRow = RowAtY(updateRect.top);
 	const size_t lastRow = RowAtY(updateRect.bottom);
@@ -563,6 +568,11 @@ void CodeEditView::DrawRow(
 	}
 	SetHighColor(rowBackground);
 	FillRect(BRect(updateRect.left, top, updateRect.right, bottom));
+	if (context.marginColumn > 0) {
+		const float x = context.marginColumn * fCellWidth;
+		SetHighColor(context.margin);
+		StrokeLine(BPoint(x, top), BPoint(x, bottom));
+	}
 
 	// The row covers [rowStart, rowEnd) of the text; past its end is the
 	// newline, or the continuation in the next row.

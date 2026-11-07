@@ -243,6 +243,8 @@ private:
 	void SetSelectionLocked(const Selection &selection);
 	void AddSelectionDirty(const Selection &selection);
 	void ReplaceRange(size_t from, size_t to, std::string_view text, EditKind kind);
+	// Breaks the caret line after typing, for EditorSettings::hardWrapColumn.
+	void HardWrapCaretLine();
 	void ApplyUndoResult(const std::optional<UndoResult> &result, const ModelChanges &changes);
 	std::optional<TextRange> BalancedRangeAtLocked(size_t offset) const;
 

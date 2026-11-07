@@ -30,6 +30,14 @@ struct EditorSettings {
 	// dropping, undo or input method. Selecting and copying still work. Per
 	// view, so other views of the same model may still edit it.
 	bool readOnly = false;
+	// A vertical guide line at the left edge of this column; 0 for none.
+	uint32_t marginColumn = 0;
+	// Typing a character that ends past this column breaks the line at the
+	// last blank that leaves the text before it within the column, like a
+	// text width setting; 0 for none. Lines before hardWrapFirstLine are not
+	// broken, e.g. the subject line of a commit message.
+	uint32_t hardWrapColumn = 0;
+	uint32_t hardWrapFirstLine = 0;
 
 	bool operator==(const EditorSettings &other) const = default;
 };

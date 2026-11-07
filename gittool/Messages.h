@@ -59,7 +59,7 @@ constexpr uint32 kMsgResetEdits = 'GTrz';
 constexpr uint32 kMsgApplyEdits = 'GTap';
 // Dragged commits: "commit" (raw git_oid, repeated), "source"
 // (messenger of the window), "step" (int32, repeated, in edit mode); when
-// dropped, "row" (int32, -1 below the rows).
+// dropped, "index" (int32): the row the commits go above.
 constexpr uint32 kMsgDragCommits = 'GTdg';
 
 

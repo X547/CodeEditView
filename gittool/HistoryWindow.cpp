@@ -11,6 +11,7 @@
 #include <ColumnListView.h>
 #include <ColumnTypes.h>
 #include <LayoutBuilder.h>
+#include <MessageFilter.h>
 #include <MenuField.h>
 #include <PopUpMenu.h>
 #include <StringView.h>
@@ -54,13 +55,129 @@ public:
 };
 
 
-// The commit list; selected rows are dragged as kMsgDragCommits, and drops
-// are posted to the window with the row they fell on.
+// The commit list. Selected rows are dragged as kMsgDragCommits; while
+// commits are dragged over a list that takes drops, a line marks where they
+// would go, and the drop is posted to the window with that place. Delete
+// and Backspace post kMsgRemoveSteps.
+//
+// The rows are drawn by a private child view of BColumnListView, so a
+// message filter on it follows the mouse and keys, and the marker is a
+// child of it that scrolls with the rows.
 class CommitList: public BColumnListView {
+private:
+	class RowsFilter: public BMessageFilter {
+	private:
+		CommitList &fList;
+
+	public:
+		explicit RowsFilter(CommitList &list):
+			BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE),
+			fList(list)
+		{
+		}
+
+		filter_result Filter(BMessage *message, BHandler **target) final
+		{
+			(void)target;
+			return fList.FilterMessage(message);
+		}
+	};
+
+	BView *fMarker {};
+	// Rows above which commits can be inserted: 0 to fDropLimit (after the
+	// last of them); -1 if the list takes no drops.
+	int32 fDropLimit = -1;
+
+	// The place for a drop at point (in the rows view): the index of the row
+	// the commits go above, by which half of a row the point is in.
+	int32 DropIndex(BPoint point)
+	{
+		int32 index = CountRows();
+		if (BRow *row = RowAt(point)) {
+			BRect rect;
+			GetRowRect(row, &rect);
+			index = IndexOf(row) + (point.y > (rect.top + rect.bottom) / 2 ? 1 : 0);
+		}
+		return std::min(index, fDropLimit);
+	}
+
+	void ShowMarker(int32 index)
+	{
+		float y = 0;
+		if (index < CountRows()) {
+			BRect rect;
+			GetRowRect(RowAt(index), &rect);
+			y = rect.top - 1;
+		} else if (CountRows() > 0) {
+			BRect rect;
+			GetRowRect(RowAt(CountRows() - 1), &rect);
+			y = rect.bottom + 1;
+		}
+		BView *rows = ScrollView();
+		const float height = 2;
+		fMarker->MoveTo(rows->Bounds().left, y - height / 2);
+		fMarker->ResizeTo(rows->Bounds().Width(), height - 1);
+		if (fMarker->IsHidden()) {
+			fMarker->Show();
+		}
+	}
+
+	void HideMarker()
+	{
+		if (!fMarker->IsHidden()) {
+			fMarker->Hide();
+		}
+	}
+
+	filter_result FilterMessage(BMessage *message)
+	{
+		switch (message->what) {
+			case B_KEY_DOWN: {
+				const char *bytes = message->GetString("bytes", "");
+				if (bytes[0] == B_DELETE || bytes[0] == B_BACKSPACE) {
+					Window()->PostMessage(kMsgRemoveSteps);
+					return B_SKIP_MESSAGE;
+				}
+				break;
+			}
+			case B_MOUSE_MOVED: {
+				BMessage drag;
+				const bool dragging = message->FindMessage("be:drag_message", &drag) == B_OK
+					&& drag.what == kMsgDragCommits;
+				const int32 transit = message->GetInt32("be:transit", B_OUTSIDE_VIEW);
+				BPoint where;
+				if (!dragging || fDropLimit < 0 || transit == B_EXITED_VIEW || transit == B_OUTSIDE_VIEW
+					|| message->FindPoint("be:view_where", &where) != B_OK) {
+					HideMarker();
+					break;
+				}
+				ShowMarker(DropIndex(where));
+				break;
+			}
+			case B_MOUSE_UP:
+				HideMarker();
+				break;
+			default:
+				break;
+		}
+		return B_DISPATCH_MESSAGE;
+	}
+
 public:
 	CommitList():
 		BColumnListView("commits", B_NAVIGABLE, B_PLAIN_BORDER, true)
 	{
+		fMarker = new BView(BRect(0, 0, 10, 1), "dropMarker", B_FOLLOW_NONE, B_WILL_DRAW);
+		fMarker->SetViewUIColor(B_CONTROL_HIGHLIGHT_COLOR);
+		fMarker->Hide();
+		ScrollView()->AddChild(fMarker);
+		ScrollView()->AddFilter(new RowsFilter(*this));
+	}
+
+	// The number of rows commits can be dropped among; -1 for no drops.
+	void SetDropLimit(int32 limit)
+	{
+		fDropLimit = limit;
 	}
 
 	bool InitiateDrag(BPoint point, bool wasSelected) final
@@ -69,7 +186,9 @@ public:
 		(void)wasSelected;
 		BMessage message(kMsgDragCommits);
 		message.AddMessenger("source", BMessenger(Window()));
-		int32 count = 0;
+		// The drag rectangle covers the selected rows that are visible.
+		BRect dragRect;
+		BView *rows = ScrollView();
 		BRow *row = nullptr;
 		while ((row = CurrentSelection(row)) != nullptr) {
 			const CommitRow *commitRow = dynamic_cast<CommitRow*>(row);
@@ -80,27 +199,35 @@ public:
 			if (commitRow->step >= 0) {
 				message.AddInt32("step", commitRow->step);
 			}
-			count++;
+			BRect rect;
+			if (GetRowRect(row, &rect)) {
+				rect = rect & rows->Bounds();
+				if (rect.IsValid()) {
+					dragRect = dragRect.IsValid() ? dragRect | rect : rect;
+				}
+			}
 		}
-		if (count == 0) {
+		if (!message.HasData("commit", B_RAW_TYPE)) {
 			return false;
 		}
-		BPoint where;
-		uint32 buttons;
-		get_mouse(&where, &buttons);
-		ConvertFromScreen(&where);
-		DragMessage(&message, BRect(where.x - 40, where.y - 8, where.x + 200, where.y + 8));
+		if (!dragRect.IsValid()) {
+			BPoint where;
+			uint32 buttons;
+			rows->GetMouse(&where, &buttons, false);
+			dragRect.Set(where.x, where.y, where.x + 200, where.y + 16);
+		}
+		rows->DragMessage(&message, dragRect);
 		return true;
 	}
 
 	void MessageDropped(BMessage *message, BPoint point) final
 	{
-		if (message->what != kMsgDragCommits) {
+		HideMarker();
+		if (message->what != kMsgDragCommits || fDropLimit < 0) {
 			return;
 		}
 		BMessage dropped(*message);
-		BRow *row = RowAt(point);
-		dropped.AddInt32("row", row != nullptr ? IndexOf(row) : -1);
+		dropped.AddInt32("index", DropIndex(point));
 		Window()->PostMessage(&dropped);
 	}
 };
@@ -240,6 +367,7 @@ void HistoryWindow::FillList()
 	}
 	fList->Clear();
 	fList->SetColumnVisible(kStateColumn, fEdit != nullptr);
+	fList->SetDropLimit(fEdit != nullptr ? static_cast<int32>(fEdit->Steps().size()) : -1);
 
 	auto addRow = [this](const git_oid &commit, int32 step, const std::string &state, const std::string &summary) {
 		CommitRow *row = new CommitRow(commit, step);
@@ -397,8 +525,10 @@ void HistoryWindow::Dropped(BMessage *message)
 		return;
 	}
 	const size_t count = fEdit->Steps().size();
-	const int32 row = message->GetInt32("row", -1);
-	const size_t position = row < 0 || static_cast<size_t>(row) >= count ? 0 : count - row;
+	// The rows show the newest step first; index is the row the commits go
+	// above.
+	const int32 index = std::clamp<int32>(message->GetInt32("index", 0), 0, static_cast<int32>(count));
+	const size_t position = count - index;
 	BMessenger source;
 	message->FindMessenger("source", &source);
 	try {
@@ -431,7 +561,11 @@ void HistoryWindow::Dropped(BMessage *message)
 
 void HistoryWindow::Remove()
 {
-	fEdit->Remove(SelectedSteps());
+	const std::vector<size_t> steps = SelectedSteps();
+	if (fEdit == nullptr || steps.empty()) {
+		return;
+	}
+	fEdit->Remove(steps);
 	FillList();
 }
 

@@ -21,6 +21,7 @@ gitDiffUi = static_library(
 	files(
 		'DiffWindow.cpp',
 		'FileListView.cpp',
+		'MessageEditor.cpp',
 	),
 	dependencies: [gitDiffCoreDep]
 )

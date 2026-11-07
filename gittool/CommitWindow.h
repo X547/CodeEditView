@@ -39,7 +39,6 @@ private:
 	// The loaded versions of the files shown, by index in fChanges.
 	std::map<size_t, Sides> fSides;
 
-	BReference<CodeEdit::TextModel> fHeaderModel;
 	CodeEditView *fHeader {};
 	BListView *fFiles {};
 	DiffKit::DiffView *fDiffView {};

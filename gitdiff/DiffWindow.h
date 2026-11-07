@@ -43,7 +43,6 @@ private:
 	BMenuItem *fWordWrapItem {};
 	BMenuItem *fAlgorithmItems[3] {};
 	node_ref fGitDirNode {};
-	BReference<CodeEdit::TextModel> fMessageModel;
 	CodeEditView *fMessage {};
 	BCheckBox *fAmend {};
 
@@ -58,9 +57,6 @@ private:
 	void Save(bool all);
 	void ReloadDocument();
 	void StageFile();
-	std::string MessageText() const;
-	void SetMessageText(const std::string &text);
-	void UpdateMessageDecorations();
 	void AmendToggled();
 	void Commit();
 	bool ConfirmClose();

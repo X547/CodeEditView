@@ -1,6 +1,5 @@
 #include "DiffWindow.h"
 
-#include <math.h>
 #include <stdio.h>
 
 #include <exception>
@@ -11,7 +10,6 @@
 #include <Button.h>
 #include <CheckBox.h>
 #include <Entry.h>
-#include <Font.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
@@ -25,7 +23,7 @@
 
 #include <CodeEditView/CodeEditView.h>
 
-#include "CommitMessage.h"
+#include "MessageEditor.h"
 #include "FileListView.h"
 #include "Messages.h"
 
@@ -36,20 +34,6 @@ namespace GitDiff {
 // Delay before refreshing after the window was activated or the index
 // changed; changes come in bursts.
 static constexpr bigtime_t kRefreshDelay = 300000;
-
-
-// A commit message editor in a scroll view, without line numbers. Split
-// views start items at their minimum size, so that is a usable height.
-static BScrollView *MessageScrollView(const char *name, CodeEditView *view, int rows)
-{
-	font_height height;
-	be_fixed_font->GetHeight(&height);
-	const float lineHeight = ceilf(height.ascent + height.descent + height.leading);
-	const float cellWidth = be_fixed_font->StringWidth("M");
-	view->SetExplicitMinSize(BSize(cellWidth * 10, lineHeight * 6));
-	view->SetExplicitPreferredSize(BSize(cellWidth * (GitDiff::kBodyLimit + 2), lineHeight * rows));
-	return new BScrollView(name, view, 0, false, true);
-}
 
 
 DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string &relativePath):
@@ -120,9 +104,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fHideUnchangedItem->SetMarked(true);
 
 	fFileList = new FileListView();
-	fMessageModel.SetTo(new CodeEdit::TextModel(), true);
-	fMessage = new CodeEditView("message", fMessageModel.Get());
-	fMessage->SetSettings(CommitMessageSettings());
+	fMessage = CreateMessageEditor("message");
 	fMessage->SetTarget(BMessenger(this));
 	BScrollView *messageScroll = MessageScrollView("messageScroll", fMessage, 8);
 	// The label would limit the width of the column to its own.
@@ -393,39 +375,16 @@ void DiffWindow::StageFile()
 }
 
 
-std::string DiffWindow::MessageText() const
-{
-	CodeEdit::ModelLock lock(*fMessageModel);
-	return fMessageModel->Text().ToString();
-}
-
-
-void DiffWindow::SetMessageText(const std::string &text)
-{
-	{
-		CodeEdit::ModelLock lock(*fMessageModel);
-		fMessageModel->SetText(text);
-	}
-	UpdateMessageDecorations();
-}
-
-
-void DiffWindow::UpdateMessageDecorations()
-{
-	fMessage->SetDecorations(CommitMessageDecorations(MessageText()));
-}
-
-
 // Amending starts from the message of the commit being replaced.
 void DiffWindow::AmendToggled()
 {
 	const std::string headMessage = fRepository->HeadMessage();
 	if (fAmend->Value() == B_CONTROL_ON) {
-		if (MessageText().empty()) {
-			SetMessageText(headMessage);
+		if (MessageText(fMessage).empty()) {
+			SetMessageText(fMessage, headMessage);
 		}
-	} else if (headMessage == MessageText()) {
-		SetMessageText(std::string());
+	} else if (headMessage == MessageText(fMessage)) {
+		SetMessageText(fMessage, std::string());
 	}
 }
 
@@ -451,13 +410,13 @@ void DiffWindow::Commit()
 				}
 			}
 		}
-		fRepository->Commit(MessageText(), fAmend->Value() == B_CONTROL_ON);
+		fRepository->Commit(MessageText(fMessage), fAmend->Value() == B_CONTROL_ON);
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 		Refresh();
 		return;
 	}
-	SetMessageText(std::string());
+	SetMessageText(fMessage, std::string());
 	fAmend->SetValue(B_CONTROL_OFF);
 	Refresh();
 }
@@ -564,7 +523,7 @@ void DiffWindow::MessageReceived(BMessage *message)
 			AmendToggled();
 			break;
 		case CodeEdit::kMsgContentsChanged:
-			UpdateMessageDecorations();
+			UpdateMessageDecorations(fMessage);
 			break;
 		case kMsgNextChunk:
 		case kMsgPreviousChunk:

@@ -1,10 +1,7 @@
 #include "CommitWindow.h"
 
-#include <math.h>
-
 #include <exception>
 
-#include <Font.h>
 #include <LayoutBuilder.h>
 #include <ListView.h>
 #include <MenuBar.h>
@@ -15,6 +12,7 @@
 #include <CodeEditView/CodeEditView.h>
 
 #include "CommitMessage.h"
+#include "MessageEditor.h"
 #include "DiffView.h"
 #include "Dialogs.h"
 #include "Messages.h"
@@ -41,20 +39,6 @@ static std::optional<std::string> DisplayData(const std::optional<std::string> &
 		return data;
 	}
 	return "(binary file, " + std::to_string(data->size()) + " bytes)\n";
-}
-
-
-// A commit message editor in a scroll view, without line numbers. Split
-// views start items at their minimum size, so that is a usable height.
-static BScrollView *MessageScrollView(const char *name, CodeEditView *view, int rows)
-{
-	font_height height;
-	be_fixed_font->GetHeight(&height);
-	const float lineHeight = ceilf(height.ascent + height.descent + height.leading);
-	const float cellWidth = be_fixed_font->StringWidth("M");
-	view->SetExplicitMinSize(BSize(cellWidth * 10, lineHeight * 6));
-	view->SetExplicitPreferredSize(BSize(cellWidth * (GitDiff::kBodyLimit + 2), lineHeight * rows));
-	return new BScrollView(name, view, 0, false, true);
 }
 
 
@@ -114,16 +98,15 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 		parentMenu->AddItem(item);
 	}
 
-	fHeaderModel.SetTo(new CodeEdit::TextModel(), true);
-	fHeader = new CodeEditView("header", fHeaderModel.Get());
-	CodeEdit::EditorSettings settings = GitDiff::CommitMessageSettings();
+	fHeader = GitDiff::CreateMessageEditor("header");
+	CodeEdit::EditorSettings settings = fHeader->Settings();
 	settings.readOnly = true;
 	fHeader->SetSettings(settings);
 	fFiles = new BListView("files", B_SINGLE_SELECTION_LIST);
 	fFiles->SetSelectionMessage(new BMessage(kMsgCommitFileSelected));
 	fDiffView = new DiffView();
 
-	BScrollView *headerScroll = MessageScrollView("headerScroll", fHeader, 10);
+	BScrollView *headerScroll = GitDiff::MessageScrollView("headerScroll", fHeader, 10);
 	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Split<>(filesSplit)
 		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 1)
@@ -162,8 +145,8 @@ void CommitWindow::ShowHeader()
 	const size_t messageStart = text.size();
 	text += fDetails.message;
 	{
-		CodeEdit::ModelLock lock(*fHeaderModel);
-		fHeaderModel->SetText(text);
+		CodeEdit::ModelLock lock(*fHeader->Model());
+		fHeader->Model()->SetText(text);
 	}
 	std::vector<CodeEdit::Decoration> decorations = GitDiff::CommitMessageDecorations(fDetails.message);
 	for (CodeEdit::Decoration &decoration : decorations) {

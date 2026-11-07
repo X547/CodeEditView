@@ -90,12 +90,19 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 				VersionOf(conflict.theirs, conflict.theirsMode), VersionOf(conflict.ancestor, conflict.ancestorMode));
 		}
 	} else {
+		// A renamed file is two files here: the old path deleted, the new
+		// one added.
 		for (const FileChange &change : ChangesBetween(fRepository.get(), input.parent, input.result)) {
-			for (const std::string &path : {change.oldPath, change.newPath}) {
-				if (!path.empty() && (path == change.newPath || change.oldPath != change.newPath)) {
-					AddFile(path, ReadPath(fRepository.get(), input.parent, path),
-						ReadPath(fRepository.get(), input.result, path), std::nullopt);
-				}
+			std::vector<std::string> paths;
+			if (!change.newPath.empty()) {
+				paths.push_back(change.newPath);
+			}
+			if (!change.oldPath.empty() && change.oldPath != change.newPath) {
+				paths.push_back(change.oldPath);
+			}
+			for (const std::string &path : paths) {
+				AddFile(path, ReadPath(fRepository.get(), input.parent, path),
+					ReadPath(fRepository.get(), input.result, path), std::nullopt);
 			}
 		}
 	}

@@ -1026,6 +1026,18 @@ Plan PlanUploadBranch(git_repository *repository, const Snapshot &snapshot, cons
 }
 
 
+std::string UpstreamRemote(git_repository *repository, const std::string &branch)
+{
+	GitBuf remote;
+	if (git_branch_upstream_remote(remote.Get(), repository, ("refs/heads/" + branch).c_str()) < 0) {
+		git_error_clear();
+		return std::string();
+	}
+	const std::string name = remote.String();
+	return name == "." ? std::string() : name;
+}
+
+
 std::vector<std::pair<std::string, std::string>> CleanupCandidates(git_repository *repository,
 	const Snapshot &snapshot, const std::string &into)
 {

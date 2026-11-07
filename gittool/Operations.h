@@ -92,6 +92,9 @@ Plan PlanSetUpstream(git_repository *repository, const Snapshot &snapshot, const
 	const std::string &upstream);
 Plan PlanUploadBranch(git_repository *repository, const Snapshot &snapshot, const std::string &branch,
 	const std::string &remote, UploadMode mode, bool setTracking);
+// The remote of the branch's tracked remote branch; empty for none or a
+// local branch.
+std::string UpstreamRemote(git_repository *repository, const std::string &branch);
 // Branches without a worktree that are merged into the branch "into", or
 // whose remote copy was deleted, with the reason.
 std::vector<std::pair<std::string, std::string>> CleanupCandidates(git_repository *repository,

@@ -18,6 +18,20 @@ gitToolCoreDep = declare_dependency(
 	dependencies: [diffKitDep]
 )
 
+executable(
+	'CodeEditGitTool',
+	files(
+		'Dialogs.cpp',
+		'GitToolApp.cpp',
+		'MainWindow.cpp',
+		'NetworkTask.cpp',
+	),
+	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.
+	include_directories: include_directories('/boot/system/develop/headers/private/interface'),
+	dependencies: [gitToolCoreDep, gitDiffUiDep, cpp.find_library('columnlistview')],
+	install: true
+)
+
 if get_option('tests')
 	gitToolTests = executable(
 		'GitToolTests',

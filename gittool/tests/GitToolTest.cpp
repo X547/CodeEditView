@@ -294,7 +294,7 @@ TEST_CASE("Set commit of the branch of a worktree updates its files", "[gittool]
 		Run(plan, fixture.Get());
 		CHECK(ReadFile(a) == "a2\n");
 		CHECK(ReadFile(b) == "b-changed\n");
-		const WorktreeInfo &worktree = fixture.Load().worktrees[0];
+		const WorktreeInfo worktree = fixture.Load().worktrees[0];
 		CHECK(worktree.staged == 1);
 		CHECK(worktree.changed == 1);
 	}

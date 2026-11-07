@@ -51,7 +51,8 @@ if get_option('gitdiff') or get_option('dircompare') or get_option('gittool')
 	subdir('diffkit')
 endif
 
-if get_option('gitdiff')
+# The Git tool shows the diff window of gitdiff.
+if get_option('gitdiff') or get_option('gittool')
 	subdir('gitdiff')
 endif
 

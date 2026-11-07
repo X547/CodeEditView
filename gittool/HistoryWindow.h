@@ -58,6 +58,7 @@ private:
 	BButton *fEditContents {};
 	BButton *fSplit {};
 	BButton *fResolve {};
+	BButton *fRebase {};
 	BButton *fReset {};
 	BButton *fApply {};
 
@@ -76,6 +77,9 @@ private:
 	void OpenStepEditor(StepEditMode mode);
 	void StepEdited(BMessage *message);
 	void Apply();
+	// Replaces the edits by a rebase of the branch onto the commit.
+	void StartRebase(const std::string &onto);
+	void ChooseRebase();
 	void ShowChanges();
 	void StatsReady(BMessage *message);
 	// The selected commit that exists as it is shown (not a pending
@@ -86,8 +90,10 @@ private:
 	void CopyCommitIds();
 
 public:
-	// edit starts in edit mode if spec is a local branch.
-	HistoryWindow(const std::string &repositoryPath, const std::string &spec, bool edit);
+	// edit starts in edit mode if spec is a local branch; with onto (a
+	// commit in revision syntax) it starts as a rebase onto it.
+	HistoryWindow(const std::string &repositoryPath, const std::string &spec, bool edit,
+		const std::string &onto = std::string());
 
 	void MessageReceived(BMessage *message) override;
 	bool QuitRequested() override;

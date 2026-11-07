@@ -68,6 +68,11 @@ struct CommitStats {
 CommitStats ReadCommitStats(git_repository *repository, const git_oid &commit);
 
 
+// Identifies the change of a commit independently of its parent; none for
+// a merge or root commit.
+std::optional<std::string> PatchId(git_repository *repository, const git_oid &commit);
+
+
 struct FileVersion {
 	git_oid id {};
 	uint32_t mode {};

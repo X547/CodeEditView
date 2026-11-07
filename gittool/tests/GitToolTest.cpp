@@ -534,7 +534,7 @@ TEST_CASE("Branch operations", "[gittool]")
 			WriteFile(fixture.directory + "/a.txt", "a-main\n");
 			CommitAll(fixture.Get(), "conflicting");
 			CHECK_THROWS_AS(PlanMergeInto(fixture.Get(), fixture.Load(), "main", "feature"), GitError);
-			CHECK_THROWS_AS(PlanReplayOnto(fixture.Get(), fixture.Load(), "feature", "main"), GitError);
+			CHECK_FALSE(PlanReplayOnto(fixture.Get(), fixture.Load(), "feature", "main").blocked.empty());
 		}
 	}
 
@@ -944,6 +944,61 @@ TEST_CASE("History content edits", "[gittool]")
 		CHECK(FileAt(repository, *splitting.NewTip(), "d.txt") == "d3\n");
 		// The result has the same contents as before.
 		CHECK(ChangesBetween(repository, m4, *splitting.NewTip()).empty());
+	}
+}
+
+
+TEST_CASE("Rebase in the history editor", "[gittool]")
+{
+	// main: first, then b.txt changed; feature: first, second (a.txt a2).
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+	WriteFile(fixture.directory + "/b.txt", "b2\n");
+	const git_oid mainTip = CommitAll(repository, "main change");
+
+	SECTION("Replay onto the new base") {
+		HistoryEdit edit(repository, "feature", mainTip, 100);
+		REQUIRE(edit.Original().size() == 1);
+		CHECK(git_oid_equal(&*edit.Base(), &fixture.first));
+		CHECK(git_oid_equal(&*edit.Start(), &mainTip));
+		CHECK(edit.FirstChanged() == 0);
+		REQUIRE(edit.Problem().empty());
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "main change", "second"});
+		Run(edit.PlanApply(fixture.Load()), repository);
+		const BranchInfo feature = *fixture.Load().FindBranch("feature");
+		CHECK(git_graph_descendant_of(repository, &feature.commit, &mainTip) == 1);
+
+		// Based on it now: nothing to do.
+		HistoryEdit again(repository, "feature", mainTip, 100);
+		CHECK_FALSE(again.HasChanges());
+	}
+
+	SECTION("A change the new base has is left out") {
+		// main gets the same change as feature's commit.
+		WriteFile(fixture.directory + "/a.txt", "a2\n");
+		const git_oid picked = CommitAll(repository, "same as second");
+		HistoryEdit edit(repository, "feature", picked, 100);
+		REQUIRE(edit.Results().size() == 1);
+		CHECK(edit.Results()[0].state == StepState::AlreadyInBase);
+		CHECK(git_oid_equal(&*edit.NewTip(), &picked));
+	}
+
+	SECTION("A conflict is resolved in the editor") {
+		WriteFile(fixture.directory + "/a.txt", "a-main\n");
+		const git_oid conflicting = CommitAll(repository, "conflicting");
+		HistoryEdit edit(repository, "feature", conflicting, 100);
+		REQUIRE(edit.Results()[0].state == StepState::Conflict);
+		CHECK_FALSE(PlanReplayOnto(repository, fixture.Load(), "feature", "main").blocked.empty());
+		FileOverride resolution = Content(repository, "a-both\n");
+		resolution.resolves = edit.Results()[0].conflictFiles[0];
+		edit.SetFiles(0, {{"a.txt", resolution}});
+		REQUIRE(edit.Problem().empty());
+		CHECK(FileAt(repository, *edit.NewTip(), "a.txt") == "a-both\n");
+	}
+
+	SECTION("A branch that the new base contains has nothing to replay") {
+		HistoryEdit edit(repository, "main", fixture.first, 100);
+		CHECK_FALSE(edit.HasChanges());
 	}
 }
 

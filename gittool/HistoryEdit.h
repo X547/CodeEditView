@@ -2,6 +2,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,8 @@ enum class StepState {
 	Rewritten,
 	// Its changes are already there; it is left out.
 	Empty,
+	// The new base of a rebase has the same change; it is left out.
+	AlreadyInBase,
 	// The change does not apply; nothing after it is replayed.
 	Conflict,
 	// After a conflict.
@@ -89,11 +92,13 @@ struct StepResult {
 
 // Pending edits of a branch's history: a list of steps, oldest first, that
 // starts as the branch's commits back to its newest merge (merges and what
-// is older cannot be edited). Replaying them changes nothing in the
-// repository except adding objects; Apply moves the branch once.
+// is older cannot be edited), or for a rebase, its commits that the new
+// base does not have. Replaying them changes nothing in the repository
+// except adding objects; Apply moves the branch once.
 //
 // The replay starts at the oldest position that differs from the original
-// list; the commits before it keep their ids.
+// list (at the first one for a rebase); the commits before it keep their
+// ids.
 class HistoryEdit {
 private:
 	git_repository *fRepository;
@@ -103,6 +108,11 @@ private:
 	// (none at the root).
 	std::vector<git_oid> fOriginal;
 	std::optional<git_oid> fBase;
+	// The new base of a rebase.
+	std::optional<git_oid> fOnto;
+	// Patch ids of the new base's commits that the branch does not have.
+	std::set<std::string> fBasePatches;
+	std::map<std::string, std::optional<std::string>> fPatchIds;
 	std::vector<EditStep> fSteps;
 
 	std::vector<StepResult> fResults;
@@ -112,6 +122,9 @@ private:
 public:
 	// The newest limit commits of the branch at most.
 	HistoryEdit(git_repository *repository, const std::string &branch, size_t limit);
+	// A rebase onto a commit: the branch's commits that it does not have.
+	// Throws if they are more than limit or include a merge.
+	HistoryEdit(git_repository *repository, const std::string &branch, const git_oid &onto, size_t limit);
 
 	const std::string &Branch() const {return fBranch;}
 	const git_oid &Tip() const {return fTip;}
@@ -119,6 +132,10 @@ public:
 	const std::vector<git_oid> &Original() const {return fOriginal;}
 	// The commit the editable ones start on; none at the root.
 	const std::optional<git_oid> &Base() const {return fBase;}
+	// The new base for a rebase; none otherwise.
+	const std::optional<git_oid> &Onto() const {return fOnto;}
+	// What the replay starts on: the new base, or Base().
+	const std::optional<git_oid> &Start() const {return fOnto.has_value() ? fOnto : fBase;}
 
 	// Edits; indexes are positions in Steps(), position is where the
 	// steps go (0 is the oldest position, Steps().size() the newest).

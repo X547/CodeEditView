@@ -27,6 +27,7 @@
 #include "DiffView.h"
 #include "DiffWindow.h"
 #include "Dialogs.h"
+#include "HistoryEdit.h"
 #include "HistoryWindow.h"
 #include "Messages.h"
 #include "Operations.h"
@@ -65,6 +66,7 @@ enum class Action {
 	BranchUpdateFromTracked,
 	BranchMerge,
 	BranchReplay,
+	BranchRebaseInteractive,
 	BranchUpload,
 	BranchSetUpstream,
 	BranchStopTracking,
@@ -160,6 +162,7 @@ static const std::vector<ActionItem> kBranchActions = {
 	{Action::BranchUpdateFromTracked, "Update from tracked" ELLIPSIS},
 	{Action::BranchMerge, "Merge another branch into this" ELLIPSIS},
 	{Action::BranchReplay, "Replay onto" ELLIPSIS},
+	{Action::BranchRebaseInteractive, "Replay interactively onto" ELLIPSIS},
 	kSeparator,
 	{Action::BranchUpload, "Upload" ELLIPSIS},
 	{Action::BranchSetUpstream, "Set tracked remote branch" ELLIPSIS},
@@ -964,7 +967,12 @@ void MainWindow::NetworkDone(BMessage *message)
 			const std::string branch = message->GetString("branch", "");
 			const UpdateMode mode = static_cast<UpdateMode>(message->GetInt32("mode", 0));
 			try {
-				Execute(PlanUpdateFromTracked(fRepository.get(), fSnapshot, branch, mode));
+				const BranchInfo *info = fSnapshot.FindBranch(branch);
+				if (mode == UpdateMode::Replay && info != nullptr && !info->upstreamGone && !info->upstream.empty()) {
+					RebaseBranch(branch, info->upstream);
+				} else {
+					Execute(PlanUpdateFromTracked(fRepository.get(), fSnapshot, branch, mode));
+				}
 			} catch (const std::exception &e) {
 				ShowError(e.what());
 			}
@@ -1282,7 +1290,11 @@ void MainWindow::UpdateFromTracked(const BranchInfo &branch)
 	const UpdateMode mode = static_cast<UpdateMode>(form.Choice("mode"));
 	const std::string remote = UpstreamRemote(fRepository.get(), branch.name);
 	if (remote.empty()) {
-		Execute(PlanUpdateFromTracked(fRepository.get(), fSnapshot, branch.name, mode));
+		if (mode == UpdateMode::Replay) {
+			RebaseBranch(branch.name, branch.upstream);
+		} else {
+			Execute(PlanUpdateFromTracked(fRepository.get(), fSnapshot, branch.name, mode));
+		}
 		return;
 	}
 	BMessage done(kMsgNetworkDone);
@@ -1407,13 +1419,19 @@ void MainWindow::RunBranchAction(Action action)
 			UpdateFromTracked(branch);
 			break;
 		case Action::BranchMerge:
-		case Action::BranchReplay: {
+		case Action::BranchReplay:
+		case Action::BranchRebaseInteractive: {
 			std::string spec = branch.upstream.empty() || branch.upstreamGone ? std::string() : branch.upstream;
 			if (!PickCommit(repository, fSnapshot, spec)) {
 				break;
 			}
-			Execute(action == Action::BranchMerge ? PlanMergeInto(repository, fSnapshot, branch.name, spec)
-				: PlanReplayOnto(repository, fSnapshot, branch.name, spec));
+			if (action == Action::BranchMerge) {
+				Execute(PlanMergeInto(repository, fSnapshot, branch.name, spec));
+			} else if (action == Action::BranchReplay) {
+				RebaseBranch(branch.name, spec);
+			} else {
+				ShowHistory(branch.name, true, spec);
+			}
 			break;
 		}
 		case Action::BranchUpload: {
@@ -1815,12 +1833,41 @@ void MainWindow::OpenDiff(const WorktreeInfo &worktree)
 }
 
 
-void MainWindow::ShowHistory(const std::string &spec, bool edit)
+void MainWindow::ShowHistory(const std::string &spec, bool edit, const std::string &onto)
 {
 	try {
-		(new HistoryWindow(fRepositoryPath, spec, edit))->Show();
+		(new HistoryWindow(fRepositoryPath, spec, edit, onto))->Show();
 	} catch (const std::exception &e) {
 		ShowError(e.what());
+	}
+}
+
+
+void MainWindow::RebaseBranch(const std::string &branch, const std::string &onto)
+{
+	git_repository *repository = fRepository.get();
+	const git_oid commit = ResolveCommit(repository, onto);
+	const HistoryEdit edit(repository, branch, commit, 1000);
+	if (!edit.HasChanges()) {
+		ShowError(("Branch " + branch + " is already based on " + onto).c_str());
+		return;
+	}
+	bool conflicts = false;
+	for (const StepResult &result : edit.Results()) {
+		conflicts = conflicts || result.state == StepState::Conflict;
+	}
+	if (!conflicts) {
+		Plan plan = edit.PlanApply(fSnapshot);
+		plan.title = "Replay branch " + branch + " onto " + onto;
+		Execute(plan);
+		return;
+	}
+	BAlert *alert = new BAlert("Git", ("Replaying " + branch + " onto " + onto
+		+ " has conflicts. Resolve them in the history editor?").c_str(), "Cancel", "Open the editor", nullptr,
+		B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+	alert->SetShortcut(0, B_ESCAPE);
+	if (alert->Go() == 1) {
+		ShowHistory(branch, true, onto);
 	}
 }
 

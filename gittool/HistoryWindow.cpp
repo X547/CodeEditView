@@ -371,6 +371,9 @@ static std::string StateText(const EditStep &step, const StepResult &result)
 		case StepState::Conflict:
 			text = "⚠ conflict";
 			break;
+		case StepState::AlreadyInBase:
+			text = "in new base, left out";
+			break;
 		case StepState::Pending:
 			text = "pending";
 			break;
@@ -382,7 +385,8 @@ static std::string StateText(const EditStep &step, const StepResult &result)
 }
 
 
-HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::string &spec, bool edit):
+HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::string &spec, bool edit,
+	const std::string &onto):
 	BWindow(
 		BRect(120, 120, 979, 719),
 		"History",
@@ -426,6 +430,8 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fCombine->SetToolTip("Combine the commit with the older one before it");
 	fReset = new BButton("Reset", new BMessage(kMsgResetEdits));
 	fApply = new BButton("Apply" B_UTF8_ELLIPSIS, new BMessage(kMsgApplyEdits));
+	fRebase = new BButton("Rebase" B_UTF8_ELLIPSIS, new BMessage(kMsgRebaseOnto));
+	fRebase->SetToolTip("Replay the branch's commits onto another commit");
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_SMALL_SPACING)
 		.SetInsets(B_USE_SMALL_SPACING)
@@ -446,12 +452,15 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 			.Add(fSplit)
 			.Add(fResolve)
 			.AddGlue()
+			.Add(fRebase)
 			.Add(fReset)
 			.Add(fApply)
 		.End();
 
 	ShowHistoryOf(spec);
-	if (edit && fEditMode->IsEnabled()) {
+	if (!onto.empty() && fEditMode->IsEnabled()) {
+		StartRebase(onto);
+	} else if (edit && fEditMode->IsEnabled()) {
 		fEditMode->SetValue(B_CONTROL_ON);
 		SetEditMode(true);
 	}
@@ -542,8 +551,10 @@ void HistoryWindow::FillList()
 			rows.push_back(addRow(steps[i].commit, static_cast<int32>(i), StateText(steps[i], results[i]),
 				FirstLine(fEdit->Message(i)), statsCommit));
 		}
-		if (fEdit->Base().has_value()) {
-			rows.push_back(addRow(*fEdit->Base(), -1, "not editable", std::string(), *fEdit->Base()));
+		if (fEdit->Start().has_value()) {
+			const git_oid start = *fEdit->Start();
+			rows.push_back(addRow(start, -1, fEdit->Onto().has_value() ? "new base" : "not editable", std::string(),
+				start));
 		}
 	} else {
 		for (const CommitInfo &commit : fCommits) {
@@ -604,6 +615,7 @@ void HistoryWindow::UpdateControls()
 	fResolve->SetEnabled(result != nullptr && result->state == StepState::Conflict && !result->conflictFiles.empty());
 	fReset->SetEnabled(editing && fEdit->HasChanges());
 	fApply->SetEnabled(editing && fEdit->HasChanges() && fEdit->Problem().empty());
+	fRebase->SetEnabled(isBranch);
 	if (editing && steps.size() == 1) {
 		fCombine->SetLabel(fEdit->Steps()[steps[0]].squash ? "Separate" : "Combine");
 	}
@@ -621,7 +633,7 @@ void HistoryWindow::UpdateControls()
 		status = fEdit->Problem();
 		if (status.empty()) {
 			const size_t first = *fEdit->FirstChanged();
-			const std::optional<git_oid> base = first == 0 ? fEdit->Base()
+			const std::optional<git_oid> base = first == 0 ? fEdit->Start()
 				: std::optional<git_oid>(fEdit->Original()[first - 1]);
 			status = "Pending changes; the commits after "
 				+ (base.has_value() ? ShortId(*base) : std::string("the start")) + " are rewritten on Apply.";
@@ -812,6 +824,37 @@ void HistoryWindow::StepEdited(BMessage *message)
 }
 
 
+void HistoryWindow::StartRebase(const std::string &onto)
+{
+	if (!ConfirmDiscard()) {
+		return;
+	}
+	try {
+		const git_oid commit = ResolveCommit(fRepository.get(), onto);
+		fEdit = std::make_unique<HistoryEdit>(fRepository.get(), fSpec, commit, kHistoryLimit);
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+		return;
+	}
+	fEditMode->SetValue(B_CONTROL_ON);
+	SetTitle(("Rebase " + fSpec + " onto " + onto).c_str());
+	FillList();
+}
+
+
+// The new base defaults to the remote copy the branch tracks.
+void HistoryWindow::ChooseRebase()
+{
+	std::string spec;
+	if (const BranchInfo *branch = fSnapshot.FindBranch(fSpec); branch != nullptr && !branch->upstreamGone) {
+		spec = branch->upstream;
+	}
+	if (PickCommit(fRepository.get(), fSnapshot, spec)) {
+		StartRebase(spec);
+	}
+}
+
+
 void HistoryWindow::Apply()
 {
 	Reload();
@@ -869,6 +912,7 @@ void HistoryWindow::ShowContextMenu(BPoint where)
 	menu->AddSeparatorItem();
 	AddMenuItem(menu, "Create branch here" B_UTF8_ELLIPSIS, kMsgCreateBranchAt, existing);
 	AddMenuItem(menu, "Create tag here" B_UTF8_ELLIPSIS, kMsgCreateTagAt, existing);
+	AddMenuItem(menu, "Rebase onto" B_UTF8_ELLIPSIS, kMsgRebaseOnto, fRebase->IsEnabled());
 	if (fEdit != nullptr) {
 		menu->AddSeparatorItem();
 		AddMenuItem(menu, "Remove", kMsgRemoveSteps, fRemove->IsEnabled());
@@ -1007,6 +1051,9 @@ void HistoryWindow::MessageReceived(BMessage *message)
 				fEdit->Reset();
 				FillList();
 			}
+			break;
+		case kMsgRebaseOnto:
+			ChooseRebase();
 			break;
 		case kMsgApplyEdits:
 			Apply();

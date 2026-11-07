@@ -68,6 +68,7 @@ constexpr uint32 kMsgHistoryMenu = 'GThm';
 constexpr uint32 kMsgCreateBranchAt = 'GTcr';
 constexpr uint32 kMsgCreateTagAt = 'GTtg';
 constexpr uint32 kMsgCopyCommitId = 'GTcp';
+constexpr uint32 kMsgRebaseOnto = 'GTro';
 constexpr uint32 kMsgEditContents = 'GTec';
 constexpr uint32 kMsgSplitStep = 'GTsl';
 constexpr uint32 kMsgResolveStep = 'GTrv';

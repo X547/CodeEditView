@@ -9,22 +9,9 @@
 namespace GitTool {
 
 
-// In-memory merge and replay (rebase): they create commits in the database
-// but move no reference and touch no worktree. Conflicts are not resolved
-// yet; they throw.
-
-
-struct ReplayResult {
-	git_oid head {};
-	std::vector<CommitInfo> applied;
-	// Commits whose changes are already in the base, or that become empty.
-	std::vector<CommitInfo> skipped;
-};
-
-
-// Applies the commits reachable from tip but not from onto on top of onto,
-// keeping their authors and messages.
-ReplayResult Replay(git_repository *repository, const git_oid &tip, const git_oid &onto);
+// In-memory merge: it creates commits in the database but moves no
+// reference and touches no worktree. Conflicts are not resolved; they
+// throw. Replays (rebases) are HistoryEdit's.
 
 
 struct MergeResult {

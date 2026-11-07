@@ -5,6 +5,7 @@
 
 #include <set>
 
+#include "HistoryEdit.h"
 #include "Replay.h"
 
 
@@ -723,6 +724,10 @@ Plan PlanSetBranchCommit(git_repository *repository, const Snapshot &snapshot, c
 }
 
 
+// Commits a replay (rebase) takes at most.
+static constexpr size_t kReplayLimit = 1000;
+
+
 static Plan PlanIntegrate(git_repository *repository, const Snapshot &snapshot, const BranchInfo &branch,
 	const git_oid &theirs, const std::string &theirName, UpdateMode mode, const std::string &title)
 {
@@ -752,28 +757,18 @@ static Plan PlanIntegrate(git_repository *repository, const Snapshot &snapshot, 
 			break;
 		}
 		case UpdateMode::Replay: {
-			const ReplayResult result = Replay(repository, branch.commit, theirs);
-			if (git_oid_equal(&result.head, &branch.commit)) {
+			// The history editor's replay; conflicts are resolved there.
+			const HistoryEdit edit(repository, branch.name, theirs, kReplayLimit);
+			if (!edit.HasChanges()) {
 				plan.blocked = "Branch " + branch.name + " is already based on " + theirName;
 				return plan;
 			}
-			if (!result.applied.empty()) {
-				std::string step = "Replay " + std::to_string(result.applied.size()) + " commits onto " + theirName + ":";
-				for (const CommitInfo &commit : result.applied) {
-					step += "\n      " + ShortId(commit.id) + " " + commit.summary;
-				}
-				plan.steps.push_back(step);
+			Plan applyPlan = edit.PlanApply(snapshot);
+			applyPlan.title = title;
+			if (!applyPlan.blocked.empty()) {
+				applyPlan.blocked += "; replay it in the history editor to resolve it";
 			}
-			if (!result.skipped.empty()) {
-				std::string step = "Skip " + std::to_string(result.skipped.size())
-					+ " commits already in " + theirName + " or empty:";
-				for (const CommitInfo &commit : result.skipped) {
-					step += "\n      " + ShortId(commit.id) + " " + commit.summary;
-				}
-				plan.steps.push_back(step);
-			}
-			target = result.head;
-			break;
+			return applyPlan;
 		}
 	}
 	PlanBranchMove(repository, snapshot, branch, target, plan);

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "CommitDiff.h"
+
 
 namespace GitTool {
 
@@ -55,6 +57,58 @@ HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, 
 		id = *git_commit_parent_id(commit.get(), 0);
 	}
 	std::reverse(fOriginal.begin(), fOriginal.end());
+	Reset();
+}
+
+
+HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, const git_oid &onto, size_t limit):
+	fRepository(repository),
+	fBranch(branch),
+	fOnto(onto)
+{
+	Check(git_reference_name_to_id(&fTip, repository, ("refs/heads/" + branch).c_str()), "Cannot read the branch");
+
+	git_revwalk *walk = nullptr;
+	Check(git_revwalk_new(&walk, repository), "Cannot read the history");
+	RevwalkPtr walkPtr(walk);
+	git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL | GIT_SORT_REVERSE);
+	Check(git_revwalk_push(walk, &fTip), "Cannot read the history");
+	Check(git_revwalk_hide(walk, &onto), "Cannot read the history");
+	git_oid id;
+	while (git_revwalk_next(&id, walk) == 0) {
+		if (fOriginal.size() >= limit) {
+			throw GitError("Branch " + branch + " has more than " + std::to_string(limit) + " commits to replay");
+		}
+		CommitPtr commit = LookupCommit(repository, id);
+		if (git_commit_parentcount(commit.get()) > 1) {
+			throw GitError("Commit " + ShortId(id) + " is a merge; replaying merges is not supported yet");
+		}
+		fOriginal.push_back(id);
+	}
+	// Where the branch left the new base's history; the branch itself if
+	// the new base has all of it.
+	fBase = fTip;
+	if (!fOriginal.empty()) {
+		CommitPtr oldest = LookupCommit(repository, fOriginal[0]);
+		fBase.reset();
+		if (git_commit_parentcount(oldest.get()) == 1) {
+			fBase = *git_commit_parent_id(oldest.get(), 0);
+		}
+	}
+
+	// Commits of the new base that the branch does not have, to leave out
+	// the branch's commits whose change they already make.
+	constexpr size_t kMaxBaseCommits = 2000;
+	git_revwalk *baseWalk = nullptr;
+	Check(git_revwalk_new(&baseWalk, repository), "Cannot read the history");
+	RevwalkPtr baseWalkPtr(baseWalk);
+	Check(git_revwalk_push(baseWalk, &onto), "Cannot read the history");
+	Check(git_revwalk_hide(baseWalk, &fTip), "Cannot read the history");
+	for (size_t count = 0; count < kMaxBaseCommits && git_revwalk_next(&id, baseWalk) == 0; count++) {
+		if (const std::optional<std::string> patchId = PatchId(repository, id)) {
+			fBasePatches.insert(*patchId);
+		}
+	}
 	Reset();
 }
 
@@ -180,6 +234,12 @@ void HistoryEdit::SetMessage(size_t index, const std::string &message)
 
 std::optional<size_t> HistoryEdit::FirstChanged() const
 {
+	// A rebase onto another commit replays everything.
+	const bool sameStart = fOnto.has_value() == fBase.has_value()
+		&& (!fOnto.has_value() || git_oid_equal(&*fOnto, &*fBase));
+	if (fOnto.has_value() && !sameStart) {
+		return 0;
+	}
 	const size_t count = std::max(fSteps.size(), fOriginal.size());
 	for (size_t i = 0; i < count; i++) {
 		if (i >= fSteps.size() || i >= fOriginal.size()) {
@@ -302,7 +362,7 @@ void HistoryEdit::Replay()
 		return;
 	}
 
-	std::optional<git_oid> current = replayStart == 0 ? fBase : std::optional<git_oid>(fOriginal[replayStart - 1]);
+	std::optional<git_oid> current = replayStart == 0 ? Start() : std::optional<git_oid>(fOriginal[replayStart - 1]);
 	git_signature *committerSignature = nullptr;
 	if (git_signature_default(&committerSignature, fRepository) < 0) {
 		git_error_clear();
@@ -327,6 +387,22 @@ void HistoryEdit::Replay()
 		const EditStep &step = fSteps[i];
 		StepResult &result = fResults[i];
 		try {
+			// A commit taken as it is whose change the new base already has.
+			const bool unedited = !step.copied && !step.squash && !step.message.has_value() && step.files.empty()
+				&& !step.completesPrevious;
+			if (unedited && !fBasePatches.empty()) {
+				const std::string key = OidString(step.commit);
+				auto cached = fPatchIds.find(key);
+				if (cached == fPatchIds.end()) {
+					cached = fPatchIds.emplace(key, PatchId(fRepository, step.commit)).first;
+				}
+				if (cached->second.has_value() && fBasePatches.count(*cached->second) > 0) {
+					result.state = StepState::AlreadyInBase;
+					result.commit = current.value_or(git_oid {});
+					result.parent = current;
+					continue;
+				}
+			}
 			CommitPtr commit = LookupCommit(fRepository, step.commit);
 			if (git_commit_parentcount(commit.get()) > 1) {
 				throw GitError("merge commits cannot be replayed");
@@ -476,10 +552,10 @@ Plan HistoryEdit::PlanApply(const Snapshot &snapshot) const
 	size_t empty = 0;
 	for (const StepResult &result : fResults) {
 		rewritten += result.state == StepState::Rewritten ? 1 : 0;
-		empty += result.state == StepState::Empty ? 1 : 0;
+		empty += result.state == StepState::Empty || result.state == StepState::AlreadyInBase ? 1 : 0;
 	}
 	const size_t first = *FirstChanged();
-	const std::optional<git_oid> start = first == 0 ? fBase : std::optional<git_oid>(fOriginal[first - 1]);
+	const std::optional<git_oid> start = first == 0 ? Start() : std::optional<git_oid>(fOriginal[first - 1]);
 	std::string step = "Replay " + std::to_string(fSteps.size() - first) + " commits on "
 		+ (start.has_value() ? Describe(fRepository, *start) : std::string("an empty history"))
 		+ ": " + std::to_string(rewritten) + " written";
@@ -487,6 +563,16 @@ Plan HistoryEdit::PlanApply(const Snapshot &snapshot) const
 		step += ", " + std::to_string(empty) + " left out as empty";
 	}
 	plan.steps.push_back(step);
+	if (fOnto.has_value()) {
+		size_t saved = 0;
+		for (const EditStep &editStep : fSteps) {
+			saved += editStep.files.empty() ? 0 : 1;
+		}
+		if (saved > 0) {
+			plan.warnings.push_back(std::to_string(saved) + " commits have edited or resolved files; they keep "
+				"their contents as written, so check that they still fit the new base");
+		}
+	}
 	PlanBranchMove(fRepository, snapshot, *branch, *fNewTip, plan);
 	const std::string name = fBranch;
 	const git_oid oldId = fTip;

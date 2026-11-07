@@ -141,6 +141,25 @@ CommitStats ReadCommitStats(git_repository *repository, const git_oid &commitId)
 }
 
 
+std::optional<std::string> PatchId(git_repository *repository, const git_oid &commitId)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &commitId), "Cannot read the commit");
+	CommitPtr commitPtr(commit);
+	if (git_commit_parentcount(commit) != 1) {
+		return std::nullopt;
+	}
+	TreePtr oldTree = TreeOfCommit(repository, *git_commit_parent_id(commit, 0));
+	TreePtr newTree = TreeOfCommit(repository, commitId);
+	git_diff *diff = nullptr;
+	Check(git_diff_tree_to_tree(&diff, repository, oldTree.get(), newTree.get(), nullptr), "Cannot compare the trees");
+	DiffPtr diffPtr(diff);
+	git_oid id;
+	Check(git_diff_patchid(&id, diff, nullptr), "Cannot compute the patch ID");
+	return OidString(id);
+}
+
+
 std::optional<FileVersion> ReadPath(git_repository *repository, const std::optional<git_oid> &commit,
 	const std::string &path)
 {

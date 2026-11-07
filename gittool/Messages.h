@@ -50,5 +50,17 @@ constexpr uint32 kMsgToggleSyncScrolling = 'GTss';
 constexpr uint32 kMsgToggleHideUnchanged = 'GThu';
 constexpr uint32 kMsgToggleWordWrap = 'GTww';
 
+// History window.
+constexpr uint32 kMsgEditMode = 'GTem';
+constexpr uint32 kMsgRemoveSteps = 'GTrs';
+constexpr uint32 kMsgCombineStep = 'GTcb';
+constexpr uint32 kMsgRewordStep = 'GTrw';
+constexpr uint32 kMsgResetEdits = 'GTrz';
+constexpr uint32 kMsgApplyEdits = 'GTap';
+// Dragged commits: "commit" (raw git_oid, repeated), "source"
+// (messenger of the window), "step" (int32, repeated, in edit mode); when
+// dropped, "row" (int32, -1 below the rows).
+constexpr uint32 kMsgDragCommits = 'GTdg';
+
 
 } // GitTool

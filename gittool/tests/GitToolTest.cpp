@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "CommitDiff.h"
+#include "HistoryEdit.h"
 #include "Network.h"
 #include "Operations.h"
 #include "Plan.h"
@@ -711,6 +712,118 @@ TEST_CASE("Commit changes", "[gittool]")
 	CHECK(details.author.name == "Test");
 	REQUIRE(details.parents.size() == 1);
 	CHECK(git_oid_equal(&details.parents[0], &fixture.first));
+}
+
+
+// The commits from a tip down its first parents, oldest first.
+static std::vector<std::string> Summaries(git_repository *repository, const git_oid &tip)
+{
+	std::vector<std::string> summaries;
+	for (const CommitInfo &commit : History(repository, tip, 100)) {
+		summaries.insert(summaries.begin(), commit.summary);
+	}
+	return summaries;
+}
+
+
+TEST_CASE("History edits", "[gittool]")
+{
+	// main: first, m1 (c.txt), m2 (d.txt), m3 (c.txt again).
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+	WriteFile(fixture.directory + "/c.txt", "c1\n");
+	const git_oid m1 = CommitAll(repository, "m1");
+	WriteFile(fixture.directory + "/d.txt", "d1\n");
+	CommitAll(repository, "m2");
+	WriteFile(fixture.directory + "/c.txt", "c2\n");
+	const git_oid m3 = CommitAll(repository, "m3");
+
+	HistoryEdit edit(repository, "main", 100);
+	REQUIRE(edit.Original().size() == 4);
+	CHECK_FALSE(edit.Base().has_value());
+	CHECK_FALSE(edit.HasChanges());
+	CHECK(git_oid_equal(&*edit.NewTip(), &m3));
+	CHECK_FALSE(edit.Problem().empty());
+
+	SECTION("Remove a commit; older ones keep their ids") {
+		edit.Remove({2});
+		CHECK(edit.FirstChanged() == 2);
+		CHECK(edit.Results()[1].state == StepState::Kept);
+		CHECK(git_oid_equal(&edit.Results()[1].commit, &m1));
+		CHECK(edit.Results()[2].state == StepState::Rewritten);
+		CHECK(edit.Problem().empty());
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1", "m3"});
+
+		Plan plan = edit.PlanApply(fixture.Load());
+		REQUIRE(plan.worktrees.size() == 1);
+		CHECK(plan.unreachableCount == 2);
+		Run(plan, repository);
+		CHECK_FALSE(Exists(fixture.directory + "/d.txt"));
+		CHECK(ReadFile(fixture.directory + "/c.txt") == "c2\n");
+	}
+
+	SECTION("Moving a commit before the one it depends on conflicts") {
+		edit.Move({3}, 1);
+		CHECK(edit.FirstChanged() == 1);
+		CHECK(edit.Results()[1].state == StepState::Conflict);
+		CHECK(edit.Results()[1].conflicts == std::vector<std::string> {"c.txt"});
+		CHECK(edit.Results()[2].state == StepState::Pending);
+		CHECK_FALSE(edit.NewTip().has_value());
+		CHECK_FALSE(edit.Problem().empty());
+		CHECK_FALSE(edit.PlanApply(fixture.Load()).blocked.empty());
+
+		// Moving it back leaves nothing changed.
+		edit.Move({1}, 4);
+		CHECK_FALSE(edit.HasChanges());
+	}
+
+	SECTION("Moving an independent commit") {
+		edit.Move({2}, 4);
+		CHECK(edit.FirstChanged() == 2);
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1", "m3", "m2"});
+	}
+
+	SECTION("Squash") {
+		edit.SetSquash(2, true);
+		CHECK(edit.FirstChanged() == 1);
+		CHECK(git_oid_equal(&edit.Results()[1].commit, &edit.Results()[2].commit));
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1", "m3"});
+		const CommitDetails squashed = ReadCommitDetails(repository, edit.Results()[1].commit);
+		CHECK(squashed.message == "m1\n\nm2");
+	}
+
+	SECTION("Reword") {
+		edit.SetMessage(3, "m3 reworded");
+		CHECK(edit.FirstChanged() == 3);
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1", "m2", "m3 reworded"});
+		CHECK(edit.Results()[2].state == StepState::Kept);
+		edit.SetMessage(3, "m3\n");
+		CHECK_FALSE(edit.HasChanges());
+	}
+
+	SECTION("Copy a commit from another branch") {
+		edit.Insert({fixture.second}, 4);
+		CHECK(edit.Steps()[4].copied);
+		CHECK(edit.FirstChanged() == 4);
+		const git_oid tip = *edit.NewTip();
+		CHECK(Summaries(repository, tip).back() == "second");
+		CHECK(ReadCommitDetails(repository, tip).parents.size() == 1);
+		CHECK(git_oid_equal(&ReadCommitDetails(repository, tip).parents[0], &m3));
+	}
+
+	SECTION("Removing every commit is refused") {
+		edit.Remove({0, 1, 2, 3});
+		CHECK_FALSE(edit.NewTip().has_value());
+		CHECK_FALSE(edit.Problem().empty());
+	}
+
+	SECTION("Limited history starts on the next older commit") {
+		HistoryEdit limited(repository, "main", 2);
+		REQUIRE(limited.Original().size() == 2);
+		CHECK(git_oid_equal(&*limited.Base(), &m1));
+		limited.Remove({0});
+		CHECK(Summaries(repository, *limited.NewTip()) == std::vector<std::string> {"first", "m1", "m3"});
+	}
 }
 
 

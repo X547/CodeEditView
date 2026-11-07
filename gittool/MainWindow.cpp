@@ -27,6 +27,7 @@
 #include "DiffView.h"
 #include "DiffWindow.h"
 #include "Dialogs.h"
+#include "HistoryWindow.h"
 #include "Messages.h"
 #include "Operations.h"
 #include "Repository.h"
@@ -75,6 +76,7 @@ enum class Action {
 	BranchPreviousPositions,
 	BranchUndo,
 	BranchHistory,
+	BranchEditHistory,
 
 	AddRemote,
 	DownloadAll,
@@ -172,6 +174,7 @@ static const std::vector<ActionItem> kBranchActions = {
 	{Action::BranchPreviousPositions, "Previous positions" ELLIPSIS},
 	{Action::BranchUndo, "Undo last change" ELLIPSIS},
 	{Action::BranchHistory, "Show history"},
+	{Action::BranchEditHistory, "Edit history" ELLIPSIS},
 };
 
 static const std::vector<ActionItem> kRemoteActions = {
@@ -1521,7 +1524,10 @@ void MainWindow::RunBranchAction(Action action)
 			break;
 		}
 		case Action::BranchHistory:
-			ShowHistory(fRepositoryPath, fSnapshot, branch.name);
+			ShowHistory(branch.name, false);
+			break;
+		case Action::BranchEditHistory:
+			ShowHistory(branch.name, true);
 			break;
 		default:
 			break;
@@ -1594,7 +1600,7 @@ void MainWindow::RunRemoteAction(Action action)
 				Execute(PlanDeleteOnServer(fSnapshot, remote, "refs/heads/" + copy.branch));
 				break;
 			case Action::CopyHistory:
-				ShowHistory(fRepositoryPath, fSnapshot, copy.name);
+				ShowHistory(copy.name, false);
 				break;
 			default:
 				break;
@@ -1773,7 +1779,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagHistory:
-			ShowHistory(fRepositoryPath, fSnapshot, spec);
+			ShowHistory(spec, false);
 			break;
 		default:
 			break;
@@ -1805,6 +1811,16 @@ void MainWindow::OpenDiff(const WorktreeInfo &worktree)
 	GitDiff::DiffWindow *window = new GitDiff::DiffWindow(std::move(diffRepository), std::string());
 	fDiffWindows[worktree.path] = BMessenger(window);
 	window->Show();
+}
+
+
+void MainWindow::ShowHistory(const std::string &spec, bool edit)
+{
+	try {
+		(new HistoryWindow(fRepositoryPath, spec, edit))->Show();
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
 }
 
 

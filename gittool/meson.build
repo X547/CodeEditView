@@ -5,6 +5,7 @@ gitToolCore = static_library(
 	'gittoolcore',
 	files(
 		'CommitDiff.cpp',
+		'HistoryEdit.cpp',
 		'Network.cpp',
 		'Operations.cpp',
 		'Plan.cpp',
@@ -25,6 +26,7 @@ executable(
 		'CommitWindow.cpp',
 		'Dialogs.cpp',
 		'GitToolApp.cpp',
+		'HistoryWindow.cpp',
 		'MainWindow.cpp',
 		'NetworkTask.cpp',
 	),

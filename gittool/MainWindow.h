@@ -124,6 +124,8 @@ private:
 	void UploadTags();
 	void OpenDiff(const WorktreeInfo &worktree);
 	void OpenFolder(const std::string &path);
+	// A history window; edit starts in edit mode for a local branch.
+	void ShowHistory(const std::string &spec, bool edit);
 
 public:
 	explicit MainWindow(RepositoryPtr repository);

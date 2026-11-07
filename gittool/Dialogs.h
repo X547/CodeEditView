@@ -14,6 +14,7 @@ class BCheckBox;
 class BColumnListView;
 class BButton;
 class BMenuField;
+class BPopUpMenu;
 class BTextControl;
 class BTextView;
 
@@ -50,6 +51,8 @@ enum class FieldKind {
 	Text,
 	Password,
 	MultiLine,
+	// A commit message, edited like in Git Diff.
+	Message,
 	Check,
 	Choice,
 	Commit,
@@ -85,6 +88,7 @@ public:
 	Form &AddText(const std::string &name, const std::string &label, const std::string &text = std::string());
 	Form &AddPassword(const std::string &name, const std::string &label);
 	Form &AddMultiLine(const std::string &name, const std::string &label, const std::string &text = std::string());
+	Form &AddMessage(const std::string &name, const std::string &label, const std::string &text = std::string());
 	Form &AddCheck(const std::string &name, const std::string &label, bool checked = false);
 	Form &AddChoice(const std::string &name, const std::string &label, const std::vector<std::string> &choices,
 		int choice = 0);
@@ -107,9 +111,9 @@ public:
 // Lets the user pick a commit from the history of a branch, remote copy,
 // tag or worktree, or enter it. spec is the initial and the chosen value.
 bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec);
-// The same window without choosing, not modal, with its own repository
-// handle; commits open in a commit window.
-void ShowHistory(const std::string &repositoryPath, const Snapshot &snapshot, const std::string &spec);
+// The branches, remote copies, worktree positions and recent tags; items
+// send kMsgHistoryOf with "spec", the one equal to current is marked.
+BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current);
 
 
 // Shows the preview of a plan; true if the user chose to run it, with the

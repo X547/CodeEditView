@@ -21,8 +21,11 @@
 #include <TextControl.h>
 #include <TextView.h>
 
+#include <CodeEditView/CodeEditView.h>
+
 #include "CommitWindow.h"
 #include "DiffView.h"
+#include "MessageEditor.h"
 #include "Messages.h"
 
 
@@ -201,6 +204,14 @@ Form &Form::AddMultiLine(const std::string &name, const std::string &label, cons
 }
 
 
+Form &Form::AddMessage(const std::string &name, const std::string &label, const std::string &text)
+{
+	Add(FieldKind::Message, name, label);
+	fFields.back().text = text;
+	return *this;
+}
+
+
 Form &Form::AddCheck(const std::string &name, const std::string &label, bool checked)
 {
 	Add(FieldKind::Check, name, label);
@@ -294,6 +305,15 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 				control = textView;
 				break;
 			}
+			case FieldKind::Message: {
+				CodeEditView *editor = GitDiff::CreateMessageEditor(field.name.c_str());
+				GitDiff::SetMessageText(editor, field.text);
+				editor->SetTarget(BMessenger(this));
+				grid->AddView(new BStringView("label", field.label.c_str()), 0, row);
+				grid->AddView(GitDiff::MessageScrollView("messageScroll", editor, 12), 1, row, 2, 1);
+				control = editor;
+				break;
+			}
 			case FieldKind::Check: {
 				BCheckBox *check = new BCheckBox(field.name.c_str(), field.label.c_str(), nullptr);
 				check->SetValue(field.checked ? B_CONTROL_ON : B_CONTROL_OFF);
@@ -349,6 +369,8 @@ bool FormDialog::Accept()
 			field.text = text->Text();
 		} else if (BTextView *textView = dynamic_cast<BTextView*>(control)) {
 			field.text = textView->Text();
+		} else if (CodeEditView *editor = dynamic_cast<CodeEditView*>(control)) {
+			field.text = GitDiff::MessageText(editor);
 		} else if (BCheckBox *check = dynamic_cast<BCheckBox*>(control)) {
 			field.checked = check->Value() == B_CONTROL_ON;
 		} else if (BMenuField *menuField = dynamic_cast<BMenuField*>(control)) {
@@ -361,6 +383,14 @@ bool FormDialog::Accept()
 
 void FormDialog::MessageReceived(BMessage *message)
 {
+	if (message->what == CodeEdit::kMsgContentsChanged) {
+		for (BView *control : fControls) {
+			if (CodeEditView *editor = dynamic_cast<CodeEditView*>(control)) {
+				GitDiff::UpdateMessageDecorations(editor);
+			}
+		}
+		return;
+	}
 	if (message->what != kMsgPickCommit) {
 		ModalDialog::MessageReceived(message);
 		return;
@@ -413,11 +443,57 @@ std::string FormatTime(int64_t time)
 }
 
 
+static void AddRefItem(BMenu *menu, const std::string &label, const std::string &spec, const std::string &current)
+{
+	BMessage *message = new BMessage(kMsgHistoryOf);
+	message->AddString("spec", spec.c_str());
+	BMenuItem *item = new BMenuItem(label.c_str(), message);
+	item->SetMarked(spec == current);
+	menu->AddItem(item);
+}
+
+
+BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current)
+{
+	BPopUpMenu *menu = new BPopUpMenu("refs");
+	for (const WorktreeInfo &worktree : snapshot.worktrees) {
+		if (worktree.commit.has_value()) {
+			AddRefItem(menu, "Worktree " + worktree.path, OidString(*worktree.commit), current);
+		}
+	}
+	menu->AddSeparatorItem();
+	for (const BranchInfo &branch : snapshot.branches) {
+		AddRefItem(menu, "Branch " + branch.name, branch.name, current);
+	}
+	for (const RemoteInfo &remote : snapshot.remotes) {
+		menu->AddSeparatorItem();
+		for (const RemoteCopyInfo &copy : remote.copies) {
+			AddRefItem(menu, "Remote copy " + copy.name, copy.name, current);
+		}
+	}
+	// Repositories can have tens of thousands of tags; the menu lists the
+	// last ones by name, others are entered as tags/<name>.
+	constexpr size_t kMenuTags = 50;
+	if (!snapshot.tags.empty()) {
+		menu->AddSeparatorItem();
+	}
+	for (size_t i = 0; i < snapshot.tags.size() && i < kMenuTags; i++) {
+		const TagInfo &tag = snapshot.tags[snapshot.tags.size() - 1 - i];
+		AddRefItem(menu, "Tag " + tag.name, "tags/" + tag.name, current);
+	}
+	if (snapshot.tags.size() > kMenuTags) {
+		BMenuItem *more = new BMenuItem(("(" + std::to_string(snapshot.tags.size() - kMenuTags)
+			+ " more tags: enter tags/<name> below)").c_str(), nullptr);
+		more->SetEnabled(false);
+		menu->AddItem(more);
+	}
+	return menu;
+}
+
+
 class CommitPicker: public ModalDialog {
 private:
 	git_repository *fRepository;
-	// Set for a history window that is not modal.
-	RepositoryPtr fOwnRepository;
 	std::string fRepositoryPath;
 	std::string *fResult;
 	BTextControl *fSpec {};
@@ -429,80 +505,20 @@ private:
 	bool Accept() final;
 
 public:
-	// result is nullptr to only show the history; then the window may own
-	// its repository and not be modal.
-	CommitPicker(
-		git_repository *repository,
-		RepositoryPtr ownRepository,
-		const Snapshot &snapshot,
-		const std::string &spec,
-		std::string *result
-	);
+	CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec, std::string *result);
 
 	void MessageReceived(BMessage *message) final;
 };
 
 
-static void AddRefItem(BMenu *menu, const std::string &label, const std::string &spec, const std::string &current)
-{
-	BMessage *message = new BMessage(kMsgHistoryOf);
-	message->AddString("spec", spec.c_str());
-	BMenuItem *item = new BMenuItem(label.c_str(), message);
-	item->SetMarked(spec == current);
-	menu->AddItem(item);
-}
-
-
-CommitPicker::CommitPicker(
-	git_repository *repository,
-	RepositoryPtr ownRepository,
-	const Snapshot &snapshot,
-	const std::string &spec,
-	std::string *result
-):
-	ModalDialog(
-		result != nullptr ? "Choose a commit" : "History",
-		ownRepository != nullptr ? B_NOT_ZOOMABLE : B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE,
-		ownRepository != nullptr ? B_NORMAL_WINDOW_FEEL : B_MODAL_APP_WINDOW_FEEL
-	),
+CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec,
+	std::string *result):
+	ModalDialog("Choose a commit", B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fRepository(repository),
-	fOwnRepository(std::move(ownRepository)),
 	fRepositoryPath(git_repository_commondir(repository)),
 	fResult(result)
 {
-	BPopUpMenu *menu = new BPopUpMenu("refs");
-	for (const WorktreeInfo &worktree : snapshot.worktrees) {
-		if (worktree.commit.has_value()) {
-			AddRefItem(menu, "Worktree " + worktree.path, OidString(*worktree.commit), spec);
-		}
-	}
-	menu->AddSeparatorItem();
-	for (const BranchInfo &branch : snapshot.branches) {
-		AddRefItem(menu, "Branch " + branch.name, branch.name, spec);
-	}
-	for (const RemoteInfo &remote : snapshot.remotes) {
-		menu->AddSeparatorItem();
-		for (const RemoteCopyInfo &copy : remote.copies) {
-			AddRefItem(menu, "Remote copy " + copy.name, copy.name, spec);
-		}
-	}
-	// Repositories can have tens of thousands of tags; the menu lists the
-	// last ones by name, others are entered in the commit field.
-	constexpr size_t kMenuTags = 50;
-	if (!snapshot.tags.empty()) {
-		menu->AddSeparatorItem();
-	}
-	for (size_t i = 0; i < snapshot.tags.size() && i < kMenuTags; i++) {
-		const TagInfo &tag = snapshot.tags[snapshot.tags.size() - 1 - i];
-		AddRefItem(menu, "Tag " + tag.name, "tags/" + tag.name, spec);
-	}
-	if (snapshot.tags.size() > kMenuTags) {
-		BMenuItem *more = new BMenuItem(("(" + std::to_string(snapshot.tags.size() - kMenuTags)
-			+ " more tags: enter tags/<name> below)").c_str(), nullptr);
-		more->SetEnabled(false);
-		menu->AddItem(more);
-	}
-	BMenuField *refField = new BMenuField("refs", "History of:", menu);
+	BMenuField *refField = new BMenuField("refs", "History of:", RefMenu(snapshot, spec));
 
 	fList = new BColumnListView("commits", B_NAVIGABLE, B_PLAIN_BORDER, true);
 	fList->SetSelectionMode(B_SINGLE_SELECTION_LIST);
@@ -517,8 +533,8 @@ CommitPicker::CommitPicker(
 
 	fSpec = new BTextControl("spec", "Commit:", spec.c_str(), nullptr);
 	BButton *showHistory = new BButton("Show history", new BMessage(kMsgHistoryOf));
-	BButton *cancel = new BButton(result != nullptr ? "Cancel" : "Close", new BMessage(kMsgDialogCancel));
-	BButton *ok = result != nullptr ? new BButton("Choose", new BMessage(kMsgDialogOk)) : nullptr;
+	BButton *cancel = new BButton("Cancel", new BMessage(kMsgDialogCancel));
+	BButton *ok = new BButton("Choose", new BMessage(kMsgDialogOk));
 	BButton *showChanges = new BButton("Show changes" B_UTF8_ELLIPSIS, new BMessage(kMsgShowCommit));
 	BGroupLayout *buttons = ButtonRow(cancel, ok);
 	buttons->AddView(0, showChanges);
@@ -531,9 +547,7 @@ CommitPicker::CommitPicker(
 			.Add(showHistory)
 		.End()
 		.Add(buttons);
-	if (ok != nullptr) {
-		SetDefaultButton(ok);
-	}
+	SetDefaultButton(ok);
 	ShowHistoryOf(spec.empty() && !snapshot.worktrees.empty() && snapshot.worktrees[0].commit.has_value()
 		? OidString(*snapshot.worktrees[0].commit) : spec);
 }
@@ -575,9 +589,6 @@ void CommitPicker::ShowCommit()
 
 bool CommitPicker::Accept()
 {
-	if (fResult == nullptr) {
-		return true;
-	}
 	const std::string spec = fSpec->Text();
 	try {
 		ResolveCommit(fRepository, spec);
@@ -610,9 +621,7 @@ void CommitPicker::MessageReceived(BMessage *message)
 			break;
 		}
 		case kMsgCommitInvoked:
-			if (fResult == nullptr) {
-				ShowCommit();
-			} else if (Accept()) {
+			if (Accept()) {
 				Finish(true);
 			}
 			break;
@@ -629,22 +638,11 @@ void CommitPicker::MessageReceived(BMessage *message)
 bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec)
 {
 	std::string result;
-	if (!(new CommitPicker(repository, RepositoryPtr(), snapshot, spec, &result))->Go()) {
+	if (!(new CommitPicker(repository, snapshot, spec, &result))->Go()) {
 		return false;
 	}
 	spec = result;
 	return true;
-}
-
-
-void ShowHistory(const std::string &repositoryPath, const Snapshot &snapshot, const std::string &spec)
-{
-	RepositoryPtr repository = OpenRepository(repositoryPath);
-	git_repository *handle = repository.get();
-	CommitPicker *window = new CommitPicker(handle, std::move(repository), snapshot, spec, nullptr);
-	window->ResizeToPreferred();
-	window->CenterOnScreen();
-	window->Show();
 }
 
 

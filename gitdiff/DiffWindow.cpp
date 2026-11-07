@@ -122,8 +122,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		.End();
 	BSplitView *leftSplit = new BSplitView(B_VERTICAL, 0);
 	BLayoutBuilder::Split<>(leftSplit)
-		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 3)
-		.Add(commitBox, 1);
+		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 1)
+		.Add(commitBox, 0);
 	fDiffView = new DiffView();
 	BSplitView *splitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)

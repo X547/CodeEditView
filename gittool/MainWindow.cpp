@@ -5,7 +5,6 @@
 #include <Alert.h>
 #include <Application.h>
 #include <Button.h>
-#include <CardLayout.h>
 #include <ColumnListView.h>
 #include <ColumnTypes.h>
 #include <Entry.h>
@@ -398,15 +397,8 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	fObjects->SetSelectionMessage(new BMessage(kMsgObjectSelected));
 	fObjects->SetInvocationMessage(new BMessage(kMsgObjectInvoked));
 
-	fButtonCards = new BCardLayout();
-	for (const std::vector<ActionItem> &actions : kCategoryActions) {
-		BGroupView *group = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
-		for (const ActionItem &item : actions) {
-			group->AddChild(new BButton(item.label, ActionMessage(item.action)));
-		}
-		group->GroupLayout()->AddItem(BSpaceLayoutItem::CreateGlue());
-		fButtonCards->AddView(group);
-	}
+	fButtons = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
+	ShowCategoryButtons();
 
 	fDetails = new BTextView("details");
 	fDetails->MakeEditable(false);
@@ -414,27 +406,34 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	fLog = new BTextView("log");
 	fLog->MakeEditable(false);
 	fLog->SetWordWrap(true);
+	BScrollView *detailScroll = new BScrollView("detailScroll", fDetails, 0, false, true);
+	detailScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 130));
 	BScrollView *logScroll = new BScrollView("logScroll", fLog, 0, false, true);
+	logScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 70));
+	BScrollView *categoryScroll = new BScrollView("categoryScroll", fCategories, 0, false, false);
+	categoryScroll->SetExplicitPreferredSize(BSize(170, B_SIZE_UNSET));
 	fStatus = new BStringView("status", "");
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fCancelButton = new BButton("Cancel", new BMessage(kMsgCancelNetwork));
 	fCancelButton->SetEnabled(false);
 
+	// Extra space goes to the object list; the category list, details and
+	// log keep their size unless the user moves a splitter.
 	BSplitView *rightSplit = new BSplitView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Split<>(rightSplit)
-		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 3)
-			.Add(fButtonCards)
+		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1)
+			.Add(fButtons)
 			.Add(fObjects)
 		.End()
-		.Add(new BScrollView("detailScroll", fDetails, 0, false, true), 2)
-		.Add(logScroll, 1);
+		.Add(detailScroll, 0)
+		.Add(logScroll, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING)
 			.SetInsets(B_USE_SMALL_SPACING)
 			.AddSplit(B_HORIZONTAL, B_USE_SMALL_SPACING)
-				.Add(new BScrollView("categoryScroll", fCategories, 0, false, false), 1)
-				.Add(rightSplit, 6)
+				.Add(categoryScroll, 0)
+				.Add(rightSplit, 1)
 			.End()
 			.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 				.Add(fStatus)
@@ -452,6 +451,24 @@ MainWindow::MainWindow(RepositoryPtr repository):
 MainWindow::~MainWindow()
 {
 	stop_watching(this);
+}
+
+
+// The buttons of the category operations.
+void MainWindow::ShowCategoryButtons()
+{
+	while (BView *child = fButtons->ChildAt(0)) {
+		child->RemoveSelf();
+		delete child;
+	}
+	BGroupLayout *layout = fButtons->GroupLayout();
+	while (layout->CountItems() > 0) {
+		delete layout->RemoveItem(static_cast<int32>(0));
+	}
+	for (const ActionItem &item : kCategoryActions[static_cast<int>(fCategory)]) {
+		fButtons->AddChild(new BButton(item.label, ActionMessage(item.action)));
+	}
+	layout->AddItem(BSpaceLayoutItem::CreateGlue());
 }
 
 
@@ -1725,7 +1742,7 @@ void MainWindow::MessageReceived(BMessage *message)
 			const int32 index = fCategories->CurrentSelection();
 			if (index >= 0 && static_cast<Category>(index) != fCategory) {
 				fCategory = static_cast<Category>(index);
-				fButtonCards->SetVisibleItem(index);
+				ShowCategoryButtons();
 				FillObjects();
 				ShowDetails();
 			}

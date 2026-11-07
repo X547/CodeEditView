@@ -10,6 +10,7 @@
 #include <ColumnListView.h>
 #include <ColumnTypes.h>
 #include <GridLayout.h>
+#include <GridView.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
 #include <MenuItem.h>
@@ -247,7 +248,10 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 	fRepository(repository),
 	fSnapshot(snapshot)
 {
-	BGridLayout *grid = new BGridLayout(B_USE_DEFAULT_SPACING, B_USE_SMALL_SPACING);
+	// The grid has a view, so the controls of its layout items are added to
+	// the window.
+	BGridView *gridView = new BGridView(B_USE_DEFAULT_SPACING, B_USE_SMALL_SPACING);
+	BGridLayout *grid = gridView->GridLayout();
 	grid->SetMinColumnWidth(1, 360);
 	int32 row = 0;
 	BView *focus = nullptr;
@@ -316,7 +320,7 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 	BButton *ok = new BButton(form.okLabel.c_str(), new BMessage(kMsgDialogOk));
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
-		.Add(grid)
+		.Add(gridView)
 		.Add(ButtonRow(cancel, ok));
 	SetDefaultButton(ok);
 	if (BTextControl *text = dynamic_cast<BTextControl*>(focus)) {

@@ -14,7 +14,7 @@
 #include "Snapshot.h"
 
 
-class BCardLayout;
+class BGroupView;
 class BColumnListView;
 class BButton;
 class BListView;
@@ -65,7 +65,7 @@ private:
 	BTextView *fLog {};
 	BStringView *fStatus {};
 	BButton *fCancelButton {};
-	BCardLayout *fButtonCards {};
+	BGroupView *fButtons {};
 	BMenu *fActionsMenu {};
 
 	std::unique_ptr<NetworkTask> fTask;
@@ -73,6 +73,7 @@ private:
 	std::vector<node_ref> fWatched;
 	std::map<std::string, BMessenger> fDiffWindows;
 
+	void ShowCategoryButtons();
 	void Watch();
 	void Refresh();
 	void ScheduleRefresh();

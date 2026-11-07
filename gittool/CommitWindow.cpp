@@ -104,14 +104,16 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	fFiles->SetSelectionMessage(new BMessage(kMsgCommitFileSelected));
 	fDiffView = new DiffView();
 
+	BScrollView *headerScroll = new BScrollView("headerScroll", fHeader, 0, false, true);
+	headerScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 120));
 	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Split<>(filesSplit)
 		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 1)
 		.Add(fDiffView, 4);
 	BSplitView *mainSplit = new BSplitView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Split<>(mainSplit)
-		.Add(new BScrollView("headerScroll", fHeader, 0, false, true), 1)
-		.Add(filesSplit, 4);
+		.Add(headerScroll, 0)
+		.Add(filesSplit, 1);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)

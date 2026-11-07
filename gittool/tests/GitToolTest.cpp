@@ -238,10 +238,17 @@ TEST_CASE("Snapshot lists worktrees, branches and tags", "[gittool]")
 	CHECK(snapshot.branches[1].summary == "first");
 
 	REQUIRE(snapshot.tags.size() == 2);
-	CHECK_FALSE(snapshot.tags[0].annotated);
-	CHECK(snapshot.tags[1].annotated);
-	CHECK(snapshot.tags[1].message == "Release 2");
-	CHECK(git_oid_equal(&snapshot.tags[1].commit, &fixture.second));
+	TagInfo simple = snapshot.tags[0];
+	TagInfo withMessage = snapshot.tags[1];
+	CHECK_FALSE(withMessage.detailsLoaded);
+	LoadTagDetails(fixture.Get(), simple);
+	LoadTagDetails(fixture.Get(), withMessage);
+	CHECK_FALSE(simple.annotated);
+	CHECK(git_oid_equal(&simple.commit, &fixture.first));
+	CHECK(withMessage.annotated);
+	CHECK(withMessage.message == "Release 2");
+	CHECK(git_oid_equal(&withMessage.commit, &fixture.second));
+	CHECK_FALSE(git_oid_equal(&withMessage.target, &fixture.second));
 
 	// Opening a linked worktree opens the whole repository.
 	RepositoryPtr opened = OpenRepository(fixture.Path("wt"));
@@ -539,24 +546,51 @@ TEST_CASE("Branch operations", "[gittool]")
 }
 
 
+// A tag of the current snapshot with its details.
+static TagInfo LoadedTag(const Fixture &fixture, const std::string &name)
+{
+	const Snapshot snapshot = fixture.Load();
+	const TagInfo *found = snapshot.FindTag(name);
+	REQUIRE(found != nullptr);
+	TagInfo tag = *found;
+	LoadTagDetails(fixture.Get(), tag);
+	return tag;
+}
+
+
 TEST_CASE("Tags", "[gittool]")
 {
 	Fixture fixture;
-	Run(PlanCreateTag(fixture.Get(), fixture.Load(), "v1", "main", "Version 1"), fixture.Get());
-	Run(PlanMoveTag(fixture.Get(), fixture.Load(), "v1", "feature"), fixture.Get());
-	CHECK(git_oid_equal(&fixture.Load().FindTag("v1")->commit, &fixture.second));
-	CHECK(fixture.Load().FindTag("v1")->message == "Version 1");
+	git_repository *repository = fixture.Get();
+	Run(PlanCreateTag(repository, fixture.Load(), "v1", "main", "Version 1"), repository);
+	Run(PlanMoveTag(repository, fixture.Load(), "v1", "feature"), repository);
+	const TagInfo moved = LoadedTag(fixture, "v1");
+	CHECK(git_oid_equal(&moved.commit, &fixture.second));
+	CHECK(LoadedTag(fixture, "v1").message == "Version 1");
 
-	Run(PlanRenameTag(fixture.Load(), "v1", "v1.0"), fixture.Get());
-	const Snapshot snapshot = fixture.Load();
-	CHECK(snapshot.FindTag("v1") == nullptr);
-	REQUIRE(snapshot.FindTag("v1.0") != nullptr);
-	CHECK(snapshot.FindTag("v1.0")->annotated);
+	Run(PlanRenameTag(repository, fixture.Load(), "v1", "v1.0"), repository);
+	CHECK(fixture.Load().FindTag("v1") == nullptr);
+	CHECK(LoadedTag(fixture, "v1.0").annotated);
 
-	Run(PlanEditTagMessage(fixture.Load(), "v1.0", ""), fixture.Get());
-	CHECK_FALSE(fixture.Load().FindTag("v1.0")->annotated);
-	Run(PlanDeleteTag(fixture.Load(), "v1.0"), fixture.Get());
+	Run(PlanEditTagMessage(repository, fixture.Load(), "v1.0", ""), repository);
+	CHECK_FALSE(LoadedTag(fixture, "v1.0").annotated);
+	Run(PlanDeleteTag(repository, fixture.Load(), "v1.0"), repository);
 	CHECK(fixture.Load().tags.empty());
+}
+
+
+TEST_CASE("Natural order", "[gittool]")
+{
+	CHECK(NaturalLess("v2", "v10"));
+	CHECK_FALSE(NaturalLess("v10", "v2"));
+	CHECK(NaturalLess("r1beta4", "r1beta10"));
+	CHECK(NaturalLess("hrev9999", "hrev10000"));
+	CHECK(NaturalLess("1.9", "1.10"));
+	CHECK(NaturalLess("a", "b"));
+	CHECK(NaturalLess("v1", "v1.1"));
+	CHECK(NaturalLess("v1", "v01"));
+	CHECK_FALSE(NaturalLess("v1", "v1"));
+	CHECK(NaturalLess("release", "release2"));
 }
 
 
@@ -624,7 +658,7 @@ TEST_CASE("Remotes", "[gittool]")
 			ListServer(fixture.Get(), "origin", handler));
 		CHECK(before == std::vector<std::string> {"Tag v1: only local"});
 
-		Run(PlanUploadTags(fixture.Load(), "origin", {"v1"}), fixture.Get(), Resolution::Cancel, &handler);
+		Run(PlanUploadTags(fixture.Get(), fixture.Load(), "origin", {"v1"}), fixture.Get(), Resolution::Cancel, &handler);
 		Run(PlanDeleteOnServer(fixture.Load(), "origin", "refs/heads/feature"), fixture.Get(), Resolution::Cancel,
 			&handler);
 		CHECK_FALSE(HasRef(server, "refs/heads/feature"));

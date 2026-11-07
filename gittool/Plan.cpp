@@ -1,5 +1,8 @@
 #include "Plan.h"
 
+#include <stdint.h>
+
+#include <algorithm>
 #include <set>
 
 
@@ -310,12 +313,14 @@ std::string WorktreeHeadName(const WorktreeInfo &worktree)
 }
 
 
-void FindUnreachable(
+// Commits reachable from oldIds but not from newId, the hidden commits, the
+// non-tag references other than exceptReferences, or worktrees on a commit.
+static std::vector<git_oid> WalkUnreachable(
 	git_repository *repository,
 	const std::vector<git_oid> &oldIds,
 	const std::optional<git_oid> &newId,
 	const std::set<std::string> &exceptReferences,
-	Plan &plan
+	const std::vector<git_oid> &hidden
 )
 {
 	git_revwalk *walk = nullptr;
@@ -328,11 +333,15 @@ void FindUnreachable(
 	if (newId.has_value()) {
 		git_revwalk_hide(walk, &*newId);
 	}
+	for (const git_oid &id : hidden) {
+		git_revwalk_hide(walk, &id);
+	}
 
 	GitStrArray names;
 	Check(git_reference_list(names.Get(), repository), "Cannot list the references");
 	for (size_t i = 0; i < names.Count(); i++) {
-		if (exceptReferences.count(names.At(i)) == 0) {
+		const std::string name = names.At(i);
+		if (!name.starts_with("refs/tags/") && exceptReferences.count(name) == 0) {
 			HideReference(walk, repository, names.At(i));
 		}
 	}
@@ -354,12 +363,65 @@ void FindUnreachable(
 	}
 	git_error_clear();
 
+	std::vector<git_oid> commits;
 	git_oid id;
-	while (plan.unreachableCount < kUnreachableCounted && git_revwalk_next(&id, walk) == 0) {
-		if (plan.unreachable.size() < kUnreachableListed) {
-			plan.unreachable.push_back(ReadCommit(repository, id));
+	while (commits.size() < kUnreachableCounted && git_revwalk_next(&id, walk) == 0) {
+		commits.push_back(id);
+	}
+	return commits;
+}
+
+
+// Tags are checked last and only those that may contain a candidate: a
+// repository can have tens of thousands of tags, and hiding all of them
+// makes the walk read most of the history.
+void FindUnreachable(
+	git_repository *repository,
+	const std::vector<git_oid> &oldIds,
+	const std::optional<git_oid> &newId,
+	const std::set<std::string> &exceptReferences,
+	Plan &plan
+)
+{
+	std::vector<git_oid> commits = WalkUnreachable(repository, oldIds, newId, exceptReferences, {});
+	if (commits.empty()) {
+		return;
+	}
+
+	// A tag on a commit older than every candidate cannot contain one; the
+	// margin allows for clocks that were off.
+	constexpr int64_t kClockSkew = 7 * 24 * 3600;
+	int64_t oldest = INT64_MAX;
+	for (const git_oid &commit : commits) {
+		oldest = std::min(oldest, ReadCommit(repository, commit).time);
+	}
+	std::vector<git_oid> tagCommits;
+	git_reference_iterator *iterator = nullptr;
+	Check(git_reference_iterator_glob_new(&iterator, repository, "refs/tags/*"), "Cannot list the tags");
+	ReferenceIteratorPtr iteratorPtr(iterator);
+	git_reference *reference = nullptr;
+	while (git_reference_next(&reference, iterator) == 0) {
+		ReferencePtr referencePtr(reference);
+		if (exceptReferences.count(git_reference_name(reference)) > 0) {
+			continue;
 		}
-		plan.unreachableCount++;
+		git_object *commit = nullptr;
+		if (git_reference_peel(&commit, reference, GIT_OBJECT_COMMIT) < 0) {
+			git_error_clear();
+			continue;
+		}
+		ObjectPtr commitPtr(commit);
+		if (git_commit_time(reinterpret_cast<git_commit*>(commit)) + kClockSkew >= oldest) {
+			tagCommits.push_back(*git_object_id(commit));
+		}
+	}
+	if (!tagCommits.empty()) {
+		commits = WalkUnreachable(repository, oldIds, newId, exceptReferences, tagCommits);
+	}
+
+	plan.unreachableCount = commits.size();
+	for (size_t i = 0; i < commits.size() && i < kUnreachableListed; i++) {
+		plan.unreachable.push_back(ReadCommit(repository, commits[i]));
 	}
 }
 

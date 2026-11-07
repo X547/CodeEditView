@@ -137,10 +137,14 @@ Plan PlanCreateTag(git_repository *repository, const Snapshot &snapshot, const s
 Plan PlanMoveTag(git_repository *repository, const Snapshot &snapshot, const std::string &name,
 	const std::string &commit);
 // An empty message makes it a simple tag.
-Plan PlanEditTagMessage(const Snapshot &snapshot, const std::string &name, const std::string &message);
-Plan PlanRenameTag(const Snapshot &snapshot, const std::string &name, const std::string &newName);
-Plan PlanDeleteTag(const Snapshot &snapshot, const std::string &name);
-Plan PlanUploadTags(const Snapshot &snapshot, const std::string &remote, const std::vector<std::string> &names);
+Plan PlanEditTagMessage(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name, const std::string &message);
+Plan PlanRenameTag(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name, const std::string &newName);
+Plan PlanDeleteTag(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name);
+Plan PlanUploadTags(git_repository *repository, const Snapshot &snapshot,
+	const std::string &remote, const std::vector<std::string> &names);
 
 
 } // GitTool

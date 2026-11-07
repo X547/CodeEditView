@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <exception>
+#include <functional>
 
 #include <Alert.h>
 #include <Application.h>
@@ -248,7 +249,29 @@ public:
 };
 
 
-// Opens the context menu on a secondary click.
+// A text read when the field is first drawn.
+class LazyField: public BStringField {
+private:
+	std::function<std::string()> fRead;
+
+public:
+	explicit LazyField(std::function<std::string()> read):
+		BStringField(""),
+		fRead(std::move(read))
+	{
+	}
+
+	void Fill()
+	{
+		if (fRead) {
+			SetString(fRead().c_str());
+			fRead = nullptr;
+		}
+	}
+};
+
+
+// Opens the context menu on a secondary click; fills lazy fields.
 class ObjectColumn: public BStringColumn {
 public:
 	ObjectColumn(const char *title, float width):
@@ -270,7 +293,29 @@ public:
 		parent->AddToSelection(row);
 		parent->Window()->PostMessage(kMsgContextMenu);
 	}
+
+	void DrawField(BField *field, BRect rect, BView *parent) final
+	{
+		if (LazyField *lazy = dynamic_cast<LazyField*>(field)) {
+			lazy->Fill();
+		}
+		BStringColumn::DrawField(field, rect, parent);
+	}
 };
+
+
+static bool SameTags(const std::vector<TagInfo> &a, const std::vector<TagInfo> &b)
+{
+	if (a.size() != b.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < a.size(); i++) {
+		if (a[i].name != b[i].name || !git_oid_equal(&a[i].target, &b[i].target)) {
+			return false;
+		}
+	}
+	return true;
+}
 
 
 static constexpr int32 kColumnCount = 5;
@@ -503,13 +548,22 @@ void MainWindow::UpdateTitle()
 void MainWindow::Refresh()
 {
 	fRefreshRunner.reset();
+	bool sameTags = false;
 	try {
-		fSnapshot = Snapshot::Load(fRepository.get());
+		Snapshot snapshot = Snapshot::Load(fRepository.get());
+		// Unchanged tags keep their details, and their rows are not rebuilt.
+		sameTags = SameTags(fSnapshot.tags, snapshot.tags);
+		if (sameTags) {
+			snapshot.tags = std::move(fSnapshot.tags);
+		}
+		fSnapshot = std::move(snapshot);
 	} catch (const std::exception &e) {
 		AppendLog(std::string("Cannot read the repository: ") + e.what());
 	}
 	FillCategories();
-	FillObjects();
+	if (fCategory != Category::Tags || !sameTags) {
+		FillObjects();
+	}
 	ShowDetails();
 }
 
@@ -586,9 +640,15 @@ void MainWindow::FillObjects()
 			}
 			break;
 		case Category::Tags:
-			for (const TagInfo &tag : fSnapshot.tags) {
-				addRow(ObjectKind::Tag, tag.name, {tag.name, ShortId(tag.commit) + " " + tag.summary,
-					tag.annotated ? "with message" : "simple", FirstLine(tag.message)});
+			for (size_t i = 0; i < fSnapshot.tags.size(); i++) {
+				ObjectRow *row = new ObjectRow(ObjectKind::Tag, fSnapshot.tags[i].name);
+				row->SetField(new BStringField(fSnapshot.tags[i].name.c_str()), 0);
+				for (int32 column = 1; column <= 3; column++) {
+					row->SetField(new LazyField([this, i, column]() {
+						return TagText(i, column);
+					}), column);
+				}
+				fObjects->AddRow(row);
 			}
 			break;
 	}
@@ -657,7 +717,7 @@ void MainWindow::ShowDetails()
 			}
 		}
 		line("Tracked by", tracking);
-	} else if (const TagInfo *tag = SelectedTag()) {
+	} else if (const TagInfo *tag = LoadedTag(SelectedName())) {
 		line("Tag", tag->name);
 		line("Commit", Describe(repository, tag->commit));
 		line("Kind", tag->annotated ? "with message" : "simple");
@@ -706,6 +766,47 @@ const RemoteInfo *MainWindow::SelectedRemote() const
 const RemoteCopyInfo *MainWindow::SelectedRemoteCopy() const
 {
 	return SelectedKind() == ObjectKind::RemoteCopy ? fSnapshot.FindRemoteCopy(SelectedName()) : nullptr;
+}
+
+
+TagInfo *MainWindow::LoadedTag(const std::string &name)
+{
+	if (SelectedKind() != ObjectKind::Tag) {
+		return nullptr;
+	}
+	for (TagInfo &tag : fSnapshot.tags) {
+		if (tag.name == name) {
+			try {
+				LoadTagDetails(fRepository.get(), tag);
+			} catch (const std::exception &e) {
+				AppendLog(e.what());
+			}
+			return &tag;
+		}
+	}
+	return nullptr;
+}
+
+
+std::string MainWindow::TagText(size_t index, int32 column)
+{
+	if (index >= fSnapshot.tags.size()) {
+		return std::string();
+	}
+	TagInfo &tag = fSnapshot.tags[index];
+	try {
+		LoadTagDetails(fRepository.get(), tag);
+	} catch (const std::exception &e) {
+		return e.what();
+	}
+	switch (column) {
+		case 1:
+			return tag.hasCommit ? ShortId(tag.commit) + " " + tag.summary : tag.summary;
+		case 2:
+			return tag.annotated ? "with message" : "simple";
+		default:
+			return FirstLine(tag.message);
+	}
 }
 
 
@@ -1557,24 +1658,24 @@ void MainWindow::RunRemoteAction(Action action)
 
 void MainWindow::UploadTags()
 {
+	git_repository *repository = fRepository.get();
 	std::string remote;
 	if (!ChooseRemote("Upload tags", std::string(), remote)) {
 		return;
 	}
 	std::vector<std::vector<std::string>> rows;
 	for (const TagInfo &tag : fSnapshot.tags) {
-		rows.push_back({tag.name, ShortId(tag.commit) + " " + tag.summary});
+		rows.push_back({tag.name});
 	}
 	std::vector<int> selected;
-	if (!ChooseFromList("Select the tags to upload to " + remote, "Preview", {{"Tag", 200}, {"Commit", 360}}, rows,
-		true, selected)) {
+	if (!ChooseFromList("Select the tags to upload to " + remote, "Preview", {{"Tag", 400}}, rows, true, selected)) {
 		return;
 	}
 	std::vector<std::string> names;
 	for (int index : selected) {
 		names.push_back(fSnapshot.tags[index].name);
 	}
-	Execute(PlanUploadTags(fSnapshot, remote, names));
+	Execute(PlanUploadTags(repository, fSnapshot, remote, names));
 }
 
 
@@ -1612,7 +1713,7 @@ void MainWindow::RunTagAction(Action action)
 	if (selected == nullptr) {
 		return;
 	}
-	const TagInfo tag = *selected;
+	const TagInfo tag = *LoadedTag(selected->name);
 	const std::string spec = "tags/" + tag.name;
 	switch (action) {
 		case Action::TagMove: {
@@ -1627,7 +1728,7 @@ void MainWindow::RunTagAction(Action action)
 			form.AddMultiLine("message", "Message:", tag.message)
 				.AddLabel("Without a message, the tag becomes a simple tag.");
 			if (form.Go()) {
-				Execute(PlanEditTagMessage(fSnapshot, tag.name, form.Text("message")));
+				Execute(PlanEditTagMessage(repository, fSnapshot, tag.name, form.Text("message")));
 			}
 			break;
 		}
@@ -1635,19 +1736,19 @@ void MainWindow::RunTagAction(Action action)
 			Form form("Rename " + tag.name, "Preview");
 			form.AddText("name", "New name:", tag.name);
 			if (form.Go()) {
-				Execute(PlanRenameTag(fSnapshot, tag.name, form.Text("name")));
+				Execute(PlanRenameTag(repository, fSnapshot, tag.name, form.Text("name")));
 			}
 			break;
 		}
 		case Action::TagUpload: {
 			std::string remote;
 			if (ChooseRemote("Upload " + tag.name, std::string(), remote)) {
-				Execute(PlanUploadTags(fSnapshot, remote, {tag.name}));
+				Execute(PlanUploadTags(repository, fSnapshot, remote, {tag.name}));
 			}
 			break;
 		}
 		case Action::TagDelete:
-			Execute(PlanDeleteTag(fSnapshot, tag.name));
+			Execute(PlanDeleteTag(repository, fSnapshot, tag.name));
 			break;
 		case Action::TagDeleteOnServer: {
 			std::string remote;

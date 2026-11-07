@@ -477,11 +477,21 @@ CommitPicker::CommitPicker(
 			AddRefItem(menu, "Remote copy " + copy.name, copy.name, spec);
 		}
 	}
+	// Repositories can have tens of thousands of tags; the menu lists the
+	// last ones by name, others are entered in the commit field.
+	constexpr size_t kMenuTags = 50;
 	if (!snapshot.tags.empty()) {
 		menu->AddSeparatorItem();
 	}
-	for (const TagInfo &tag : snapshot.tags) {
+	for (size_t i = 0; i < snapshot.tags.size() && i < kMenuTags; i++) {
+		const TagInfo &tag = snapshot.tags[snapshot.tags.size() - 1 - i];
 		AddRefItem(menu, "Tag " + tag.name, "tags/" + tag.name, spec);
+	}
+	if (snapshot.tags.size() > kMenuTags) {
+		BMenuItem *more = new BMenuItem(("(" + std::to_string(snapshot.tags.size() - kMenuTags)
+			+ " more tags: enter tags/<name> below)").c_str(), nullptr);
+		more->SetEnabled(false);
+		menu->AddItem(more);
 	}
 	BMenuField *refField = new BMenuField("refs", "History of:", menu);
 
@@ -497,6 +507,7 @@ CommitPicker::CommitPicker(
 	fList->SetExplicitPreferredSize(BSize(700, 360));
 
 	fSpec = new BTextControl("spec", "Commit:", spec.c_str(), nullptr);
+	BButton *showHistory = new BButton("Show history", new BMessage(kMsgHistoryOf));
 	BButton *cancel = new BButton(result != nullptr ? "Cancel" : "Close", new BMessage(kMsgDialogCancel));
 	BButton *ok = result != nullptr ? new BButton("Choose", new BMessage(kMsgDialogOk)) : nullptr;
 	BButton *showChanges = new BButton("Show changes" B_UTF8_ELLIPSIS, new BMessage(kMsgShowCommit));
@@ -506,12 +517,13 @@ CommitPicker::CommitPicker(
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(refField)
 		.Add(fList)
-		.Add(fSpec)
+		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
+			.Add(fSpec)
+			.Add(showHistory)
+		.End()
 		.Add(buttons);
 	if (ok != nullptr) {
 		SetDefaultButton(ok);
-	} else {
-		fSpec->Hide();
 	}
 	ShowHistoryOf(spec.empty() && !snapshot.worktrees.empty() && snapshot.worktrees[0].commit.has_value()
 		? OidString(*snapshot.worktrees[0].commit) : spec);
@@ -573,9 +585,12 @@ void CommitPicker::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
 		case kMsgHistoryOf: {
-			const char *spec = message->GetString("spec", "");
-			fSpec->SetText(spec);
-			ShowHistoryOf(spec);
+			// From the menu, or of the entered commit.
+			const char *spec = message->GetString("spec", nullptr);
+			if (spec != nullptr) {
+				fSpec->SetText(spec);
+			}
+			ShowHistoryOf(fSpec->Text());
 			break;
 		}
 		case kMsgCommitSelected: {

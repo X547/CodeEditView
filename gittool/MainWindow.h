@@ -89,6 +89,10 @@ private:
 	const RemoteInfo *SelectedRemote() const;
 	const RemoteCopyInfo *SelectedRemoteCopy() const;
 	const TagInfo *SelectedTag() const;
+	// The selected tag of that name with its details read.
+	TagInfo *LoadedTag(const std::string &name);
+	// Text of a column of the tag list, read on first draw.
+	std::string TagText(size_t index, int32 column);
 
 	void AddActions(BMenu *menu);
 	void ShowContextMenu();

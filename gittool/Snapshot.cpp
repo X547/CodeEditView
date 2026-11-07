@@ -375,7 +375,7 @@ static std::vector<BranchInfo> LoadBranches(git_repository *repository, const st
 		branches.push_back(std::move(branch));
 	}
 	std::sort(branches.begin(), branches.end(), [](const BranchInfo &a, const BranchInfo &b) {
-		return a.name < b.name;
+		return NaturalLess(a.name, b.name);
 	});
 	return branches;
 }
@@ -418,7 +418,7 @@ static std::vector<RemoteInfo> LoadRemotes(git_repository *repository)
 			info.copies.push_back(std::move(copy));
 		}
 		std::sort(info.copies.begin(), info.copies.end(), [](const RemoteCopyInfo &a, const RemoteCopyInfo &b) {
-			return a.name < b.name;
+			return NaturalLess(a.name, b.name);
 		});
 		remotes.push_back(std::move(info));
 	}
@@ -426,6 +426,8 @@ static std::vector<RemoteInfo> LoadRemotes(git_repository *repository)
 }
 
 
+// Names and targets only: reading the commits of thousands of tags takes
+// long, so the details are read on demand.
 static std::vector<TagInfo> LoadTags(git_repository *repository)
 {
 	std::vector<TagInfo> tags;
@@ -435,37 +437,115 @@ static std::vector<TagInfo> LoadTags(git_repository *repository)
 	git_reference *reference = nullptr;
 	while (git_reference_next(&reference, iterator) == 0) {
 		ReferencePtr referencePtr(reference);
-		git_object *commit = nullptr;
-		if (git_reference_peel(&commit, reference, GIT_OBJECT_COMMIT) < 0) {
-			// Tags of trees and blobs are not shown.
-			git_error_clear();
+		const git_oid *target = git_reference_target(reference);
+		if (target == nullptr) {
 			continue;
 		}
-		ObjectPtr commitPtr(commit);
 		TagInfo tag;
 		tag.name = git_reference_name(reference) + sizeof(kTagsPrefix) - 1;
-		tag.commit = *git_object_id(commit);
-		const CommitInfo info = ReadCommit(repository, tag.commit);
-		tag.summary = info.summary;
-		tag.time = info.time;
-		git_tag *annotated = nullptr;
-		const git_oid *target = git_reference_target(reference);
-		if (target != nullptr && git_tag_lookup(&annotated, repository, target) == 0) {
-			TagPtr annotatedPtr(annotated);
-			tag.annotated = true;
-			tag.message = git_tag_message(annotated) != nullptr ? git_tag_message(annotated) : "";
-			if (const git_signature *tagger = git_tag_tagger(annotated)) {
-				tag.tagger = tagger->name != nullptr ? tagger->name : "";
-				tag.time = tagger->when.time;
-			}
-		}
-		git_error_clear();
+		tag.target = *target;
 		tags.push_back(std::move(tag));
 	}
 	std::sort(tags.begin(), tags.end(), [](const TagInfo &a, const TagInfo &b) {
-		return a.name < b.name;
+		return NaturalLess(a.name, b.name);
 	});
 	return tags;
+}
+
+
+void LoadTagDetails(git_repository *repository, TagInfo &tag)
+{
+	if (tag.detailsLoaded) {
+		return;
+	}
+	tag.detailsLoaded = true;
+	git_tag *annotated = nullptr;
+	if (git_tag_lookup(&annotated, repository, &tag.target) == 0) {
+		TagPtr annotatedPtr(annotated);
+		tag.annotated = true;
+		tag.message = git_tag_message(annotated) != nullptr ? git_tag_message(annotated) : "";
+		if (const git_signature *tagger = git_tag_tagger(annotated)) {
+			tag.tagger = tagger->name != nullptr ? tagger->name : "";
+			tag.time = tagger->when.time;
+		}
+	}
+	git_error_clear();
+	git_object *target = nullptr;
+	if (git_object_lookup(&target, repository, &tag.target, GIT_OBJECT_ANY) < 0) {
+		git_error_clear();
+		tag.summary = "(missing object)";
+		return;
+	}
+	ObjectPtr targetPtr(target);
+	git_object *commit = nullptr;
+	if (git_object_peel(&commit, target, GIT_OBJECT_COMMIT) < 0) {
+		git_error_clear();
+		tag.summary = "(not a commit)";
+		return;
+	}
+	ObjectPtr commitPtr(commit);
+	tag.commit = *git_object_id(commit);
+	tag.hasCommit = true;
+	const CommitInfo info = ReadCommit(repository, tag.commit);
+	tag.summary = info.summary;
+	if (!tag.annotated) {
+		tag.time = info.time;
+	}
+}
+
+
+static bool IsDigit(char c)
+{
+	return c >= '0' && c <= '9';
+}
+
+
+bool NaturalLess(const std::string &a, const std::string &b)
+{
+	size_t i = 0;
+	size_t j = 0;
+	while (i < a.size() && j < b.size()) {
+		if (IsDigit(a[i]) && IsDigit(b[j])) {
+			// Numbers compare by value: without leading zeros, the longer one
+			// is larger, and equal lengths compare digit by digit.
+			size_t startA = i;
+			size_t startB = j;
+			while (startA < a.size() && a[startA] == '0') {
+				startA++;
+			}
+			while (startB < b.size() && b[startB] == '0') {
+				startB++;
+			}
+			size_t endA = startA;
+			size_t endB = startB;
+			while (endA < a.size() && IsDigit(a[endA])) {
+				endA++;
+			}
+			while (endB < b.size() && IsDigit(b[endB])) {
+				endB++;
+			}
+			if (endA - startA != endB - startB) {
+				return endA - startA < endB - startB;
+			}
+			const int order = a.compare(startA, endA - startA, b, startB, endB - startB);
+			if (order != 0) {
+				return order < 0;
+			}
+			// Equal values: fewer leading zeros first.
+			if (startA - i != startB - j) {
+				return startA - i < startB - j;
+			}
+			i = endA;
+			j = endB;
+			continue;
+		}
+		if (a[i] != b[j]) {
+			return static_cast<unsigned char>(a[i]) < static_cast<unsigned char>(b[j]);
+		}
+		i++;
+		j++;
+	}
+	return a.size() - i < b.size() - j;
 }
 
 

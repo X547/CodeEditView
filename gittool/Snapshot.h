@@ -89,10 +89,15 @@ struct RemoteInfo {
 };
 
 
+// A tag; the fields after target are read by LoadTagDetails.
 struct TagInfo {
 	std::string name;
-	// The commit the tag points to (peeled).
+	// The tag object of a tag with a message, otherwise the tagged object.
+	git_oid target {};
+	bool detailsLoaded {};
+	// The commit the tag points to (peeled), if it points to one.
 	git_oid commit {};
+	bool hasCommit {};
 	std::string summary;
 	bool annotated {};
 	std::string message;
@@ -144,6 +149,12 @@ std::vector<CommitInfo> History(git_repository *repository, const git_oid &start
 
 // Validity of a branch or tag name ("refs/heads/" + name).
 bool IsValidReferenceName(const std::string &fullName);
+
+// Reads the commit, kind, message and tagger of a tag, once.
+void LoadTagDetails(git_repository *repository, TagInfo &tag);
+
+// Order of names with numbers by their value: "v2" before "v10".
+bool NaturalLess(const std::string &a, const std::string &b);
 
 
 } // GitTool

@@ -26,13 +26,16 @@ static const BranchInfo &RequireBranch(const Snapshot &snapshot, const std::stri
 }
 
 
-static const TagInfo &RequireTag(const Snapshot &snapshot, const std::string &name)
+// A copy of the tag with its details.
+static TagInfo RequireTag(git_repository *repository, const Snapshot &snapshot, const std::string &name)
 {
-	const TagInfo *tag = snapshot.FindTag(name);
-	if (tag == nullptr) {
-		throw GitError("There is no tag \"" + name + "\"");
+	const TagInfo *found = snapshot.FindTag(name);
+	if (found == nullptr) {
+		throw GitError("There is no tag " + name);
 	}
-	return *tag;
+	TagInfo tag = *found;
+	LoadTagDetails(repository, tag);
+	return tag;
 }
 
 
@@ -1357,7 +1360,7 @@ static const char kUploadedTagWarning[] = "Remotes that have the tag keep the ol
 Plan PlanMoveTag(git_repository *repository, const Snapshot &snapshot, const std::string &name,
 	const std::string &commitSpec)
 {
-	const TagInfo &tag = RequireTag(snapshot, name);
+	const TagInfo tag = RequireTag(repository, snapshot, name);
 	const git_oid commit = ResolveCommit(repository, commitSpec);
 	Plan plan;
 	plan.title = "Move tag " + name;
@@ -1380,9 +1383,10 @@ Plan PlanMoveTag(git_repository *repository, const Snapshot &snapshot, const std
 }
 
 
-Plan PlanEditTagMessage(const Snapshot &snapshot, const std::string &name, const std::string &message)
+Plan PlanEditTagMessage(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name, const std::string &message)
 {
-	const TagInfo &tag = RequireTag(snapshot, name);
+	const TagInfo tag = RequireTag(repository, snapshot, name);
 	Plan plan;
 	plan.title = "Edit the message of tag " + name;
 	if (message == tag.message) {
@@ -1405,9 +1409,10 @@ Plan PlanEditTagMessage(const Snapshot &snapshot, const std::string &name, const
 }
 
 
-Plan PlanRenameTag(const Snapshot &snapshot, const std::string &name, const std::string &newName)
+Plan PlanRenameTag(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name, const std::string &newName)
 {
-	RequireTag(snapshot, name);
+	RequireTag(repository, snapshot, name);
 	CheckNewTagName(snapshot, newName);
 	Plan plan;
 	plan.title = "Rename tag " + name + " to " + newName;
@@ -1443,9 +1448,10 @@ Plan PlanRenameTag(const Snapshot &snapshot, const std::string &name, const std:
 }
 
 
-Plan PlanDeleteTag(const Snapshot &snapshot, const std::string &name)
+Plan PlanDeleteTag(git_repository *repository, const Snapshot &snapshot,
+	const std::string &name)
 {
-	const TagInfo &tag = RequireTag(snapshot, name);
+	const TagInfo tag = RequireTag(repository, snapshot, name);
 	Plan plan;
 	plan.title = "Delete tag " + name;
 	plan.destructive = tag.annotated;
@@ -1460,7 +1466,8 @@ Plan PlanDeleteTag(const Snapshot &snapshot, const std::string &name)
 }
 
 
-Plan PlanUploadTags(const Snapshot &snapshot, const std::string &remote, const std::vector<std::string> &names)
+Plan PlanUploadTags(git_repository *repository, const Snapshot &snapshot,
+	const std::string &remote, const std::vector<std::string> &names)
 {
 	RequireRemote(snapshot, remote);
 	Plan plan;
@@ -1468,7 +1475,7 @@ Plan PlanUploadTags(const Snapshot &snapshot, const std::string &remote, const s
 	plan.title = "Upload tags to " + remote;
 	std::vector<std::string> refspecs;
 	for (const std::string &name : names) {
-		const TagInfo &tag = RequireTag(snapshot, name);
+		const TagInfo tag = RequireTag(repository, snapshot, name);
 		plan.steps.push_back("Server " + remote + ": tag " + name + " at " + ShortId(tag.commit));
 		refspecs.push_back("refs/tags/" + name + ":refs/tags/" + name);
 	}

@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -152,6 +153,11 @@ bool IsValidReferenceName(const std::string &fullName);
 
 // Reads the commit, kind, message and tagger of a tag, once.
 void LoadTagDetails(git_repository *repository, TagInfo &tag);
+
+// The branches, remote copies ("origin/main") and tags ("tags/v1") of each
+// commit, by OidString of the commit; in that order, each group in natural
+// order.
+std::map<std::string, std::vector<std::string>> ReferenceLabels(git_repository *repository);
 
 // Order of names with numbers by their value: "v2" before "v10".
 bool NaturalLess(const std::string &a, const std::string &b);

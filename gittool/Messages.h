@@ -63,6 +63,11 @@ constexpr uint32 kMsgApplyEdits = 'GTap';
 constexpr uint32 kMsgDragCommits = 'GTdg';
 // StatsLoader: "commit" (raw git_oid).
 constexpr uint32 kMsgStatsReady = 'GTsr';
+// "where" (BPoint, screen).
+constexpr uint32 kMsgHistoryMenu = 'GThm';
+constexpr uint32 kMsgCreateBranchAt = 'GTcr';
+constexpr uint32 kMsgCreateTagAt = 'GTtg';
+constexpr uint32 kMsgCopyCommitId = 'GTcp';
 constexpr uint32 kMsgEditContents = 'GTec';
 constexpr uint32 kMsgSplitStep = 'GTsl';
 constexpr uint32 kMsgResolveStep = 'GTrv';

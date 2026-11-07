@@ -15,12 +15,15 @@
 #include <MenuField.h>
 #include <PopUpMenu.h>
 #include <StringView.h>
+#include <Clipboard.h>
+#include <MenuItem.h>
 #include <TextControl.h>
 
 #include "CommitWindow.h"
 #include "DiffView.h"
 #include "Dialogs.h"
 #include "Messages.h"
+#include "Operations.h"
 
 
 namespace GitTool {
@@ -41,7 +44,12 @@ enum {
 	kAddedColumn,
 	kDeletedColumn,
 	kFilesColumn,
+	kLabelsColumn,
 };
+
+
+// Labels shown in a row at most; the rest are counted.
+static constexpr size_t kShownLabels = 3;
 
 
 class CommitRow: public BRow {
@@ -232,6 +240,27 @@ private:
 				ShowMarker(DropIndex(where));
 				break;
 			}
+			case B_MOUSE_DOWN: {
+				// The secondary button opens the context menu for the row
+				// under the pointer, keeping a selection that contains it.
+				const int32 buttons = message->GetInt32("buttons", 0);
+				BPoint where;
+				if ((buttons & B_SECONDARY_MOUSE_BUTTON) == 0 || message->FindPoint("be:view_where", &where) != B_OK) {
+					break;
+				}
+				BRow *row = RowAt(where);
+				if (row == nullptr) {
+					return B_SKIP_MESSAGE;
+				}
+				if (!row->IsSelected()) {
+					DeselectAll();
+					AddToSelection(row);
+				}
+				BMessage menu(kMsgHistoryMenu);
+				menu.AddPoint("where", ScrollView()->ConvertToScreen(where));
+				Window()->PostMessage(&menu);
+				return B_SKIP_MESSAGE;
+			}
 			case B_MOUSE_UP:
 				HideMarker();
 				break;
@@ -264,6 +293,7 @@ public:
 		(void)wasSelected;
 		BMessage message(kMsgDragCommits);
 		message.AddMessenger("source", BMessenger(Window()));
+		std::string ids;
 		// The drag rectangle covers the selected rows that are visible.
 		BRect dragRect;
 		BView *rows = ScrollView();
@@ -274,6 +304,7 @@ public:
 				continue;
 			}
 			message.AddData("commit", B_RAW_TYPE, &commitRow->commit, sizeof(git_oid));
+			ids += (ids.empty() ? "" : "\n") + OidString(commitRow->commit);
 			if (commitRow->step >= 0) {
 				message.AddInt32("step", commitRow->step);
 			}
@@ -288,6 +319,8 @@ public:
 		if (!message.HasData("commit", B_RAW_TYPE)) {
 			return false;
 		}
+		// Other applications get the commit ids as text.
+		message.AddData("text/plain", B_MIME_TYPE, ids.data(), ids.size());
 		if (!dragRect.IsValid()) {
 			BPoint where;
 			uint32 buttons;
@@ -370,6 +403,7 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fList->SetSelectionMode(B_MULTIPLE_SELECTION_LIST);
 	fList->AddColumn(new BStringColumn("Edit", 110, 40, 300, B_TRUNCATE_END), kStateColumn);
 	fList->AddColumn(new BStringColumn("Commit", 70, 40, 200, B_TRUNCATE_END), kCommitColumn);
+	fList->AddColumn(new BStringColumn("Branches and tags", 150, 40, 600, B_TRUNCATE_END), kLabelsColumn);
 	fList->AddColumn(new BStringColumn("Summary", 380, 60, 2000, B_TRUNCATE_END), kSummaryColumn);
 	fList->AddColumn(new StatsColumn("Added", 60, StatsColumn::Kind::Added, *fStats), kAddedColumn);
 	fList->AddColumn(new StatsColumn("Deleted", 60, StatsColumn::Kind::Deleted, *fStats), kDeletedColumn);
@@ -428,6 +462,7 @@ void HistoryWindow::Reload()
 {
 	try {
 		fSnapshot = Snapshot::Load(fRepository.get());
+		fLabels = ReferenceLabels(fRepository.get());
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 	}
@@ -475,6 +510,18 @@ void HistoryWindow::FillList()
 		}
 		row->SetField(new BStringField(state.c_str()), kStateColumn);
 		row->SetField(new BStringField(ShortId(commit).c_str()), kCommitColumn);
+		std::string labels;
+		const auto found = fLabels.find(OidString(statsCommit));
+		if (found != fLabels.end()) {
+			const std::vector<std::string> &names = found->second;
+			for (size_t i = 0; i < names.size() && i < kShownLabels; i++) {
+				labels += (i > 0 ? ", " : "") + names[i];
+			}
+			if (names.size() > kShownLabels) {
+				labels += " +" + std::to_string(names.size() - kShownLabels);
+			}
+		}
+		row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
 		row->SetField(new BStringField(summary.empty() ? info.summary.c_str() : summary.c_str()), kSummaryColumn);
 		row->SetField(new BStringField(info.author.c_str()), kAuthorColumn);
 		row->SetField(new BStringField(FormatTime(info.time).c_str()), kDateColumn);
@@ -789,6 +836,104 @@ void HistoryWindow::Apply()
 }
 
 
+std::optional<git_oid> HistoryWindow::SelectedExistingCommit() const
+{
+	const std::vector<git_oid> commits = SelectedCommits();
+	const CommitRow *row = dynamic_cast<CommitRow*>(fList->CurrentSelection());
+	if (commits.size() != 1 || row == nullptr) {
+		return std::nullopt;
+	}
+	if (fEdit != nullptr && row->step >= 0 && fEdit->Results()[row->step].state != StepState::Kept) {
+		return std::nullopt;
+	}
+	return row->commit;
+}
+
+
+static void AddMenuItem(BMenu *menu, const char *label, uint32 what, bool enabled)
+{
+	BMenuItem *item = new BMenuItem(label, new BMessage(what));
+	item->SetEnabled(enabled);
+	menu->AddItem(item);
+}
+
+
+void HistoryWindow::ShowContextMenu(BPoint where)
+{
+	BPopUpMenu *menu = new BPopUpMenu("context", false, false);
+	menu->SetAsyncAutoDestruct(true);
+	const bool existing = SelectedExistingCommit().has_value();
+	AddMenuItem(menu, "Show changes" B_UTF8_ELLIPSIS, kMsgShowCommit, fShowChanges->IsEnabled());
+	AddMenuItem(menu, "Copy commit ID", kMsgCopyCommitId, !SelectedCommits().empty());
+	menu->AddSeparatorItem();
+	AddMenuItem(menu, "Create branch here" B_UTF8_ELLIPSIS, kMsgCreateBranchAt, existing);
+	AddMenuItem(menu, "Create tag here" B_UTF8_ELLIPSIS, kMsgCreateTagAt, existing);
+	if (fEdit != nullptr) {
+		menu->AddSeparatorItem();
+		AddMenuItem(menu, "Remove", kMsgRemoveSteps, fRemove->IsEnabled());
+		AddMenuItem(menu, fCombine->Label(), kMsgCombineStep, fCombine->IsEnabled());
+		AddMenuItem(menu, "Reword" B_UTF8_ELLIPSIS, kMsgRewordStep, fReword->IsEnabled());
+		AddMenuItem(menu, "Edit contents" B_UTF8_ELLIPSIS, kMsgEditContents, fEditContents->IsEnabled());
+		AddMenuItem(menu, "Split" B_UTF8_ELLIPSIS, kMsgSplitStep, fSplit->IsEnabled());
+		AddMenuItem(menu, "Resolve conflicts" B_UTF8_ELLIPSIS, kMsgResolveStep, fResolve->IsEnabled());
+	}
+	menu->SetTargetForItems(this);
+	menu->Go(where, true, true, true);
+}
+
+
+void HistoryWindow::CreateReferenceAt(bool tag)
+{
+	const std::optional<git_oid> commit = SelectedExistingCommit();
+	if (!commit.has_value()) {
+		return;
+	}
+	Form form(std::string(tag ? "Create tag at " : "Create branch at ") + ShortId(*commit), "Preview");
+	form.AddText("name", "Name:");
+	if (tag) {
+		form.AddMultiLine("message", "Message:")
+			.AddLabel("Without a message, the tag is a simple tag.");
+	}
+	if (!form.Go()) {
+		return;
+	}
+	Reload();
+	try {
+		const Plan plan = tag
+			? PlanCreateTag(fRepository.get(), fSnapshot, form.Text("name"), OidString(*commit), form.Text("message"))
+			: PlanCreateBranch(fRepository.get(), fSnapshot, form.Text("name"), OidString(*commit), std::string());
+		Resolution resolution = Resolution::Cancel;
+		if (!ConfirmPlan(plan, fRepository.get(), resolution)) {
+			return;
+		}
+		RunContext context;
+		context.repository = fRepository.get();
+		context.resolution = resolution;
+		plan.run(context);
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
+	Reload();
+	FillList();
+}
+
+
+void HistoryWindow::CopyCommitIds()
+{
+	std::string ids;
+	for (const git_oid &commit : SelectedCommits()) {
+		ids += (ids.empty() ? "" : "\n") + OidString(commit);
+	}
+	if (ids.empty() || !be_clipboard->Lock()) {
+		return;
+	}
+	be_clipboard->Clear();
+	be_clipboard->Data()->AddData("text/plain", B_MIME_TYPE, ids.data(), ids.size());
+	be_clipboard->Commit();
+	be_clipboard->Unlock();
+}
+
+
 // Redraws the rows that show the commit's statistics.
 void HistoryWindow::StatsReady(BMessage *message)
 {
@@ -876,6 +1021,16 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgStepEdited:
 			StepEdited(message);
+			break;
+		case kMsgHistoryMenu:
+			ShowContextMenu(message->GetPoint("where", BPoint()));
+			break;
+		case kMsgCreateBranchAt:
+		case kMsgCreateTagAt:
+			CreateReferenceAt(message->what == kMsgCreateTagAt);
+			break;
+		case kMsgCopyCommitId:
+			CopyCommitIds();
 			break;
 		case kMsgStatsReady:
 			StatsReady(message);

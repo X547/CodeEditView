@@ -494,6 +494,58 @@ void LoadTagDetails(git_repository *repository, TagInfo &tag)
 }
 
 
+std::map<std::string, std::vector<std::string>> ReferenceLabels(git_repository *repository)
+{
+	struct Label {
+		int group;
+		std::string name;
+	};
+	std::map<std::string, std::vector<Label>> labels;
+	git_reference_iterator *iterator = nullptr;
+	Check(git_reference_iterator_new(&iterator, repository), "Cannot list the references");
+	ReferenceIteratorPtr iteratorPtr(iterator);
+	git_reference *reference = nullptr;
+	while (git_reference_next(&reference, iterator) == 0) {
+		ReferencePtr referencePtr(reference);
+		if (git_reference_type(reference) != GIT_REFERENCE_DIRECT) {
+			continue;
+		}
+		const std::string name = git_reference_name(reference);
+		Label label;
+		if (name.starts_with(kHeadsPrefix)) {
+			label = {0, name.substr(sizeof(kHeadsPrefix) - 1)};
+		} else if (name.starts_with(kRemotesPrefix)) {
+			label = {1, name.substr(sizeof(kRemotesPrefix) - 1)};
+		} else if (name.starts_with(kTagsPrefix)) {
+			label = {2, "tags/" + name.substr(sizeof(kTagsPrefix) - 1)};
+		} else {
+			continue;
+		}
+		// Packed references keep the peeled commit, so this is fast even
+		// for many tags.
+		git_object *commit = nullptr;
+		if (git_reference_peel(&commit, reference, GIT_OBJECT_COMMIT) < 0) {
+			git_error_clear();
+			continue;
+		}
+		ObjectPtr commitPtr(commit);
+		labels[OidString(*git_object_id(commit))].push_back(std::move(label));
+	}
+
+	std::map<std::string, std::vector<std::string>> result;
+	for (auto &[commit, commitLabels] : labels) {
+		std::sort(commitLabels.begin(), commitLabels.end(), [](const Label &a, const Label &b) {
+			return a.group != b.group ? a.group < b.group : NaturalLess(a.name, b.name);
+		});
+		std::vector<std::string> &names = result[commit];
+		for (const Label &label : commitLabels) {
+			names.push_back(label.name);
+		}
+	}
+	return result;
+}
+
+
 static bool IsDigit(char c)
 {
 	return c >= '0' && c <= '9';

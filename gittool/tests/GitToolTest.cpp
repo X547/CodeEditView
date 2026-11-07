@@ -580,6 +580,18 @@ TEST_CASE("Tags", "[gittool]")
 }
 
 
+TEST_CASE("Reference labels", "[gittool]")
+{
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+	Run(PlanCreateTag(repository, fixture.Load(), "v10", "feature", ""), repository);
+	Run(PlanCreateTag(repository, fixture.Load(), "v9", "feature", "With a message"), repository);
+	const std::map<std::string, std::vector<std::string>> labels = ReferenceLabels(repository);
+	CHECK(labels.at(OidString(fixture.first)) == std::vector<std::string> {"main"});
+	CHECK(labels.at(OidString(fixture.second)) == std::vector<std::string> {"feature", "tags/v9", "tags/v10"});
+}
+
+
 TEST_CASE("Natural order", "[gittool]")
 {
 	CHECK(NaturalLess("v2", "v10"));

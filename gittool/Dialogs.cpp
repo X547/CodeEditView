@@ -3,6 +3,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <functional>
 #include <stdexcept>
 
 #include <Button.h>
@@ -11,6 +12,7 @@
 #include <ColumnTypes.h>
 #include <GridLayout.h>
 #include <GridView.h>
+#include <MessageFilter.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
 #include <MenuItem.h>
@@ -55,6 +57,12 @@ bool ModalDialog::Go()
 	BWindow *parent = dynamic_cast<BWindow*>(BLooper::LooperForThread(find_thread(nullptr)));
 	ResizeToPreferred();
 	if (parent != nullptr) {
+		// Modal to the window that opened it only, so other windows (such
+		// as history windows to drag commits from) stay usable.
+		if (Feel() == B_MODAL_APP_WINDOW_FEEL) {
+			SetFeel(B_MODAL_SUBSET_WINDOW_FEEL);
+			AddToSubset(parent);
+		}
 		CenterIn(parent->Frame());
 	} else {
 		CenterOnScreen();
@@ -149,6 +157,32 @@ static BScrollView *ReadOnlyText(BTextView *&textView, const std::string &text, 
 	scrollView->SetExplicitPreferredSize(BSize(width, height));
 	return scrollView;
 }
+
+
+// Passes the first commit dropped from a history window to a function
+// instead of the view it was dropped on.
+class CommitDropFilter: public BMessageFilter {
+private:
+	std::function<void(const git_oid &commit)> fDropped;
+
+public:
+	explicit CommitDropFilter(std::function<void(const git_oid &commit)> dropped):
+		BMessageFilter(B_DROPPED_DELIVERY, B_ANY_SOURCE, kMsgDragCommits),
+		fDropped(std::move(dropped))
+	{
+	}
+
+	filter_result Filter(BMessage *message, BHandler **target) final
+	{
+		(void)target;
+		const void *data = nullptr;
+		ssize_t size = 0;
+		if (message->FindData("commit", B_RAW_TYPE, &data, &size) == B_OK && size == sizeof(git_oid)) {
+			fDropped(*static_cast<const git_oid*>(data));
+		}
+		return B_SKIP_MESSAGE;
+	}
+};
 
 
 //#pragma mark - Form
@@ -352,6 +386,16 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 		.Add(gridView)
 		.Add(ButtonRow(cancel, ok));
 	SetDefaultButton(ok);
+	// A commit dropped from a history window fills the first commit field.
+	for (size_t i = 0; i < fForm.Fields().size(); i++) {
+		BTextControl *commitField = dynamic_cast<BTextControl*>(fControls[i]);
+		if (fForm.Fields()[i].kind == FieldKind::Commit && commitField != nullptr) {
+			AddCommonFilter(new CommitDropFilter([commitField](const git_oid &commit) {
+				commitField->SetText(OidString(commit).c_str());
+			}));
+			break;
+		}
+	}
 	if (BTextControl *text = dynamic_cast<BTextControl*>(focus)) {
 		text->MakeFocus(true);
 	} else if (focus != nullptr) {
@@ -548,6 +592,12 @@ CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot,
 		.End()
 		.Add(buttons);
 	SetDefaultButton(ok);
+	// A commit dropped from a history window is chosen and its history shown.
+	AddCommonFilter(new CommitDropFilter([this](const git_oid &commit) {
+		const std::string id = OidString(commit);
+		fSpec->SetText(id.c_str());
+		ShowHistoryOf(id);
+	}));
 	ShowHistoryOf(spec.empty() && !snapshot.worktrees.empty() && snapshot.worktrees[0].commit.has_value()
 		? OidString(*snapshot.worktrees[0].commit) : spec);
 }

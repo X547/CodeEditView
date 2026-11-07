@@ -1,6 +1,8 @@
 #pragma once
 
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +43,8 @@ private:
 	std::vector<CommitInfo> fCommits;
 	std::unique_ptr<HistoryEdit> fEdit;
 	std::unique_ptr<StatsLoader> fStats;
+	// Branches, remote copies and tags by commit (ReferenceLabels).
+	std::map<std::string, std::vector<std::string>> fLabels;
 
 	BMenuField *fRefField {};
 	BTextControl *fSpecField {};
@@ -74,6 +78,12 @@ private:
 	void Apply();
 	void ShowChanges();
 	void StatsReady(BMessage *message);
+	// The selected commit that exists as it is shown (not a pending
+	// rewrite), for references and copying.
+	std::optional<git_oid> SelectedExistingCommit() const;
+	void ShowContextMenu(BPoint where);
+	void CreateReferenceAt(bool tag);
+	void CopyCommitIds();
 
 public:
 	// edit starts in edit mode if spec is a local branch.

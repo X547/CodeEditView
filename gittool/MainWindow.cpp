@@ -863,6 +863,7 @@ void MainWindow::ShowContextMenu()
 	BPoint where;
 	uint32 buttons;
 	get_mouse(&where, &buttons);
+	menu->SetAsyncAutoDestruct(true);
 	menu->Go(where, true, true, true);
 }
 

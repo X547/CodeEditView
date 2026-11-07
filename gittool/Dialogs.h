@@ -35,7 +35,7 @@ protected:
 	void Finish(bool accepted);
 
 public:
-	ModalDialog(const char *title, uint32 flags);
+	ModalDialog(const char *title, uint32 flags, window_feel feel = B_MODAL_APP_WINDOW_FEEL);
 
 	// Shows the dialog and waits until it closes; true if accepted. The
 	// dialog deletes itself.
@@ -107,8 +107,9 @@ public:
 // Lets the user pick a commit from the history of a branch, remote copy,
 // tag or worktree, or enter it. spec is the initial and the chosen value.
 bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec);
-// The same window without choosing.
-void ShowHistory(git_repository *repository, const Snapshot &snapshot, const std::string &spec);
+// The same window without choosing, not modal, with its own repository
+// handle; commits open in a commit window.
+void ShowHistory(const std::string &repositoryPath, const Snapshot &snapshot, const std::string &spec);
 
 
 // Shows the preview of a plan; true if the user chose to run it, with the

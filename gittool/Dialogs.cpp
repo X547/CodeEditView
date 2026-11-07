@@ -20,6 +20,8 @@
 #include <TextControl.h>
 #include <TextView.h>
 
+#include "CommitWindow.h"
+#include "DiffView.h"
 #include "Messages.h"
 
 
@@ -28,12 +30,12 @@ namespace GitTool {
 
 //#pragma mark - ModalDialog
 
-ModalDialog::ModalDialog(const char *title, uint32 flags):
+ModalDialog::ModalDialog(const char *title, uint32 flags, window_feel feel):
 	BWindow(
 		BRect(0, 0, 100, 100),
 		title,
 		B_TITLED_WINDOW_LOOK,
-		B_MODAL_APP_WINDOW_FEEL,
+		feel,
 		flags | B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE
 	)
 {
@@ -401,17 +403,28 @@ std::string FormatTime(int64_t time)
 class CommitPicker: public ModalDialog {
 private:
 	git_repository *fRepository;
+	// Set for a history window that is not modal.
+	RepositoryPtr fOwnRepository;
+	std::string fRepositoryPath;
 	std::string *fResult;
 	BTextControl *fSpec {};
 	BColumnListView *fList {};
 	std::vector<CommitInfo> fCommits;
 
 	void ShowHistoryOf(const std::string &spec);
+	void ShowCommit();
 	bool Accept() final;
 
 public:
-	// result is nullptr to only show the history.
-	CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec, std::string *result);
+	// result is nullptr to only show the history; then the window may own
+	// its repository and not be modal.
+	CommitPicker(
+		git_repository *repository,
+		RepositoryPtr ownRepository,
+		const Snapshot &snapshot,
+		const std::string &spec,
+		std::string *result
+	);
 
 	void MessageReceived(BMessage *message) final;
 };
@@ -427,10 +440,21 @@ static void AddRefItem(BMenu *menu, const std::string &label, const std::string 
 }
 
 
-CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec,
-	std::string *result):
-	ModalDialog(result != nullptr ? "Choose a commit" : "History", B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+CommitPicker::CommitPicker(
+	git_repository *repository,
+	RepositoryPtr ownRepository,
+	const Snapshot &snapshot,
+	const std::string &spec,
+	std::string *result
+):
+	ModalDialog(
+		result != nullptr ? "Choose a commit" : "History",
+		ownRepository != nullptr ? B_NOT_ZOOMABLE : B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE,
+		ownRepository != nullptr ? B_NORMAL_WINDOW_FEEL : B_MODAL_APP_WINDOW_FEEL
+	),
 	fRepository(repository),
+	fOwnRepository(std::move(ownRepository)),
+	fRepositoryPath(git_repository_commondir(repository)),
 	fResult(result)
 {
 	BPopUpMenu *menu = new BPopUpMenu("refs");
@@ -471,12 +495,15 @@ CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot,
 	fSpec = new BTextControl("spec", "Commit:", spec.c_str(), nullptr);
 	BButton *cancel = new BButton(result != nullptr ? "Cancel" : "Close", new BMessage(kMsgDialogCancel));
 	BButton *ok = result != nullptr ? new BButton("Choose", new BMessage(kMsgDialogOk)) : nullptr;
+	BButton *showChanges = new BButton("Show changes" B_UTF8_ELLIPSIS, new BMessage(kMsgShowCommit));
+	BGroupLayout *buttons = ButtonRow(cancel, ok);
+	buttons->AddView(0, showChanges);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(refField)
 		.Add(fList)
 		.Add(fSpec)
-		.Add(ButtonRow(cancel, ok));
+		.Add(buttons);
 	if (ok != nullptr) {
 		SetDefaultButton(ok);
 	} else {
@@ -504,6 +531,19 @@ void CommitPicker::ShowHistoryOf(const std::string &spec)
 		row->SetField(new BStringField(commit.author.c_str()), 2);
 		row->SetField(new BStringField(FormatTime(commit.time).c_str()), 3);
 		fList->AddRow(row);
+	}
+}
+
+
+// Opens the changes of the selected or entered commit, above this window.
+void CommitPicker::ShowCommit()
+{
+	try {
+		const IndexRow *row = dynamic_cast<IndexRow*>(fList->CurrentSelection());
+		const git_oid id = row != nullptr ? fCommits[row->index].id : ResolveCommit(fRepository, fSpec->Text());
+		(new CommitWindow(fRepositoryPath, id, Feel()))->Show();
+	} catch (const std::exception &e) {
+		DiffKit::ShowError(e.what());
 	}
 }
 
@@ -542,9 +582,14 @@ void CommitPicker::MessageReceived(BMessage *message)
 			break;
 		}
 		case kMsgCommitInvoked:
-			if (fResult != nullptr && Accept()) {
+			if (fResult == nullptr) {
+				ShowCommit();
+			} else if (Accept()) {
 				Finish(true);
 			}
+			break;
+		case kMsgShowCommit:
+			ShowCommit();
 			break;
 		default:
 			ModalDialog::MessageReceived(message);
@@ -556,7 +601,7 @@ void CommitPicker::MessageReceived(BMessage *message)
 bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec)
 {
 	std::string result;
-	if (!(new CommitPicker(repository, snapshot, spec, &result))->Go()) {
+	if (!(new CommitPicker(repository, RepositoryPtr(), snapshot, spec, &result))->Go()) {
 		return false;
 	}
 	spec = result;
@@ -564,9 +609,14 @@ bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::strin
 }
 
 
-void ShowHistory(git_repository *repository, const Snapshot &snapshot, const std::string &spec)
+void ShowHistory(const std::string &repositoryPath, const Snapshot &snapshot, const std::string &spec)
 {
-	(new CommitPicker(repository, snapshot, spec, nullptr))->Go();
+	RepositoryPtr repository = OpenRepository(repositoryPath);
+	git_repository *handle = repository.get();
+	CommitPicker *window = new CommitPicker(handle, std::move(repository), snapshot, spec, nullptr);
+	window->ResizeToPreferred();
+	window->CenterOnScreen();
+	window->Show();
 }
 
 

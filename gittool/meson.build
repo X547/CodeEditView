@@ -4,6 +4,7 @@
 gitToolCore = static_library(
 	'gittoolcore',
 	files(
+		'CommitDiff.cpp',
 		'Network.cpp',
 		'Operations.cpp',
 		'Plan.cpp',
@@ -21,6 +22,7 @@ gitToolCoreDep = declare_dependency(
 executable(
 	'CodeEditGitTool',
 	files(
+		'CommitWindow.cpp',
 		'Dialogs.cpp',
 		'GitToolApp.cpp',
 		'MainWindow.cpp',

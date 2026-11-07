@@ -1403,7 +1403,7 @@ void MainWindow::RunBranchAction(Action action)
 			break;
 		}
 		case Action::BranchHistory:
-			ShowHistory(repository, fSnapshot, branch.name);
+			ShowHistory(fRepositoryPath, fSnapshot, branch.name);
 			break;
 		default:
 			break;
@@ -1476,7 +1476,7 @@ void MainWindow::RunRemoteAction(Action action)
 				Execute(PlanDeleteOnServer(fSnapshot, remote, "refs/heads/" + copy.branch));
 				break;
 			case Action::CopyHistory:
-				ShowHistory(repository, fSnapshot, copy.name);
+				ShowHistory(fRepositoryPath, fSnapshot, copy.name);
 				break;
 			default:
 				break;
@@ -1655,7 +1655,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagHistory:
-			ShowHistory(repository, fSnapshot, spec);
+			ShowHistory(fRepositoryPath, fSnapshot, spec);
 			break;
 		default:
 			break;

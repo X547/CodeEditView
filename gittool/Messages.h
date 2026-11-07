@@ -38,6 +38,17 @@ constexpr uint32 kMsgConfirmToggled = 'GTct';
 constexpr uint32 kMsgHistoryOf = 'GThi';
 constexpr uint32 kMsgCommitSelected = 'GTcl';
 constexpr uint32 kMsgCommitInvoked = 'GTci';
+constexpr uint32 kMsgShowCommit = 'GTsh';
+
+// Commit window.
+constexpr uint32 kMsgCommitFileSelected = 'GTcf';
+// "parent" (int32).
+constexpr uint32 kMsgSetParent = 'GTsp';
+constexpr uint32 kMsgNextChange = 'GTnx';
+constexpr uint32 kMsgPreviousChange = 'GTpv';
+constexpr uint32 kMsgToggleSyncScrolling = 'GTss';
+constexpr uint32 kMsgToggleHideUnchanged = 'GThu';
+constexpr uint32 kMsgToggleWordWrap = 'GTww';
 
 
 } // GitTool

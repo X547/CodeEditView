@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "CommitDiff.h"
 #include "Network.h"
 #include "Operations.h"
 #include "Plan.h"
@@ -639,6 +640,43 @@ TEST_CASE("Remotes", "[gittool]")
 		CHECK(snapshot.remotes.empty());
 		CHECK(snapshot.FindBranch("main")->upstream.empty());
 	}
+}
+
+
+TEST_CASE("Commit changes", "[gittool]")
+{
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+
+	const std::vector<FileChange> root = CommitChanges(repository, fixture.first, 0);
+	REQUIRE(root.size() == 2);
+	CHECK(root[0].status == 'A');
+	CHECK(root[0].Path() == "a.txt");
+	CHECK(root[0].oldPath.empty());
+
+	const std::vector<FileChange> modified = CommitChanges(repository, fixture.second, 0);
+	REQUIRE(modified.size() == 1);
+	CHECK(modified[0].status == 'M');
+	CHECK(ReadFileVersion(repository, modified[0].oldId, modified[0].oldMode) == "a1\n");
+	CHECK(ReadFileVersion(repository, modified[0].newId, modified[0].newMode) == "a2\n");
+
+	std::filesystem::rename(fixture.directory + "/b.txt", fixture.directory + "/renamed.txt");
+	WriteFile(fixture.directory + "/new.txt", "new\n");
+	const git_oid third = CommitAll(repository, "rename\n\nWith a body.");
+	const std::vector<FileChange> renamed = CommitChanges(repository, third, 0);
+	REQUIRE(renamed.size() == 2);
+	CHECK(renamed[0].status == 'A');
+	CHECK(renamed[0].newPath == "new.txt");
+	CHECK_FALSE(ReadFileVersion(repository, renamed[0].oldId, renamed[0].oldMode).has_value());
+	CHECK(renamed[1].status == 'R');
+	CHECK(renamed[1].oldPath == "b.txt");
+	CHECK(renamed[1].newPath == "renamed.txt");
+
+	const CommitDetails details = ReadCommitDetails(repository, third);
+	CHECK(details.message == "rename\n\nWith a body.");
+	CHECK(details.author.name == "Test");
+	REQUIRE(details.parents.size() == 1);
+	CHECK(git_oid_equal(&details.parents[0], &fixture.first));
 }
 
 

@@ -81,6 +81,7 @@ constexpr uint32 kMsgLeftVersion = 'GTlv';
 constexpr uint32 kMsgDeleteToggled = 'GTdt';
 constexpr uint32 kMsgTakeLeft = 'GTtl';
 constexpr uint32 kMsgAddFile = 'GTaf';
+constexpr uint32 kMsgTakeChange = 'GTtc';
 
 
 } // GitTool

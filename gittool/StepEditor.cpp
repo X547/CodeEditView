@@ -7,6 +7,8 @@
 #include <CheckBox.h>
 #include <LayoutBuilder.h>
 #include <ListView.h>
+#include <GroupView.h>
+#include <MenuBar.h>
 #include <MenuField.h>
 #include <MenuItem.h>
 #include <PopUpMenu.h>
@@ -16,10 +18,12 @@
 #include <TextControl.h>
 
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/EditorCommands.h>
 #include <CodeEditView/TextModel.h>
 
 #include "CommitDiff.h"
 #include "DiffView.h"
+#include "FindCommands.h"
 #include "MessageEditor.h"
 #include "Messages.h"
 
@@ -143,7 +147,53 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 
 	BButton *cancel = new BButton("Cancel", new BMessage(kMsgDialogCancel));
 	BButton *ok = new BButton(input.mode == StepEditMode::Split ? "Split" : "OK", new BMessage(kMsgDialogOk));
-	BLayoutBuilder::Group<> layout = BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_SMALL_SPACING)
+	BMenu *searchMenu = nullptr;
+	BMessage *toggleDeleted = new BMessage(kMsgDeleteToggled);
+	toggleDeleted->AddBool("toggle", true);
+	BMenuBar *menuBar = new BMenuBar("menuBar");
+	BLayoutBuilder::Menu<>(menuBar)
+		.AddMenu("File")
+			.AddItem(input.mode == StepEditMode::Split ? "Split" : "Apply to the commit", kMsgDialogOk, B_ENTER)
+			.AddItem("Close without changes", kMsgDialogCancel, 'W')
+		.End()
+		.AddMenu("Edit")
+			.AddItem("Undo", B_UNDO, 'Z')
+			.AddItem("Redo", B_REDO, 'Z', B_SHIFT_KEY)
+			.AddSeparator()
+			.AddItem("Cut", B_CUT, 'X')
+			.AddItem("Copy", B_COPY, 'C')
+			.AddItem("Paste", B_PASTE, 'V')
+			.AddSeparator()
+			.AddItem("Select all", B_SELECT_ALL, 'A')
+		.End()
+		.AddMenu("Search")
+			.GetMenu(searchMenu)
+		.End()
+		.AddMenu("Changes")
+			.AddItem("Take change or selected lines from the left", kMsgTakeChange, 'T')
+			.AddItem("Use the left version of the file", kMsgTakeLeft)
+			.AddItem("Delete the file", toggleDeleted)
+			.AddSeparator()
+			.AddItem("Next change", kMsgNextChange, B_DOWN_ARROW, B_SHIFT_KEY)
+			.AddItem("Previous change", kMsgPreviousChange, B_UP_ARROW, B_SHIFT_KEY)
+		.End()
+		.AddMenu("View")
+			.AddItem("Synchronize scrolling", kMsgToggleSyncScrolling)
+				.GetItem(fSyncScrollingItem)
+			.AddItem("Hide unchanged lines", kMsgToggleHideUnchanged)
+				.GetItem(fHideUnchangedItem)
+			.AddItem("Word wrap", kMsgToggleWordWrap)
+				.GetItem(fWordWrapItem)
+		.End();
+	FindKit::AddFindItems(searchMenu);
+	fSyncScrollingItem->SetMarked(true);
+	fHideUnchangedItem->SetMarked(true);
+
+	BGroupView *content = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
+	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+		.Add(menuBar)
+		.Add(content);
+	BLayoutBuilder::Group<> layout = BLayoutBuilder::Group<>(content)
 		.SetInsets(B_USE_SMALL_SPACING)
 		.Add(hint)
 		.Add(split, 1)
@@ -433,6 +483,10 @@ void StepEditor::MessageReceived(BMessage *message)
 			break;
 		case kMsgDeleteToggled:
 			if (File *file = Selected()) {
+				// From the check box, or the menu item, which toggles it.
+				if (message->GetBool("toggle", false)) {
+					fDeleted->SetValue(fDeleted->Value() == B_CONTROL_ON ? B_CONTROL_OFF : B_CONTROL_ON);
+				}
 				file->deleted = fDeleted->Value() == B_CONTROL_ON;
 				ShowSelected();
 				UpdateFileList();
@@ -440,6 +494,37 @@ void StepEditor::MessageReceived(BMessage *message)
 			break;
 		case kMsgTakeLeft:
 			TakeLeft();
+			break;
+		case kMsgTakeChange:
+			if (File *file = Selected(); file != nullptr && !file->wholeFile && !file->deleted) {
+				fDiffView->CopyChanges(1);
+			}
+			break;
+		case kMsgNextChange:
+		case kMsgPreviousChange:
+			fDiffView->GoToChunk(message->what == kMsgNextChange);
+			break;
+		case kMsgToggleSyncScrolling:
+			fSyncScrollingItem->SetMarked(!fSyncScrollingItem->IsMarked());
+			fDiffView->SetSyncScrolling(fSyncScrollingItem->IsMarked());
+			break;
+		case kMsgToggleHideUnchanged:
+			fHideUnchangedItem->SetMarked(!fHideUnchangedItem->IsMarked());
+			fDiffView->SetHideUnchanged(fHideUnchangedItem->IsMarked());
+			break;
+		case kMsgToggleWordWrap:
+			fWordWrapItem->SetMarked(!fWordWrapItem->IsMarked());
+			fDiffView->SetWordWrap(fWordWrapItem->IsMarked());
+			break;
+		case B_UNDO:
+		case B_REDO:
+		case B_CUT:
+		case B_COPY:
+		case B_PASTE:
+		case B_SELECT_ALL:
+			if (CodeEditView *editor = TargetEditor()) {
+				PostMessage(message, editor);
+			}
 			break;
 		case kMsgAddFile: {
 			BTextControl *field = dynamic_cast<BTextControl*>(FindView("addPath"));
@@ -483,9 +568,36 @@ void StepEditor::MessageReceived(BMessage *message)
 			Quit();
 			break;
 		default:
-			BWindow::MessageReceived(message);
+			if (!CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
+				BWindow::MessageReceived(message);
+			}
 			break;
 	}
+}
+
+
+CodeEditView *StepEditor::TargetEditor()
+{
+	if (CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this)) {
+		return focused;
+	}
+	return fDiffView->View(1);
+}
+
+
+void StepEditor::MenusBeginning()
+{
+	CodeEdit::EditorCommands::UpdateMenu(KeyMenuBar(), TargetEditor());
+	BWindow::MenusBeginning();
+}
+
+
+void StepEditor::WindowActivated(bool active)
+{
+	if (active) {
+		CodeEdit::EditorCommands::SetActiveHost(this);
+	}
+	BWindow::WindowActivated(active);
 }
 
 

@@ -34,7 +34,7 @@ executable(
 	),
 	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface'),
-	dependencies: [gitToolCoreDep, gitDiffUiDep, cpp.find_library('columnlistview')],
+	dependencies: [gitToolCoreDep, gitDiffUiDep, findKitDep, cpp.find_library('columnlistview')],
 	install: true
 )
 

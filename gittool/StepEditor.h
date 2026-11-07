@@ -16,6 +16,7 @@
 class BButton;
 class BCheckBox;
 class BListView;
+class BMenuItem;
 class BMenuField;
 class BStringView;
 class CodeEditView;
@@ -87,6 +88,9 @@ private:
 	BCheckBox *fDeleted {};
 	BButton *fTakeLeft {};
 	CodeEditView *fMessage {};
+	BMenuItem *fSyncScrollingItem {};
+	BMenuItem *fHideUnchangedItem {};
+	BMenuItem *fWordWrapItem {};
 
 	std::optional<std::string> ReadVersion(const std::optional<FileVersion> &version);
 	void AddFile(const std::string &path, const std::optional<FileVersion> &first,
@@ -97,11 +101,15 @@ private:
 	void UpdateFileList();
 	void TakeLeft();
 	bool Finish();
+	// The focused code editor, or the editable side of the diff.
+	CodeEditView *TargetEditor();
 
 public:
 	StepEditor(BWindow *history, const std::string &repositoryPath, const StepEditorInput &input);
 
 	void MessageReceived(BMessage *message) override;
+	void MenusBeginning() override;
+	void WindowActivated(bool active) override;
 };
 
 

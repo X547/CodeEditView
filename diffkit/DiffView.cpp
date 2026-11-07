@@ -9,7 +9,6 @@
 #include <Alert.h>
 #include <LayoutBuilder.h>
 #include <MessageRunner.h>
-#include <StringView.h>
 #include <Window.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
@@ -17,6 +16,7 @@
 
 #include "DiffColors.h"
 #include "LinkMapView.h"
+#include "TruncatingLabel.h"
 
 
 namespace DiffKit {
@@ -93,8 +93,7 @@ DiffView::DiffView():
 	for (int pane = 0; pane < 2; pane++) {
 		fViews[pane] = new CodeEditView(pane == 0 ? "leftView" : "rightView");
 		fPanes[pane] = new CodeEditScrollView(pane == 0 ? "leftPane" : "rightPane", fViews[pane]);
-		fLabels[pane] = new BStringView(pane == 0 ? "leftLabel" : "rightLabel", "");
-		fLabels[pane]->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+		fLabels[pane] = new TruncatingLabel(pane == 0 ? "leftLabel" : "rightLabel", "");
 	}
 	fLinkMap = new LinkMapView(this);
 	ApplySettings();
@@ -211,7 +210,7 @@ void DiffView::SetModels(TextModel *left, TextModel *right, const std::string &k
 
 void DiffView::SetLabel(int pane, const char *text)
 {
-	fLabels[pane]->SetText(text);
+	fLabels[pane]->SetLabel(text);
 }
 
 

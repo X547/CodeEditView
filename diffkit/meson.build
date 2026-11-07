@@ -11,6 +11,7 @@ diffKit = static_library(
 		'Git.cpp',
 		'LinkMapView.cpp',
 		'TextSide.cpp',
+		'TruncatingLabel.cpp',
 	),
 	dependencies: [codeEditViewDep, libgit2Dep]
 )

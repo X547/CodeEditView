@@ -19,7 +19,6 @@
 
 
 class BMessageRunner;
-class BStringView;
 class CodeEditScrollView;
 class CodeEditView;
 
@@ -28,6 +27,7 @@ namespace DiffKit {
 
 
 class LinkMapView;
+class TruncatingLabel;
 
 
 // Notifications posted to the window.
@@ -66,7 +66,7 @@ private:
 	bool fCopyTo[2] {};
 	CodeEditView *fViews[2] {};
 	CodeEditScrollView *fPanes[2] {};
-	BStringView *fLabels[2] {};
+	TruncatingLabel *fLabels[2] {};
 	LinkMapView *fLinkMap {};
 
 	std::vector<Chunk> fChunks;

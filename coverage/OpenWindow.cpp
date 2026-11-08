@@ -10,7 +10,7 @@
 #include <Path.h>
 #include <TextControl.h>
 
-#include "Messages.h"
+#include "CoverageMessages.h"
 
 
 namespace Coverage {

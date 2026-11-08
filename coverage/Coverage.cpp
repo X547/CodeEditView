@@ -1,5 +1,7 @@
 #include "Coverage.h"
 
+#include <stdio.h>
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -304,6 +306,33 @@ std::vector<Decoration> MakeDecorations(
 	AddUncoveredRegions(coverage, lines, text, colors, decorations);
 	AddPartialBranches(coverage, text, colors, decorations);
 	return decorations;
+}
+
+
+static std::string FormatCounts(const char *name, const Counts &counts)
+{
+	const std::optional<double> percent = counts.Percent();
+	if (!percent.has_value()) {
+		return std::string(name) + " -";
+	}
+	char text[128];
+	snprintf(
+		text,
+		sizeof(text),
+		"%s %.1f %% (%llu/%llu)",
+		name,
+		*percent,
+		static_cast<unsigned long long>(counts.covered),
+		static_cast<unsigned long long>(counts.count)
+	);
+	return text;
+}
+
+
+std::string FormatSummary(const FileSummary &summary)
+{
+	return FormatCounts("lines", summary.lines) + ", " + FormatCounts("regions", summary.regions) + ", "
+		+ FormatCounts("branches", summary.branches);
 }
 
 

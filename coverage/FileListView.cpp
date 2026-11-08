@@ -7,7 +7,7 @@
 
 #include <ColumnTypes.h>
 
-#include "Messages.h"
+#include "CoverageMessages.h"
 
 
 namespace Coverage {

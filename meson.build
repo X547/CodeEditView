@@ -33,6 +33,10 @@ endif
 
 subdir('findkit')
 
+# The JSON parser of the debugger, also used by the coverage viewer.
+jsonLib = static_library('json', files('debugger/Json.cpp'))
+jsonDep = declare_dependency(link_with: jsonLib, include_directories: include_directories('debugger'))
+
 if get_option('demo')
 	subdir('demo')
 endif
@@ -53,10 +57,6 @@ if get_option('studio') or get_option('debugger')
 	subdir('debugger')
 endif
 
-if get_option('studio')
-	subdir('studio')
-endif
-
 # The Git tool shows the diff window of gitdiff.
 if get_option('gitdiff') or get_option('gittool')
 	subdir('gitdiff')
@@ -70,6 +70,10 @@ if get_option('gittool')
 	subdir('gittool')
 endif
 
-if get_option('coverage')
+if get_option('coverage') or get_option('studio')
 	subdir('coverage')
+endif
+
+if get_option('studio')
+	subdir('studio')
 endif

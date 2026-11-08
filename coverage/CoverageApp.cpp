@@ -6,8 +6,8 @@
 #include <Entry.h>
 #include <Path.h>
 
+#include "CoverageMessages.h"
 #include "CoverageWindow.h"
-#include "Messages.h"
 #include "OpenWindow.h"
 
 

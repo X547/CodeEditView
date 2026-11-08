@@ -26,9 +26,9 @@
 #include <CodeEditView/EditorCommands.h>
 #include <CodeEditView/Language.h>
 
+#include "CoverageMessages.h"
 #include "FileListView.h"
 #include "FindCommands.h"
-#include "Messages.h"
 
 
 namespace Coverage {
@@ -90,33 +90,6 @@ public:
 		}
 	}
 };
-
-
-static std::string FormatCounts(const char *name, const Counts &counts)
-{
-	const std::optional<double> percent = counts.Percent();
-	if (!percent.has_value()) {
-		return std::string(name) + " -";
-	}
-	char text[128];
-	snprintf(
-		text,
-		sizeof(text),
-		"%s %.1f %% (%llu/%llu)",
-		name,
-		*percent,
-		static_cast<unsigned long long>(counts.covered),
-		static_cast<unsigned long long>(counts.count)
-	);
-	return text;
-}
-
-
-static std::string FormatSummary(const FileSummary &summary)
-{
-	return FormatCounts("lines", summary.lines) + ", " + FormatCounts("regions", summary.regions) + ", "
-		+ FormatCounts("branches", summary.branches);
-}
 
 
 static bool IsNewer(const std::string &path, const std::string &than)

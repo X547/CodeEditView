@@ -102,6 +102,8 @@ FileCoverage ParseFileCoverage(std::string_view json, std::string_view path);
 std::vector<LineState> ComputeLineStates(const std::vector<Segment> &segments, size_t lineCount);
 
 Colors DefaultColors();
+// "lines 85.2 % (120/141), regions ..., branches ...".
+std::string FormatSummary(const FileSummary &summary);
 // Line backgrounds for covered and uncovered lines, ranges for regions not
 // executed inside executed lines and for branches taken only one way.
 std::vector<CodeEdit::Decoration> MakeDecorations(

@@ -14,18 +14,17 @@ debugKit = static_library(
 		'ControlWindow.cpp',
 		'DapClient.cpp',
 		'DebugSession.cpp',
-		'Json.cpp',
 		'StackWindow.cpp',
 		'ThreadsWindow.cpp',
 		'VariablesWindow.cpp',
 	),
 	include_directories: [privateInterfaceInc],
-	dependencies: [workspaceKitDep, trackerDep, columnListViewDep]
+	dependencies: [workspaceKitDep, jsonDep, trackerDep, columnListViewDep]
 )
 debugKitDep = declare_dependency(
 	link_with: debugKit,
 	include_directories: [include_directories('.'), privateInterfaceInc],
-	dependencies: [workspaceKitDep, trackerDep, columnListViewDep]
+	dependencies: [workspaceKitDep, jsonDep, trackerDep, columnListViewDep]
 )
 
 if get_option('debugger')

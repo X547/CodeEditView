@@ -20,7 +20,7 @@ private:
 	void Update(const BMessage &notice);
 
 public:
-	ThreadsWindow();
+	explicit ThreadsWindow(const SessionContext &context);
 
 	void MessageReceived(BMessage *message) override;
 };

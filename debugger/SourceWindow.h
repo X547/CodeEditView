@@ -2,7 +2,8 @@
 
 #include <Window.h>
 
-#include "Documents.h"
+#include "Common.h"
+#include "Document.h"
 
 
 class CodeEditView;
@@ -11,18 +12,23 @@ class CodeEditView;
 namespace Debugger {
 
 
-// An editor window for one source document.
+class DebugSession;
+
+
+// An editor window for one source document, showing the marks of the
+// session.
 class SourceWindow: public BWindow {
 private:
-	BReference<SourceDocument> fDocument;
+	BReference<Workspace::Document> fDocument;
+	const SessionContext fContext;
 	CodeEditView *fEditView;
 
 	void Save();
 
 public:
-	explicit SourceWindow(SourceDocument *document);
+	SourceWindow(Workspace::Document *document, const SessionContext &context, DebugSession *session);
 
-	const std::string &Path() const {return fDocument->path;}
+	const Workspace::Locator &GetLocator() const {return fDocument->GetLocator();}
 	// Scrolls to a 1-based line without moving the caret.
 	void RevealLine(int32 line);
 

@@ -15,8 +15,8 @@ static constexpr uint32 kMsgInput = 'CWin';
 static constexpr int32 kMaxOutputLength = 1 << 20;
 
 
-ConsoleWindow::ConsoleWindow():
-	ToolWindow(BRect(40, 520, 679, 799), "Console"),
+ConsoleWindow::ConsoleWindow(const SessionContext &context):
+	ToolWindow(BRect(40, 520, 679, 799), "Console", context),
 	fOutput(new BTextView("output")),
 	fInput(new BTextControl("input", "GDB:", "", new BMessage(kMsgInput)))
 {
@@ -75,7 +75,7 @@ void ConsoleWindow::MessageReceived(BMessage *message)
 			}
 			BMessage evaluate(kMsgEvaluate);
 			evaluate.AddString("expression", text);
-			SessionMessenger().SendMessage(&evaluate);
+			Session().SendMessage(&evaluate);
 			fInput->SetText("");
 			break;
 		}

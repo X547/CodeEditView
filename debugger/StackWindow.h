@@ -20,7 +20,7 @@ private:
 	void SelectFrame(bool showSource);
 
 public:
-	StackWindow();
+	explicit StackWindow(const SessionContext &context);
 
 	void MessageReceived(BMessage *message) override;
 };

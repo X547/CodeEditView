@@ -1,10 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
+#include <Message.h>
 #include <Window.h>
 
-#include "Protocol.h"
+#include "Common.h"
 
 
 class BButton;
@@ -17,9 +19,12 @@ class BTextControl;
 namespace Debugger {
 
 
-// The main window: starts or attaches to a program and controls it.
+// The main window of a session: starts or attaches to a program and
+// controls it. Closing it sends the close request to the application.
 class ControlWindow: public BWindow {
 private:
+	const SessionContext fContext;
+	BMessage fCloseRequest;
 	BTextControl *fProgram;
 	BTextControl *fArguments;
 	BCheckBox *fStopAtMain;
@@ -40,7 +45,8 @@ private:
 	void ShowTeamMenu();
 
 public:
-	ControlWindow(const char *program, const char *arguments);
+	ControlWindow(const SessionContext &context, const char *title, const char *program, const char *arguments,
+		const BMessage &closeRequest);
 	~ControlWindow() override;
 
 	void MessageReceived(BMessage *message) override;

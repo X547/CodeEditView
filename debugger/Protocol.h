@@ -31,8 +31,6 @@ constexpr uint32 kMsgEvaluate = 'DSev';
 // "target" (messenger): receives the notices below, starting with the
 // current state.
 constexpr uint32 kMsgWatch = 'DSwa';
-// "path" (string): a document was opened (DocumentRegistry).
-constexpr uint32 kMsgDocumentOpened = 'DSdo';
 
 
 // Notices from the DebugSession.
@@ -63,11 +61,12 @@ constexpr uint32 kNoticeBreakpoints = 'DNbp';
 
 
 // Application messages.
-// "path" (string), optional "line" (int32, 1-based): show a source window.
+// "locator" (string), optional "line" (int32, 1-based), "session" (int32
+// session id): show a source window following the session.
 constexpr uint32 kMsgShowSource = 'DAss';
-// "window" (int32 ToolWindowKind).
+// "window" (int32 ToolWindowKind), "session" (int32 session id).
 constexpr uint32 kMsgShowToolWindow = 'DAtw';
-// "path" (string).
+// "locator" (string).
 constexpr uint32 kMsgSourceWindowClosed = 'DAsc';
 
 enum class ToolWindowKind: int32 {

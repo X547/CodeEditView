@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <Application.h>
+#include <Autolock.h>
 #include <Path.h>
 
 
@@ -42,21 +43,53 @@ static std::vector<std::string> SplitArguments(const std::string &text)
 }
 
 
-DebugSession::DebugSession():
-	BLooper("DebugSession")
+DebugSession::DebugSession(Workspace::DocumentRegistry &registry, int32 id, Workspace::PathMapper mapper):
+	BLooper("DebugSession"),
+	fRegistry(registry),
+	fId(id),
+	fMapper(std::move(mapper)),
+	fMarkLock("DebugSession marks")
 {
+	fRegistry.AddListener(BMessenger(this));
+	// The documents open already.
+	PostMessage(Workspace::kNoticeDocumentChanged);
 }
 
 
 DebugSession::~DebugSession()
 {
+	fRegistry.RemoveListener(BMessenger(this));
 	if (fClient != nullptr) {
 		fClient->Stop();
 	}
-	for (auto &[path, watched] : fDocuments) {
-		CodeEdit::ModelLock lock(*watched.document->model);
-		watched.document->model->RemoveObserver(watched.observer);
+	for (auto &[locator, watched] : fDocuments) {
+		CodeEdit::ModelLock lock(*watched.model);
+		watched.model->RemoveObserver(watched.observer);
 	}
+}
+
+
+BReference<CodeEdit::MarkSet> DebugSession::MarkSetFor(CodeEdit::TextModel *model)
+{
+	BAutolock lock(fMarkLock);
+	BReference<CodeEdit::MarkSet> &set = fMarkSets[model];
+	if (set.Get() == nullptr) {
+		set.SetTo(new CodeEdit::MarkSet(*model), true);
+	}
+	return set;
+}
+
+
+// Sets that only the session holds and that have no marks are forgotten.
+void DebugSession::DropUnusedMarkSets()
+{
+	BAutolock lock(fMarkLock);
+	std::erase_if(fMarkSets, [this](const auto &item) {
+		const BReference<CodeEdit::MarkSet> &set = item.second;
+		return set->CountReferences() == 1
+			&& !(fExecMark.has_value() && fExecMark->set == set)
+			&& !(fFrameMark.has_value() && fFrameMark->set == set);
+	});
 }
 
 
@@ -197,7 +230,7 @@ void DebugSession::Start(const std::string &command, JsonValue arguments, std::v
 
 	JsonValue initialize;
 	initialize.Set("adapterID", "gdb");
-	initialize.Set("clientName", "CodeEditDebugger");
+	initialize.Set("clientName", "CodeEdit");
 	initialize.Set("linesStartAt1", true);
 	initialize.Set("columnsStartAt1", true);
 	initialize.Set("pathFormat", "path");
@@ -243,7 +276,7 @@ void DebugSession::End()
 	fThreads.clear();
 	fCurrentThread = 0;
 	ClearStopState();
-	for (auto &[path, watched] : fDocuments) {
+	for (auto &[locator, watched] : fDocuments) {
 		watched.sentLines.reset();
 	}
 	fBreakpointStatus.clear();
@@ -289,6 +322,7 @@ void DebugSession::ClearStopState()
 	fScopes.clear();
 	RemoveMark(fExecMark);
 	RemoveMark(fFrameMark);
+	DropUnusedMarkSets();
 	BMessage stack = StackNotice();
 	Broadcast(stack);
 	BMessage scopes = ScopesNotice();
@@ -343,7 +377,7 @@ void DebugSession::RequestStack(bool showSource)
 		}
 		int32 index = 0;
 		for (size_t i = 0; i < fFrames.size(); i++) {
-			if (!fFrames[i].path.empty() && DocumentRegistry::Default().Open(fFrames[i].path) != nullptr) {
+			if (!fFrames[i].path.empty() && OpenDocument(fFrames[i].path).Get() != nullptr) {
 				index = static_cast<int32>(i);
 				break;
 			}
@@ -365,10 +399,13 @@ void DebugSession::SelectFrame(int32 index, bool showSource)
 		PlaceMark(fFrameMark, kMarkFrameLine, frame.path, frame.line);
 	}
 	if (showSource && !frame.path.empty() && be_app != nullptr) {
-		BMessage show(kMsgShowSource);
-		show.AddString("path", frame.path.c_str());
-		show.AddInt32("line", frame.line);
-		be_app->PostMessage(&show);
+		if (const std::optional<Workspace::Locator> locator = fMapper.ToLocator(frame.path)) {
+			BMessage show(kMsgShowSource);
+			show.AddString("locator", locator->ToString().c_str());
+			show.AddInt32("line", frame.line);
+			show.AddInt32("session", fId);
+			be_app->PostMessage(&show);
+		}
 	}
 	BMessage stack = StackNotice();
 	Broadcast(stack);
@@ -424,26 +461,67 @@ void DebugSession::Output(const std::string &text, const char *category)
 
 //#pragma mark - Breakpoints
 
-void DebugSession::WatchDocument(const std::string &path)
+// The document of a GDB path, read; nullptr if it cannot be.
+BReference<Workspace::Document> DebugSession::OpenDocument(const std::string &path)
 {
-	if (fDocuments.count(path) != 0) {
-		return;
+	const std::optional<Workspace::Locator> locator = fMapper.ToLocator(path);
+	if (!locator.has_value()) {
+		return {};
 	}
-	BReference<SourceDocument> document = DocumentRegistry::Default().Find(path);
-	if (document == nullptr) {
-		return;
+	BReference<Workspace::Document> document = fRegistry.Open(*locator);
+	if (document->Status().state == Workspace::DocumentState::Loading) {
+		fRegistry.WaitIdle();
 	}
-	WatchedDocument &watched = fDocuments[path];
-	watched.document = document;
-	CodeEdit::ModelLock lock(*document->model);
-	watched.observer = document->model->AddObserver(BMessenger(this));
+	if (document->Status().state != Workspace::DocumentState::Ready) {
+		return {};
+	}
+	return document;
+}
+
+
+// Follows the breakpoints of the registry's documents that GDB can know.
+// Documents closed by the registry are let go.
+void DebugSession::WatchDocuments()
+{
+	std::map<Workspace::Locator, BReference<Workspace::Document>> current;
+	for (const BReference<Workspace::Document> &document : fRegistry.All()) {
+		if (document->Status().state == Workspace::DocumentState::Ready) {
+			current.emplace(document->GetLocator(), document);
+		}
+	}
+	for (auto it = fDocuments.begin(); it != fDocuments.end();) {
+		const auto found = current.find(it->first);
+		if (found != current.end() && found->second->Model() == it->second.model.Get()) {
+			++it;
+			continue;
+		}
+		{
+			CodeEdit::ModelLock lock(*it->second.model);
+			it->second.model->RemoveObserver(it->second.observer);
+		}
+		it = fDocuments.erase(it);
+	}
+	for (const auto &[locator, document] : current) {
+		if (fDocuments.contains(locator)) {
+			continue;
+		}
+		const std::optional<std::string> path = fMapper.ToToolPath(locator);
+		if (!path.has_value()) {
+			continue;
+		}
+		WatchedDocument &watched = fDocuments[locator];
+		watched.model.SetTo(document->Model());
+		watched.path = *path;
+		CodeEdit::ModelLock lock(*watched.model);
+		watched.observer = watched.model->AddObserver(BMessenger(this));
+	}
 }
 
 
 void DebugSession::DocumentChanged(CodeEdit::TextModel *model)
 {
-	for (auto &[path, watched] : fDocuments) {
-		if (watched.document->model.Get() != model) {
+	for (auto &[locator, watched] : fDocuments) {
+		if (watched.model.Get() != model) {
 			continue;
 		}
 		CodeEdit::ModelChanges changes;
@@ -479,11 +557,11 @@ std::vector<int32> DebugSession::EnabledBreakpointLines(CodeEdit::TextModel &mod
 // (all with force) and tells the watchers.
 void DebugSession::SyncBreakpoints(bool force)
 {
-	for (auto &[path, watched] : fDocuments) {
+	for (auto &[locator, watched] : fDocuments) {
 		if (!fConfigured || fClient == nullptr) {
 			break;
 		}
-		std::vector<int32> lines = EnabledBreakpointLines(*watched.document->model);
+		std::vector<int32> lines = EnabledBreakpointLines(*watched.model);
 		// Documents never sent without breakpoints need no request.
 		const bool changed = watched.sentLines.has_value()
 			? lines.size() != watched.sentLines->size()
@@ -493,7 +571,7 @@ void DebugSession::SyncBreakpoints(bool force)
 			continue;
 		}
 		watched.sentLines = lines;
-		SendBreakpoints(path, std::move(lines));
+		SendBreakpoints(watched.path, std::move(lines));
 	}
 	BMessage notice = BreakpointsNotice();
 	Broadcast(notice);
@@ -533,14 +611,15 @@ void DebugSession::SendBreakpoints(const std::string &path, std::vector<int32> l
 void DebugSession::PlaceMark(std::optional<PlacedMark> &mark, uint32_t kind, const std::string &path, int32 line)
 {
 	RemoveMark(mark);
-	BReference<SourceDocument> document = DocumentRegistry::Default().Open(path);
-	if (document == nullptr || line <= 0) {
+	const BReference<Workspace::Document> document = OpenDocument(path);
+	if (document.Get() == nullptr || line <= 0) {
 		return;
 	}
-	CodeEdit::ModelLock lock(*document->model);
-	const size_t lastLine = document->model->Text().NewlineCount();
-	const size_t markLine = std::min<size_t>(line - 1, lastLine);
-	mark = PlacedMark {document, document->model->SharedMarks().AddMark(kind, markLine, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine)};
+	CodeEdit::TextModel &model = *document->Model();
+	BReference<CodeEdit::MarkSet> set = MarkSetFor(&model);
+	CodeEdit::ModelLock lock(model);
+	const size_t markLine = std::min<size_t>(line - 1, model.Text().NewlineCount());
+	mark = PlacedMark {set, set->AddMark(kind, markLine, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine)};
 }
 
 
@@ -549,8 +628,10 @@ void DebugSession::RemoveMark(std::optional<PlacedMark> &mark)
 	if (!mark.has_value()) {
 		return;
 	}
-	CodeEdit::ModelLock lock(*mark->document->model);
-	mark->document->model->SharedMarks().RemoveMark(mark->id);
+	{
+		CodeEdit::ModelLock lock(mark->set->Model());
+		mark->set->RemoveMark(mark->id);
+	}
 	mark.reset();
 }
 
@@ -618,13 +699,14 @@ BMessage DebugSession::ScopesNotice() const
 BMessage DebugSession::BreakpointsNotice()
 {
 	BMessage notice(kNoticeBreakpoints);
-	for (auto &[path, watched] : fDocuments) {
+	for (auto &[locator, watched] : fDocuments) {
 		std::vector<CodeEdit::MarkInfo> marks;
 		{
-			CodeEdit::TextModel &model = *watched.document->model;
+			CodeEdit::TextModel &model = *watched.model;
 			CodeEdit::ModelLock lock(model);
 			marks = model.SharedMarks().Marks(0, model.Text().NewlineCount());
 		}
+		const std::string &path = watched.path;
 		const std::vector<BreakpointStatus> &statuses = fBreakpointStatus[path];
 		for (const CodeEdit::MarkInfo &mark : marks) {
 			const bool enabled = mark.kind == CodeEdit::kMarkBreakpoint;
@@ -643,6 +725,7 @@ BMessage DebugSession::BreakpointsNotice()
 				}
 			}
 			notice.AddString("path", path.c_str());
+			notice.AddString("locator", locator.ToString().c_str());
 			notice.AddInt32("line", line);
 			notice.AddBool("enabled", enabled);
 			notice.AddBool("verified", verified);
@@ -673,8 +756,8 @@ void DebugSession::MessageReceived(BMessage *message)
 			}
 			break;
 		}
-		case kMsgDocumentOpened:
-			WatchDocument(message->GetString("path", ""));
+		case Workspace::kNoticeDocumentChanged:
+			WatchDocuments();
 			SyncBreakpoints(false);
 			break;
 		case kMsgSyncBreakpoints:
@@ -688,10 +771,11 @@ void DebugSession::MessageReceived(BMessage *message)
 			}
 			break;
 		case kMsgLaunch: {
-			const std::string program = NormalizePath(message->GetString("program", ""));
-			if (program.empty()) {
+			const std::string programText = message->GetString("program", "");
+			if (programText.empty()) {
 				break;
 			}
+			const std::string program = Workspace::Locator::File(programText).Path();
 			JsonValue arguments;
 			arguments.Set("program", program);
 			JsonValue args = JsonValue::MakeArray();

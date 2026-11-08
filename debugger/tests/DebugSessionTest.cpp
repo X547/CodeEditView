@@ -15,7 +15,7 @@
 #include <CodeEditView/TextModel.h>
 
 #include "DebugSession.h"
-#include "Documents.h"
+#include "Document.h"
 #include "Protocol.h"
 
 
@@ -96,26 +96,29 @@ TEST_CASE("debug session with GDB")
 		SKIP("GDB or the sample program is not available");
 	}
 
-	DebugSession *session = new DebugSession();
+	Workspace::DocumentRegistry registry;
+	DebugSession *session = new DebugSession(registry, 1);
 	session->Run();
 	NoticeCollector *collector = new NoticeCollector();
 	collector->Run();
-	DocumentRegistry::Default().SetListener(BMessenger(session));
 
 	// A breakpoint on the line calling Area().
-	const BReference<SourceDocument> document = DocumentRegistry::Default().Open(source);
-	REQUIRE(document != nullptr);
-	const std::string path = document->path;
+	const BReference<Workspace::Document> document = registry.Open(Workspace::Locator::File(source));
+	registry.WaitIdle();
+	REQUIRE(document->Status().state == Workspace::DocumentState::Ready);
+	const std::string path = document->GetLocator().Path();
+	CodeEdit::TextModel &model = *document->Model();
 	int32 breakLine = 0;
 	{
-		CodeEdit::ModelLock lock(*document->model);
-		const std::string text = document->model->Text().ToString();
+		CodeEdit::ModelLock lock(model);
+		const std::string text = model.Text().ToString();
 		const size_t offset = text.find("const int area = Area(square);");
 		REQUIRE(offset != std::string::npos);
-		const size_t line = document->model->Text().LineOfOffset(offset);
-		document->model->SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line);
+		const size_t line = model.Text().LineOfOffset(offset);
+		model.SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line);
 		breakLine = static_cast<int32>(line + 1);
 	}
+	const BReference<CodeEdit::MarkSet> sessionMarks = session->MarkSetFor(&model);
 
 	BMessage watch(kMsgWatch);
 	watch.AddMessenger("target", BMessenger(collector));
@@ -131,12 +134,16 @@ TEST_CASE("debug session with GDB")
 	});
 	REQUIRE(stopped.has_value());
 	{
-		CodeEdit::ModelLock lock(*document->model);
+		// The execution line is a mark of the session, not a shared one.
+		CodeEdit::ModelLock lock(model);
 		bool execMark = false;
-		for (const CodeEdit::MarkInfo &mark : document->model->SharedMarks().Marks(breakLine - 1, breakLine - 1)) {
+		for (const CodeEdit::MarkInfo &mark : sessionMarks->Marks(breakLine - 1, breakLine - 1)) {
 			execMark = execMark || mark.kind == CodeEdit::kMarkExecLine;
 		}
 		CHECK(execMark);
+		for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
+			CHECK(mark.kind == CodeEdit::kMarkBreakpoint);
+		}
 	}
 
 	CHECK(collector->WaitFor(0, [](const BMessage &message) {
@@ -194,13 +201,11 @@ TEST_CASE("debug session with GDB")
 		return IsState(message, SessionState::Idle);
 	}).has_value());
 	{
-		CodeEdit::ModelLock lock(*document->model);
-		for (const CodeEdit::MarkInfo &info : document->model->SharedMarks().Marks(0, document->model->Text().NewlineCount())) {
-			CHECK(info.kind == CodeEdit::kMarkBreakpoint);
-		}
+		CodeEdit::ModelLock lock(model);
+		CHECK(sessionMarks->Marks(0, model.Text().NewlineCount()).empty());
+		CHECK(model.SharedMarks().Marks(0, model.Text().NewlineCount()).size() == 1);
 	}
 
-	DocumentRegistry::Default().SetListener(BMessenger());
 	session->Lock();
 	session->Quit();
 	collector->Lock();

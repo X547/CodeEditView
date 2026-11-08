@@ -29,28 +29,31 @@ static constexpr uint32 kMsgProgramChosen = 'CWpc';
 static constexpr uint32 kMsgOpenSource = 'CWos';
 
 
-static BButton *SessionButton(const char *label, uint32 what)
+static BButton *SessionButton(const BMessenger &session, const char *label, uint32 what)
 {
 	BButton *button = new BButton(label, new BMessage(what));
-	button->SetTarget(SessionMessenger());
+	button->SetTarget(session);
 	return button;
 }
 
 
-ControlWindow::ControlWindow(const char *program, const char *arguments):
-	BWindow(BRect(40, 60, 339, 339), "CodeEditDebugger", B_TITLED_WINDOW,
+ControlWindow::ControlWindow(const SessionContext &context, const char *title, const char *program,
+	const char *arguments, const BMessage &closeRequest):
+	BWindow(BRect(40, 60, 339, 339), title, B_TITLED_WINDOW,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS | B_NOT_ZOOMABLE),
+	fContext(context),
+	fCloseRequest(closeRequest),
 	fProgram(new BTextControl("program", "Program:", program, nullptr)),
 	fArguments(new BTextControl("arguments", "Arguments:", arguments, nullptr)),
 	fStopAtMain(new BCheckBox("stopAtMain", "Stop at main", nullptr)),
 	fLaunchButton(new BButton("Launch", new BMessage(kMsgLaunchClicked))),
 	fAttachButton(new BButton("Attach" B_UTF8_ELLIPSIS, new BMessage(kMsgAttachClicked))),
-	fContinueButton(SessionButton("Continue", kMsgContinue)),
-	fPauseButton(SessionButton("Pause", kMsgPause)),
-	fStepOverButton(SessionButton("Step over", kMsgStepOver)),
-	fStepIntoButton(SessionButton("Step into", kMsgStepInto)),
-	fStepOutButton(SessionButton("Step out", kMsgStepOut)),
-	fStopButton(SessionButton("Stop", kMsgStop)),
+	fContinueButton(SessionButton(context.session, "Continue", kMsgContinue)),
+	fPauseButton(SessionButton(context.session, "Pause", kMsgPause)),
+	fStepOverButton(SessionButton(context.session, "Step over", kMsgStepOver)),
+	fStepIntoButton(SessionButton(context.session, "Step into", kMsgStepInto)),
+	fStepOutButton(SessionButton(context.session, "Step out", kMsgStepOut)),
+	fStopButton(SessionButton(context.session, "Stop", kMsgStop)),
 	fStatus(new BStringView("status", "Not running"))
 {
 	BMenuBar *menuBar = new BMenuBar("menuBar");
@@ -58,10 +61,12 @@ ControlWindow::ControlWindow(const char *program, const char *arguments):
 		.AddMenu("File")
 			.AddItem("Open source" B_UTF8_ELLIPSIS, kMsgOpenSource, 'O')
 			.AddSeparator()
+			.AddItem("Close", B_QUIT_REQUESTED, 'W')
 			.AddItem("Quit", B_QUIT_REQUESTED, 'Q')
 		.End();
-	menuBar->AddItem(CreateDebugMenu());
-	menuBar->AddItem(CreateWindowsMenu());
+	menuBar->FindItem("Quit")->SetTarget(be_app);
+	menuBar->AddItem(CreateDebugMenu(fContext.session));
+	menuBar->AddItem(CreateWindowsMenu(fContext.id));
 
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
@@ -95,7 +100,7 @@ ControlWindow::ControlWindow(const char *program, const char *arguments):
 
 	BMessage watch(kMsgWatch);
 	watch.AddMessenger("target", BMessenger(this));
-	SessionMessenger().SendMessage(&watch);
+	fContext.session.SendMessage(&watch);
 }
 
 
@@ -162,7 +167,7 @@ void ControlWindow::MessageReceived(BMessage *message)
 			launch.AddString("program", fProgram->Text());
 			launch.AddString("arguments", fArguments->Text());
 			launch.AddBool("stopAtMain", fStopAtMain->Value() == B_CONTROL_ON);
-			SessionMessenger().SendMessage(&launch);
+			fContext.session.SendMessage(&launch);
 			break;
 		}
 		case kMsgAttachClicked:
@@ -171,7 +176,7 @@ void ControlWindow::MessageReceived(BMessage *message)
 		case kMsgAttachTeam: {
 			BMessage attach(kMsgAttach);
 			attach.AddInt32("team", message->GetInt32("team", -1));
-			SessionMessenger().SendMessage(&attach);
+			fContext.session.SendMessage(&attach);
 			break;
 		}
 		case kMsgBrowseProgram:
@@ -206,7 +211,7 @@ void ControlWindow::MessageReceived(BMessage *message)
 bool ControlWindow::QuitRequested()
 {
 	if (!gQuitting) {
-		be_app->PostMessage(B_QUIT_REQUESTED);
+		be_app->PostMessage(&fCloseRequest);
 		return false;
 	}
 	return true;

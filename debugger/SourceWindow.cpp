@@ -1,20 +1,17 @@
 #include "SourceWindow.h"
 
-#include <exception>
 #include <string>
 
-#include <Alert.h>
 #include <Application.h>
-#include <File.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
-#include <Path.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 
 #include "Common.h"
+#include "DebugSession.h"
 
 
 namespace Debugger {
@@ -34,13 +31,15 @@ static BRect NextWindowFrame()
 }
 
 
-SourceWindow::SourceWindow(SourceDocument *document):
+SourceWindow::SourceWindow(Workspace::Document *document, const SessionContext &context, DebugSession *session):
 	BWindow(NextWindowFrame(), "Source", B_DOCUMENT_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
 	fDocument(document),
-	fEditView(new CodeEditView("source", document->model.Get()))
+	fContext(context),
+	fEditView(new CodeEditView("source", document->Model()))
 {
-	SetTitle(BPath(document->path.c_str()).Leaf());
+	SetTitle(document->GetLocator().DisplayName().c_str());
 	fEditView->SetTarget(BMessenger(this));
+	fEditView->SetMarkSets({session->MarkSetFor(document->Model())});
 	CodeEdit::MarkStyle frameStyle;
 	frameStyle.shape = CodeEdit::MarkShape::Arrow;
 	frameStyle.color = {60, 170, 80, 255};
@@ -69,8 +68,8 @@ SourceWindow::SourceWindow(SourceDocument *document):
 			.AddItem("Toggle breakpoint", kMsgToggleBreakpoint, 'K')
 			.AddItem("Enable/disable breakpoint", kMsgToggleBreakpointEnabled, 'K', B_SHIFT_KEY)
 		.End();
-	menuBar->AddItem(CreateDebugMenu());
-	menuBar->AddItem(CreateWindowsMenu());
+	menuBar->AddItem(CreateDebugMenu(fContext.session));
+	menuBar->AddItem(CreateWindowsMenu(fContext.id));
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
@@ -91,20 +90,10 @@ void SourceWindow::RevealLine(int32 line)
 }
 
 
+// Saving overwrites changes made elsewhere; this is a demo.
 void SourceWindow::Save()
 {
-	BFile file(fDocument->path.c_str(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
-	if (file.InitCheck() != B_OK) {
-		(new BAlert("Save", ("Cannot write " + fDocument->path).c_str(), "OK"))->Go(nullptr);
-		return;
-	}
-	try {
-		CodeEdit::ModelLock lock(*fDocument->model);
-		fDocument->model->Save(file);
-		fDocument->model->SetSavePoint();
-	} catch (const std::exception &e) {
-		(new BAlert("Save", e.what(), "OK"))->Go(nullptr);
-	}
+	fContext.registry->Save(fDocument, true);
 }
 
 
@@ -117,10 +106,10 @@ void SourceWindow::MessageReceived(BMessage *message)
 			}
 			break;
 		case kMsgToggleBreakpoint:
-			ToggleBreakpoint(*fDocument->model, fEditView->CaretLocation().line);
+			ToggleBreakpoint(*fDocument->Model(), fEditView->CaretLocation().line);
 			break;
 		case kMsgToggleBreakpointEnabled:
-			ToggleBreakpointEnabled(*fDocument->model, fEditView->CaretLocation().line);
+			ToggleBreakpointEnabled(*fDocument->Model(), fEditView->CaretLocation().line);
 			break;
 		case CodeEdit::kMsgGutterClicked: {
 			// Click: breakpoint; Shift + click or secondary button: enable or
@@ -129,9 +118,9 @@ void SourceWindow::MessageReceived(BMessage *message)
 			const bool alternate = (message->GetInt32("modifiers", 0) & B_SHIFT_KEY) != 0
 				|| (message->GetInt32("buttons", 0) & B_SECONDARY_MOUSE_BUTTON) != 0;
 			if (alternate) {
-				ToggleBreakpointEnabled(*fDocument->model, line);
+				ToggleBreakpointEnabled(*fDocument->Model(), line);
 			} else {
-				ToggleBreakpoint(*fDocument->model, line);
+				ToggleBreakpoint(*fDocument->Model(), line);
 			}
 			break;
 		}
@@ -156,7 +145,7 @@ void SourceWindow::MessageReceived(BMessage *message)
 bool SourceWindow::QuitRequested()
 {
 	BMessage closed(kMsgSourceWindowClosed);
-	closed.AddString("path", fDocument->path.c_str());
+	closed.AddString("locator", fDocument->GetLocator().ToString().c_str());
 	be_app->PostMessage(&closed);
 	return true;
 }

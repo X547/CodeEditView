@@ -5,6 +5,12 @@
 #include <Menu.h>
 #include <MenuItem.h>
 
+#include "BreakpointsWindow.h"
+#include "ConsoleWindow.h"
+#include "StackWindow.h"
+#include "ThreadsWindow.h"
+#include "VariablesWindow.h"
+
 
 namespace Debugger {
 
@@ -12,30 +18,58 @@ namespace Debugger {
 bool gQuitting = false;
 
 
-static BMenuItem *SessionItem(const char *label, uint32 what, char shortcut = 0, uint32 modifiers = 0)
+static BMenuItem *SessionItem(const BMessenger &session, const char *label, uint32 what, char shortcut = 0)
 {
-	BMenuItem *item = new BMenuItem(label, new BMessage(what), shortcut, modifiers);
-	item->SetTarget(SessionMessenger());
+	BMenuItem *item = new BMenuItem(label, new BMessage(what), shortcut);
+	item->SetTarget(session);
 	return item;
 }
 
 
-BMenu *CreateDebugMenu()
+BMenu *CreateDebugMenu(const BMessenger &session)
 {
 	BMenu *menu = new BMenu("Debug");
-	menu->AddItem(SessionItem("Continue", kMsgContinue, 'R'));
-	menu->AddItem(SessionItem("Pause", kMsgPause, 'P'));
+	menu->AddItem(SessionItem(session, "Continue", kMsgContinue, 'R'));
+	menu->AddItem(SessionItem(session, "Pause", kMsgPause, 'P'));
 	menu->AddSeparatorItem();
-	menu->AddItem(SessionItem("Step over", kMsgStepOver, 'N'));
-	menu->AddItem(SessionItem("Step into", kMsgStepInto, 'I'));
-	menu->AddItem(SessionItem("Step out", kMsgStepOut, 'T'));
+	menu->AddItem(SessionItem(session, "Step over", kMsgStepOver, 'N'));
+	menu->AddItem(SessionItem(session, "Step into", kMsgStepInto, 'I'));
+	menu->AddItem(SessionItem(session, "Step out", kMsgStepOut, 'T'));
 	menu->AddSeparatorItem();
-	menu->AddItem(SessionItem("Stop", kMsgStop));
+	menu->AddItem(SessionItem(session, "Stop", kMsgStop));
 	return menu;
 }
 
 
-BMenu *CreateWindowsMenu()
+BWindow *CreateToolWindow(ToolWindowKind kind, const SessionContext &context)
+{
+	BWindow *window = nullptr;
+	switch (kind) {
+		case ToolWindowKind::Console:
+			window = new ConsoleWindow(context);
+			break;
+		case ToolWindowKind::Threads:
+			window = new ThreadsWindow(context);
+			break;
+		case ToolWindowKind::Stack:
+			window = new StackWindow(context);
+			break;
+		case ToolWindowKind::Variables:
+			window = new VariablesWindow(context);
+			break;
+		case ToolWindowKind::Breakpoints:
+			window = new BreakpointsWindow(context);
+			break;
+		default:
+			return nullptr;
+	}
+	window->Hide();
+	window->Show();
+	return window;
+}
+
+
+BMenu *CreateWindowsMenu(int32 sessionId)
 {
 	struct Entry {
 		const char *label;
@@ -53,6 +87,7 @@ BMenu *CreateWindowsMenu()
 	for (const Entry &entry : kEntries) {
 		BMessage *message = new BMessage(kMsgShowToolWindow);
 		message->AddInt32("window", static_cast<int32>(entry.window));
+		message->AddInt32("session", sessionId);
 		BMenuItem *item = new BMenuItem(entry.label, message, entry.shortcut);
 		item->SetTarget(be_app_messenger);
 		menu->AddItem(item);
@@ -110,13 +145,14 @@ std::string FileName(const std::string &path)
 
 //#pragma mark - ToolWindow
 
-ToolWindow::ToolWindow(BRect frame, const char *title):
-	BWindow(frame, title, B_FLOATING_WINDOW_LOOK, B_FLOATING_APP_WINDOW_FEEL,
-		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS)
+ToolWindow::ToolWindow(BRect frame, const char *title, const SessionContext &context):
+	BWindow(frame, (title + context.titleSuffix).c_str(), B_FLOATING_WINDOW_LOOK, B_FLOATING_APP_WINDOW_FEEL,
+		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
+	fContext(context)
 {
 	BMessage watch(kMsgWatch);
 	watch.AddMessenger("target", BMessenger(this));
-	SessionMessenger().SendMessage(&watch);
+	Session().SendMessage(&watch);
 }
 
 

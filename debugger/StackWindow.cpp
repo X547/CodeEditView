@@ -36,8 +36,8 @@ public:
 };
 
 
-StackWindow::StackWindow():
-	ToolWindow(BRect(360, 360, 959, 559), "Stack"),
+StackWindow::StackWindow(const SessionContext &context):
+	ToolWindow(BRect(360, 360, 959, 559), "Stack", context),
 	fList(CreateColumnList("stack", kMsgFrameSelected, kMsgFrameInvoked))
 {
 	fList->AddColumn(new BStringColumn("#", 30, 20, 60, B_TRUNCATE_END, B_ALIGN_RIGHT), kIndexColumn);
@@ -88,7 +88,7 @@ void StackWindow::SelectFrame(bool showSource)
 	BMessage select(kMsgSelectFrame);
 	select.AddInt32("frame", row->index);
 	select.AddBool("show", showSource);
-	SessionMessenger().SendMessage(&select);
+	Session().SendMessage(&select);
 }
 
 

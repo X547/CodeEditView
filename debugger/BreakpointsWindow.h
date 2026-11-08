@@ -22,7 +22,7 @@ private:
 	void UpdateButtons();
 
 public:
-	BreakpointsWindow();
+	explicit BreakpointsWindow(const SessionContext &context);
 
 	void MessageReceived(BMessage *message) override;
 };

@@ -8,7 +8,7 @@
 #include <ColumnTypes.h>
 #include <LayoutBuilder.h>
 
-#include "Documents.h"
+#include "Document.h"
 
 
 namespace Debugger {
@@ -31,10 +31,12 @@ enum {
 class BreakpointRow: public BRow {
 public:
 	const std::string path;
+	const std::string locator;
 	const int32 line;
 
-	BreakpointRow(std::string path, int32 line, bool enabled, const char *status):
+	BreakpointRow(std::string path, std::string locator, int32 line, bool enabled, const char *status):
 		path(std::move(path)),
+		locator(std::move(locator)),
 		line(line)
 	{
 		SetField(new BStringField(enabled ? "\xe2\x97\x8f" : "\xe2\x97\x8b"), kEnabledColumn);
@@ -45,8 +47,8 @@ public:
 };
 
 
-BreakpointsWindow::BreakpointsWindow():
-	ToolWindow(BRect(980, 80, 1379, 329), "Breakpoints"),
+BreakpointsWindow::BreakpointsWindow(const SessionContext &context):
+	ToolWindow(BRect(980, 80, 1379, 329), "Breakpoints", context),
 	fList(CreateColumnList("breakpoints", kMsgBreakpointSelected, kMsgBreakpointInvoked)),
 	fEnableButton(new BButton("Enable/disable", new BMessage(kMsgEnableBreakpoint))),
 	fRemoveButton(new BButton("Remove", new BMessage(kMsgRemoveBreakpoint)))
@@ -91,7 +93,7 @@ void BreakpointsWindow::Update(const BMessage &notice)
 			const std::string message = notice.GetString("message", i, "");
 			status = notice.GetBool("verified", i, false) ? "set" : (message.empty() ? "not set" : message);
 		}
-		BreakpointRow *row = new BreakpointRow(path, line, enabled, status.c_str());
+		BreakpointRow *row = new BreakpointRow(path, notice.GetString("locator", i, ""), line, enabled, status.c_str());
 		fList->AddRow(row);
 		if (row->path == selectedPath && row->line == selectedLine) {
 			fList->AddToSelection(row);
@@ -122,8 +124,9 @@ void BreakpointsWindow::MessageReceived(BMessage *message)
 			const BreakpointRow *row = static_cast<BreakpointRow*>(fList->CurrentSelection());
 			if (row != nullptr) {
 				BMessage show(kMsgShowSource);
-				show.AddString("path", row->path.c_str());
+				show.AddString("locator", row->locator.c_str());
 				show.AddInt32("line", row->line);
+				show.AddInt32("session", fContext.id);
 				be_app->PostMessage(&show);
 			}
 			break;
@@ -131,24 +134,28 @@ void BreakpointsWindow::MessageReceived(BMessage *message)
 		case kMsgEnableBreakpoint:
 		case kMsgRemoveBreakpoint: {
 			const BreakpointRow *row = static_cast<BreakpointRow*>(fList->CurrentSelection());
-			const BReference<SourceDocument> document = row != nullptr
-				? DocumentRegistry::Default().Find(row->path)
-				: BReference<SourceDocument>();
-			if (document == nullptr) {
+			const std::optional<Workspace::Locator> locator = row != nullptr
+				? Workspace::Locator::Parse(row->locator)
+				: std::nullopt;
+			const BReference<Workspace::Document> document = locator.has_value()
+				? fContext.registry->Find(*locator)
+				: BReference<Workspace::Document>();
+			if (document.Get() == nullptr) {
 				break;
 			}
 			if (message->what == kMsgEnableBreakpoint) {
-				ToggleBreakpointEnabled(*document->model, row->line - 1);
+				ToggleBreakpointEnabled(*document->Model(), row->line - 1);
 			} else {
-				ToggleBreakpoint(*document->model, row->line - 1);
+				ToggleBreakpoint(*document->Model(), row->line - 1);
 			}
 			break;
 		}
 		case kMsgRemoveAllBreakpoints:
-			for (const BReference<SourceDocument> &document : DocumentRegistry::Default().All()) {
-				CodeEdit::ModelLock lock(*document->model);
-				document->model->SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpoint);
-				document->model->SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpointDisabled);
+			for (const BReference<Workspace::Document> &document : fContext.registry->All()) {
+				CodeEdit::TextModel &model = *document->Model();
+				CodeEdit::ModelLock lock(model);
+				model.SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpoint);
+				model.SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpointDisabled);
 			}
 			break;
 		case kNoticeState:

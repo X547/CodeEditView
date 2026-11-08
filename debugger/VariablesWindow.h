@@ -35,7 +35,7 @@ private:
 	BRow *AddRow(BRow *parent, const std::string &path, const char *name, const char *value, const char *type, int64_t reference);
 
 public:
-	VariablesWindow();
+	explicit VariablesWindow(const SessionContext &context);
 
 	// Called by the list when a row is expanded or collapsed.
 	void RowExpanded(BRow *row, bool expanded);

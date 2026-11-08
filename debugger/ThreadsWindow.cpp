@@ -32,8 +32,8 @@ public:
 };
 
 
-ThreadsWindow::ThreadsWindow():
-	ToolWindow(BRect(40, 360, 339, 509), "Threads"),
+ThreadsWindow::ThreadsWindow(const SessionContext &context):
+	ToolWindow(BRect(40, 360, 339, 509), "Threads", context),
 	fList(CreateColumnList("threads", kMsgThreadSelected, kMsgThreadInvoked))
 {
 	fList->AddColumn(new BStringColumn("ID", 60, 30, 200, B_TRUNCATE_END, B_ALIGN_RIGHT), kIdColumn);
@@ -81,7 +81,7 @@ void ThreadsWindow::MessageReceived(BMessage *message)
 			fCurrent = row->id;
 			BMessage select(kMsgSelectThread);
 			select.AddInt64("thread", row->id);
-			SessionMessenger().SendMessage(&select);
+			Session().SendMessage(&select);
 			break;
 		}
 		case kNoticeState:

@@ -5,16 +5,11 @@
 #include <Entry.h>
 #include <Path.h>
 
-#include "BreakpointsWindow.h"
 #include "Common.h"
-#include "ConsoleWindow.h"
 #include "ControlWindow.h"
 #include "DebugSession.h"
-#include "Documents.h"
+#include "Document.h"
 #include "SourceWindow.h"
-#include "StackWindow.h"
-#include "ThreadsWindow.h"
-#include "VariablesWindow.h"
 
 
 static constexpr const char *kAppSignature = "application/x-vnd.CodeEditDebugger";
@@ -23,25 +18,22 @@ static constexpr const char *kAppSignature = "application/x-vnd.CodeEditDebugger
 namespace Debugger {
 
 
-static DebugSession *sSession = nullptr;
-
-
-BMessenger SessionMessenger()
-{
-	return BMessenger(sSession);
-}
+static constexpr int32 kSessionId = 1;
 
 
 class DebuggerApp: public BApplication {
 private:
+	Workspace::DocumentRegistry fRegistry;
+	DebugSession *fSession;
+	SessionContext fContext;
 	std::string fProgram;
 	std::string fArguments;
-	std::map<std::string, SourceWindow*> fSourceWindows;
+	std::map<Workspace::Locator, SourceWindow*> fSourceWindows;
 	std::map<ToolWindowKind, BWindow*> fToolWindows;
 
-	BWindow *CreateToolWindow(ToolWindowKind kind);
+	BWindow *ToolWindow(ToolWindowKind kind);
 	void ShowToolWindow(ToolWindowKind kind);
-	void ShowSource(const std::string &path, int32 line);
+	void ShowSource(const Workspace::Locator &locator, int32 line);
 
 public:
 	DebuggerApp();
@@ -55,11 +47,13 @@ public:
 
 
 DebuggerApp::DebuggerApp():
-	BApplication(kAppSignature)
+	BApplication(kAppSignature),
+	fSession(new DebugSession(fRegistry, kSessionId))
 {
-	sSession = new DebugSession();
-	sSession->Run();
-	DocumentRegistry::Default().SetListener(BMessenger(sSession));
+	fSession->Run();
+	fContext.session = BMessenger(fSession);
+	fContext.id = kSessionId;
+	fContext.registry = &fRegistry;
 }
 
 
@@ -91,7 +85,7 @@ void DebuggerApp::RefsReceived(BMessage *message)
 {
 	entry_ref ref;
 	for (int32 i = 0; message->FindRef("refs", i, &ref) == B_OK; i++) {
-		ShowSource(BPath(&ref).Path(), 0);
+		ShowSource(Workspace::Locator::File(BPath(&ref).Path()), 0);
 	}
 }
 
@@ -99,51 +93,28 @@ void DebuggerApp::RefsReceived(BMessage *message)
 void DebuggerApp::ReadyToRun()
 {
 	// The console exists from the start to collect all output.
-	CreateToolWindow(ToolWindowKind::Console);
+	ToolWindow(ToolWindowKind::Console);
 	ShowToolWindow(ToolWindowKind::Threads);
 	ShowToolWindow(ToolWindowKind::Stack);
 	ShowToolWindow(ToolWindowKind::Variables);
-	(new ControlWindow(fProgram.c_str(), fArguments.c_str()))->Show();
+	(new ControlWindow(fContext, "CodeEditDebugger", fProgram.c_str(), fArguments.c_str(),
+		BMessage(B_QUIT_REQUESTED)))->Show();
 }
 
 
-BWindow *DebuggerApp::CreateToolWindow(ToolWindowKind kind)
+BWindow *DebuggerApp::ToolWindow(ToolWindowKind kind)
 {
-	const auto it = fToolWindows.find(kind);
-	if (it != fToolWindows.end()) {
-		return it->second;
+	BWindow *&window = fToolWindows[kind];
+	if (window == nullptr) {
+		window = CreateToolWindow(kind, fContext);
 	}
-	BWindow *window = nullptr;
-	switch (kind) {
-		case ToolWindowKind::Console:
-			window = new ConsoleWindow();
-			break;
-		case ToolWindowKind::Threads:
-			window = new ThreadsWindow();
-			break;
-		case ToolWindowKind::Stack:
-			window = new StackWindow();
-			break;
-		case ToolWindowKind::Variables:
-			window = new VariablesWindow();
-			break;
-		case ToolWindowKind::Breakpoints:
-			window = new BreakpointsWindow();
-			break;
-		default:
-			return nullptr;
-	}
-	// Run the window hidden, so it receives notices.
-	window->Hide();
-	window->Show();
-	fToolWindows[kind] = window;
 	return window;
 }
 
 
 void DebuggerApp::ShowToolWindow(ToolWindowKind kind)
 {
-	BWindow *window = CreateToolWindow(kind);
+	BWindow *window = ToolWindow(kind);
 	if (window == nullptr || !window->Lock()) {
 		return;
 	}
@@ -155,14 +126,12 @@ void DebuggerApp::ShowToolWindow(ToolWindowKind kind)
 }
 
 
-void DebuggerApp::ShowSource(const std::string &rawPath, int32 line)
+void DebuggerApp::ShowSource(const Workspace::Locator &requested, int32 line)
 {
-	const BReference<SourceDocument> document = DocumentRegistry::Default().Open(rawPath);
-	if (document == nullptr) {
-		return;
-	}
+	const BReference<Workspace::Document> document = fRegistry.Open(requested);
+	const Workspace::Locator &locator = document->GetLocator();
 	SourceWindow *window;
-	const auto it = fSourceWindows.find(document->path);
+	const auto it = fSourceWindows.find(locator);
 	if (it != fSourceWindows.end()) {
 		window = it->second;
 		if (window->Lock()) {
@@ -173,8 +142,8 @@ void DebuggerApp::ShowSource(const std::string &rawPath, int32 line)
 			window->Unlock();
 		}
 	} else {
-		window = new SourceWindow(document.Get());
-		fSourceWindows[document->path] = window;
+		window = new SourceWindow(document, fContext, fSession);
+		fSourceWindows[locator] = window;
 		window->Show();
 	}
 	if (line > 0) {
@@ -186,15 +155,23 @@ void DebuggerApp::ShowSource(const std::string &rawPath, int32 line)
 void DebuggerApp::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
-		case kMsgShowSource:
-			ShowSource(message->GetString("path", ""), message->GetInt32("line", 0));
+		case kMsgShowSource: {
+			const std::optional<Workspace::Locator> locator = Workspace::Locator::Parse(message->GetString("locator", ""));
+			if (locator.has_value()) {
+				ShowSource(*locator, message->GetInt32("line", 0));
+			}
 			break;
+		}
 		case kMsgShowToolWindow:
 			ShowToolWindow(static_cast<ToolWindowKind>(message->GetInt32("window", 0)));
 			break;
-		case kMsgSourceWindowClosed:
-			fSourceWindows.erase(message->GetString("path", ""));
+		case kMsgSourceWindowClosed: {
+			const std::optional<Workspace::Locator> locator = Workspace::Locator::Parse(message->GetString("locator", ""));
+			if (locator.has_value()) {
+				fSourceWindows.erase(*locator);
+			}
 			break;
+		}
 		default:
 			BApplication::MessageReceived(message);
 			break;
@@ -209,10 +186,10 @@ bool DebuggerApp::QuitRequested()
 		gQuitting = false;
 		return false;
 	}
-	if (sSession->Lock()) {
-		sSession->Quit();
+	if (fSession->Lock()) {
+		fSession->Quit();
 	}
-	sSession = nullptr;
+	fSession = nullptr;
 	return true;
 }
 

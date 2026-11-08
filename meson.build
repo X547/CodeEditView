@@ -37,22 +37,23 @@ if get_option('demo')
 	subdir('demo')
 endif
 
-if get_option('debugger')
-	subdir('debugger')
-endif
-
 if get_option('tests')
 	subdir('tests')
 endif
 
 # The diff apps and their shared library need libgit2; they use the test
 # setup above.
-if get_option('gitdiff') or get_option('dircompare') or get_option('gittool') or get_option('studio')
+if get_option('gitdiff') or get_option('dircompare') or get_option('gittool') or get_option('studio') or get_option('debugger')
 	subdir('diffkit')
 endif
 
-if get_option('studio')
+# Documents by locators, used by the debugger and the CodeEdit app.
+if get_option('studio') or get_option('debugger')
 	subdir('workspacekit')
+	subdir('debugger')
+endif
+
+if get_option('studio')
 	subdir('studio')
 endif
 

@@ -84,8 +84,8 @@ public:
 };
 
 
-VariablesWindow::VariablesWindow():
-	ToolWindow(BRect(980, 360, 1379, 759), "Variables"),
+VariablesWindow::VariablesWindow(const SessionContext &context):
+	ToolWindow(BRect(980, 360, 1379, 759), "Variables", context),
 	fList(new VariablesList(this))
 {
 	fList->SetSortingEnabled(false);
@@ -184,7 +184,7 @@ void VariablesWindow::RowExpanded(BRow *row, bool expanded)
 	fLoading[variable->reference] = variable;
 	BMessage request(kMsgRequestVariables);
 	request.AddInt64("reference", variable->reference);
-	SessionMessenger().SendMessage(&request);
+	Session().SendMessage(&request);
 }
 
 

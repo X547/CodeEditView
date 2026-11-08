@@ -9,14 +9,16 @@
 #include <string>
 #include <vector>
 
+#include <Locker.h>
 #include <Looper.h>
 #include <Messenger.h>
 
 #include <CodeEditView/TextModel.h>
 
 #include "DapClient.h"
-#include "Documents.h"
+#include "Document.h"
 #include "Json.h"
+#include "PathMapper.h"
 #include "Protocol.h"
 
 
@@ -25,8 +27,11 @@ namespace Debugger {
 
 // A debugging session with GDB over DAP. Runs in its own thread; windows
 // send it the commands of Protocol.h and receive notices with copies of the
-// state they show. Breakpoints are the breakpoint marks of the documents
-// in the DocumentRegistry.
+// state they show. Breakpoints are the breakpoint marks shared by the
+// documents of the registry, so every session has the same; GDB's paths
+// map to the documents' locators by the session's PathMapper. The
+// execution line and the selected frame are marks of the session's own
+// mark sets (MarkSetFor()), shown by the views following the session.
 class DebugSession: public BLooper {
 private:
 	using ResponseHandler = std::function<void(const JsonValue &response)>;
@@ -50,8 +55,10 @@ private:
 	};
 
 	struct WatchedDocument {
-		BReference<SourceDocument> document;
+		BReference<CodeEdit::TextModel> model;
 		CodeEdit::ObserverId observer {};
+		// The path GDB knows the file by.
+		std::string path;
 		// Enabled breakpoint lines last sent to the adapter (1-based).
 		std::optional<std::vector<int32>> sentLines;
 	};
@@ -64,9 +71,15 @@ private:
 	};
 
 	struct PlacedMark {
-		BReference<SourceDocument> document;
+		BReference<CodeEdit::MarkSet> set;
 		CodeEdit::MarkId id {};
 	};
+
+	Workspace::DocumentRegistry &fRegistry;
+	const int32 fId;
+	const Workspace::PathMapper fMapper;
+	BLocker fMarkLock;
+	std::map<CodeEdit::TextModel*, BReference<CodeEdit::MarkSet>> fMarkSets;
 
 	std::unique_ptr<DapClient> fClient;
 	SessionState fState = SessionState::Idle;
@@ -87,7 +100,8 @@ private:
 	uint64_t fStopGeneration {};
 	bool fThreadsRefreshPosted {};
 
-	std::map<std::string, WatchedDocument> fDocuments;
+	std::map<Workspace::Locator, WatchedDocument> fDocuments;
+	// By GDB path.
 	std::map<std::string, std::vector<BreakpointStatus>> fBreakpointStatus;
 	bool fBreakpointSyncPosted {};
 	std::optional<PlacedMark> fExecMark;
@@ -109,13 +123,15 @@ private:
 	void RequestVariables(int64_t reference);
 	void Output(const std::string &text, const char *category = "console");
 
-	void WatchDocument(const std::string &path);
+	BReference<Workspace::Document> OpenDocument(const std::string &path);
+	void WatchDocuments();
 	void DocumentChanged(CodeEdit::TextModel *model);
 	std::vector<int32> EnabledBreakpointLines(CodeEdit::TextModel &model);
 	void SyncBreakpoints(bool force);
 	void SendBreakpoints(const std::string &path, std::vector<int32> lines);
 	void PlaceMark(std::optional<PlacedMark> &mark, uint32_t kind, const std::string &path, int32 line);
 	void RemoveMark(std::optional<PlacedMark> &mark);
+	void DropUnusedMarkSets();
 
 	void Broadcast(BMessage &message);
 	BMessage StateNotice() const;
@@ -125,8 +141,15 @@ private:
 	BMessage BreakpointsNotice();
 
 public:
-	DebugSession();
+	// The id goes with kMsgShowSource to the application.
+	explicit DebugSession(Workspace::DocumentRegistry &registry, int32 id = 0,
+		Workspace::PathMapper mapper = Workspace::PathMapper());
 	~DebugSession() override;
+
+	int32 Id() const {return fId;}
+	// The marks of the session in a model, for views following the session.
+	// Thread safe; must not be called with the model locked.
+	BReference<CodeEdit::MarkSet> MarkSetFor(CodeEdit::TextModel *model);
 
 	void MessageReceived(BMessage *message) override;
 	bool QuitRequested() override;

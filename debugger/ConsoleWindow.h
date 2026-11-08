@@ -19,7 +19,7 @@ private:
 	void Append(const char *text, const char *category);
 
 public:
-	ConsoleWindow();
+	explicit ConsoleWindow(const SessionContext &context);
 
 	void MessageReceived(BMessage *message) override;
 };

@@ -5,3 +5,4 @@ option('gitdiff', type: 'boolean', value: true, description: 'Build the CodeEdit
 option('coverage', type: 'boolean', value: true, description: 'Build the CodeEditCoverage application (needs llvm-cov at run time)')
 option('dircompare', type: 'boolean', value: true, description: 'Build the CodeEditDirCompare application (needs libgit2)')
 option('gittool', type: 'boolean', value: true, description: 'Build the CodeEditGitTool application (needs libgit2)')
+option('studio', type: 'boolean', value: true, description: 'Build the CodeEdit application and its workspace kit (needs libgit2)')

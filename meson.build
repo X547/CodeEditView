@@ -47,8 +47,12 @@ endif
 
 # The diff apps and their shared library need libgit2; they use the test
 # setup above.
-if get_option('gitdiff') or get_option('dircompare') or get_option('gittool')
+if get_option('gitdiff') or get_option('dircompare') or get_option('gittool') or get_option('studio')
 	subdir('diffkit')
+endif
+
+if get_option('studio')
+	subdir('workspacekit')
 endif
 
 # The Git tool shows the diff window of gitdiff.

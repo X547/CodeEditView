@@ -343,4 +343,44 @@ TEST_CASE("commit and amend")
 }
 
 
+TEST_CASE("Change-Id setting")
+{
+	TestRepository test;
+	test.Write("a.txt", "1\n");
+	test.Add("a.txt");
+	test.Commit();
+
+	Repository repository(test.Directory());
+	git_config *config = nullptr;
+	Check(git_repository_config(&config, repository.Get()), "config");
+	ConfigPtr configPtr(config);
+	Check(git_config_set_string(config, "user.name", "Committer"), "name");
+	Check(git_config_set_string(config, "user.email", "committer@example.com"), "email");
+	CHECK_FALSE(repository.CreatesChangeId());
+
+	// Gerrit's hook turns it on unless the setting says otherwise.
+	std::filesystem::create_directories(test.Directory() + "/.git/hooks");
+	std::ofstream(test.Directory() + "/.git/hooks/commit-msg") << "#!/bin/sh\n# Change-Id hook\n";
+	CHECK(repository.CreatesChangeId());
+	repository.SetCreatesChangeId(false);
+	CHECK_FALSE(repository.CreatesChangeId());
+	repository.SetCreatesChangeId(true);
+	CHECK(repository.CreatesChangeId());
+
+	repository.WriteIndex("a.txt", "2\n", GIT_FILEMODE_BLOB);
+	repository.Commit("Change a", false);
+	const std::string message = repository.HeadMessage();
+	REQUIRE(message.starts_with("Change a\n\nChange-Id: I"));
+	CHECK(message.size() == std::string("Change a\n\nChange-Id: I").size() + 40 + 1);
+
+	// Amending keeps the Change-Id of the message.
+	repository.Commit(message, true);
+	CHECK(repository.HeadMessage() == message);
+
+	repository.SetCreatesChangeId(false);
+	repository.Commit("Plain", true);
+	CHECK(repository.HeadMessage() == "Plain\n");
+}
+
+
 } // GitDiff

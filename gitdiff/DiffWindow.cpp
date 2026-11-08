@@ -111,6 +111,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	BStringView *messageLabel = new BStringView("messageLabel", "Commit message:");
 	messageLabel->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fAmend = new BCheckBox("amend", "Amend last commit", new BMessage(kMsgAmendToggled));
+	fChangeId = new BCheckBox("changeId", "Add Change-Id", new BMessage(kMsgChangeIdToggled));
+	fChangeId->SetToolTip("Add a Gerrit Change-Id to the message (gerrit.createChangeId in the repository settings)");
 	BButton *commitButton = new BButton("commit", "Commit", new BMessage(kMsgCommit));
 	BGroupView *commitBox = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Group<>(commitBox)
@@ -119,6 +121,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		.Add(messageScroll)
 		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 			.Add(fAmend)
+			.Add(fChangeId)
 			.AddGlue()
 			.Add(commitButton)
 		.End();
@@ -141,6 +144,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	splitView->SetInsets(0, -1, 0, 0);
 	splitView->AddChild(leftSplit, 1);
 	splitView->AddChild(fDiffView, 4);
+	UpdateChangeId();
 
 	// The index is replaced through index.lock, so the directory is watched.
 	BEntry gitDir(fRepository->GitDir().c_str());
@@ -389,6 +393,28 @@ void DiffWindow::AmendToggled()
 }
 
 
+// The setting can also change outside, or with Gerrit's hook installed.
+void DiffWindow::UpdateChangeId()
+{
+	try {
+		fChangeId->SetValue(fRepository->CreatesChangeId() ? B_CONTROL_ON : B_CONTROL_OFF);
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
+}
+
+
+void DiffWindow::ChangeIdToggled()
+{
+	try {
+		fRepository->SetCreatesChangeId(fChangeId->Value() == B_CONTROL_ON);
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
+	UpdateChangeId();
+}
+
+
 // Commits the index; staged versions edited here are written first.
 void DiffWindow::Commit()
 {
@@ -450,6 +476,7 @@ void DiffWindow::WindowActivated(bool active)
 {
 	BWindow::WindowActivated(active);
 	if (active) {
+		UpdateChangeId();
 		ScheduleRefresh();
 	}
 }
@@ -521,6 +548,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgAmendToggled:
 			AmendToggled();
+			break;
+		case kMsgChangeIdToggled:
+			ChangeIdToggled();
 			break;
 		case CodeEdit::kMsgContentsChanged:
 			UpdateMessageDecorations(fMessage);

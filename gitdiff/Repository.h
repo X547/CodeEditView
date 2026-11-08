@@ -82,11 +82,19 @@ public:
 	// if it can.
 	std::string FilterProblem(const std::string &path);
 
+	// Whether commits get a Gerrit Change-Id: the gerrit.createChangeId
+	// setting, or else whether Gerrit's commit-msg hook is installed, which
+	// libgit2 does not run.
+	bool CreatesChangeId();
+	// Stores gerrit.createChangeId in the repository's configuration.
+	void SetCreatesChangeId(bool enabled);
+
 	// The message of the HEAD commit; empty without commits.
 	std::string HeadMessage();
 	// Commits the index on the HEAD branch with the configured identity;
 	// the parents of a merge in progress are added and the merge state is
 	// cleared. amend replaces the HEAD commit instead, keeping its author.
+	// With CreatesChangeId, a message without one gets a Change-Id.
 	// Throws if the index has conflicts or, without amend, nothing is
 	// staged.
 	git_oid Commit(const std::string &message, bool amend);

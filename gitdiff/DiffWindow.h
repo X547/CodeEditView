@@ -45,6 +45,7 @@ private:
 	node_ref fGitDirNode {};
 	CodeEditView *fMessage {};
 	BCheckBox *fAmend {};
+	BCheckBox *fChangeId {};
 
 	FileDocument *DocumentFor(const std::string &path);
 	void UpdateDiffState();
@@ -58,6 +59,8 @@ private:
 	void ReloadDocument();
 	void StageFile();
 	void AmendToggled();
+	void UpdateChangeId();
+	void ChangeIdToggled();
 	void Commit();
 	bool ConfirmClose();
 

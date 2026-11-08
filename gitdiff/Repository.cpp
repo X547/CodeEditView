@@ -1,12 +1,14 @@
 #include "Repository.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 
+#include "CommitMessage.h"
 #include "FileIO.h"
 
 
@@ -296,6 +298,88 @@ std::string Repository::HeadMessage()
 }
 
 
+bool Repository::CreatesChangeId()
+{
+	git_repository *repository = fRepository.get();
+	git_config *config = nullptr;
+	Check(git_repository_config_snapshot(&config, repository), "Cannot read the configuration");
+	ConfigPtr configPtr(config);
+	int enabled = 0;
+	const int result = git_config_get_bool(&enabled, config, "gerrit.createChangeId");
+	if (result == 0) {
+		return enabled != 0;
+	}
+	git_error_clear();
+	if (result != GIT_ENOTFOUND) {
+		return false;
+	}
+
+	std::string hooks;
+	const char *hooksPath = nullptr;
+	if (git_config_get_string(&hooksPath, config, "core.hooksPath") == 0) {
+		hooks = hooksPath;
+		if (hooks.compare(0, 2, "~/") == 0) {
+			const char *home = getenv("HOME");
+			hooks = std::string(home != nullptr ? home : "") + hooks.substr(1);
+		} else if (!hooks.starts_with('/')) {
+			hooks = fWorkdir + hooks;
+		}
+		if (!hooks.ends_with('/')) {
+			hooks += '/';
+		}
+	} else {
+		git_error_clear();
+		GitBuf path;
+		Check(git_repository_item_path(path.Get(), repository, GIT_REPOSITORY_ITEM_HOOKS), "Cannot find the hooks");
+		hooks = path.String();
+	}
+	try {
+		const std::optional<std::string> hook = ReadFile(hooks + "commit-msg");
+		return hook.has_value() && hook->find("Change-Id") != std::string::npos;
+	} catch (const FileError &error) {
+		(void)error;
+		return false;
+	}
+}
+
+
+void Repository::SetCreatesChangeId(bool enabled)
+{
+	git_config *config = nullptr;
+	Check(git_repository_config(&config, fRepository.get()), "Cannot open the configuration");
+	ConfigPtr configPtr(config);
+	git_config *local = nullptr;
+	Check(git_config_open_level(&local, config, GIT_CONFIG_LEVEL_LOCAL), "Cannot open the repository configuration");
+	ConfigPtr localPtr(local);
+	Check(git_config_set_bool(local, "gerrit.createChangeId", enabled), "Cannot change the configuration");
+}
+
+
+static std::string OidText(const git_oid &id)
+{
+	char text[GIT_OID_MAX_HEXSIZE + 1];
+	git_oid_tostr(text, sizeof(text), &id);
+	return text;
+}
+
+
+// Like Gerrit's hook, a hash of what the commit is made of; the committer
+// time makes it unique.
+static std::string NewChangeId(const git_oid &treeId, const git_commit *parent, const git_signature *committer,
+	const std::string &message)
+{
+	std::string data = "tree " + OidText(treeId) + "\n";
+	if (parent != nullptr) {
+		data += "parent " + OidText(*git_commit_id(parent)) + "\n";
+	}
+	data += std::string("committer ") + committer->name + " <" + committer->email + "> "
+		+ std::to_string(committer->when.time) + "\n\n" + message;
+	git_oid id;
+	Check(git_odb_hash(&id, data.data(), data.size(), GIT_OBJECT_BLOB), "Cannot make a Change-Id");
+	return "I" + OidText(id);
+}
+
+
 static int AddMergeHead(const git_oid *id, void *data)
 {
 	static_cast<std::vector<git_oid>*>(data)->push_back(*id);
@@ -308,7 +392,7 @@ git_oid Repository::Commit(const std::string &message, bool amend)
 	git_repository *repository = fRepository.get();
 	GitBuf buffer;
 	Check(git_message_prettify(buffer.Get(), message.c_str(), 0, '#'), "Cannot format the message");
-	const std::string cleanMessage = buffer.String();
+	std::string cleanMessage = buffer.String();
 	if (cleanMessage.empty()) {
 		throw GitError("Enter a commit message");
 	}
@@ -337,6 +421,10 @@ git_oid Repository::Commit(const std::string &message, bool amend)
 	}
 	ObjectPtr headPtr(headObject);
 	git_commit *head = reinterpret_cast<git_commit*>(headObject);
+
+	if (CreatesChangeId()) {
+		cleanMessage = AddChangeId(cleanMessage, NewChangeId(treeId, head, signature, cleanMessage));
+	}
 
 	git_oid id;
 	if (amend) {

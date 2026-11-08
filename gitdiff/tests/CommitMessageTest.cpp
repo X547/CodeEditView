@@ -12,6 +12,28 @@ using CodeEdit::Decoration;
 using CodeEdit::DecorationKind;
 
 
+TEST_CASE("Change-Id")
+{
+	const std::string id = "I0123456789abcdef0123456789abcdef01234567";
+	CHECK(AddChangeId("Subject\n", id) == "Subject\n\nChange-Id: " + id + "\n");
+	CHECK(AddChangeId("Subject\n\nBody text.\n", id) == "Subject\n\nBody text.\n\nChange-Id: " + id + "\n");
+	// Into the trailer block, before Signed-off-by.
+	CHECK(AddChangeId("Subject\n\nBody.\n\nBug: 12\nSigned-off-by: A <a@b>\n", id)
+		== "Subject\n\nBody.\n\nBug: 12\nChange-Id: " + id + "\nSigned-off-by: A <a@b>\n");
+	CHECK(AddChangeId("Subject\n\nFixes: 12\n  more\n", id) == "Subject\n\nFixes: 12\n  more\nChange-Id: " + id + "\n");
+	// A body paragraph with a colon is not a trailer block.
+	CHECK(AddChangeId("Subject\n\nNote: this and\nthat.\n", id)
+		== "Subject\n\nNote: this and\nthat.\n\nChange-Id: " + id + "\n");
+	// The subject alone is not a trailer block.
+	CHECK(AddChangeId("Fix: x\n", id) == "Fix: x\n\nChange-Id: " + id + "\n");
+
+	const std::string existing = "Subject\n\nChange-Id: Iaaaa\n";
+	CHECK(AddChangeId(existing, id) == existing);
+	CHECK(AddChangeId("fixup! Subject\n", id) == "fixup! Subject\n");
+	CHECK(AddChangeId("squash! Subject\n", id) == "squash! Subject\n");
+}
+
+
 TEST_CASE("commit message decorations")
 {
 	CHECK(CommitMessageDecorations("Short subject\n\nBody.\n").empty());

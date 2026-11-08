@@ -1,5 +1,7 @@
 #include "CommitMessage.h"
 
+#include <ctype.h>
+
 
 namespace GitDiff {
 
@@ -70,6 +72,93 @@ std::vector<Decoration> CommitMessageDecorations(std::string_view text)
 		lineStart = lineEnd + 1;
 	}
 	return decorations;
+}
+
+
+// "Token: value", where the token has letters, digits and dashes.
+static bool IsTrailer(std::string_view line)
+{
+	size_t i = 0;
+	while (i < line.size() && (isalnum(static_cast<unsigned char>(line[i])) || line[i] == '-')) {
+		i++;
+	}
+	return i > 0 && i < line.size() && line[i] == ':';
+}
+
+
+static bool StartsWithToken(std::string_view line, std::string_view token)
+{
+	if (line.size() <= token.size() || line[token.size()] != ':') {
+		return false;
+	}
+	for (size_t i = 0; i < token.size(); i++) {
+		if (tolower(static_cast<unsigned char>(line[i])) != tolower(static_cast<unsigned char>(token[i]))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+
+std::string AddChangeId(std::string_view message, std::string_view changeId)
+{
+	std::vector<std::string_view> lines;
+	size_t lineStart = 0;
+	while (lineStart < message.size()) {
+		size_t lineEnd = message.find('\n', lineStart);
+		if (lineEnd == std::string_view::npos) {
+			lineEnd = message.size();
+		}
+		lines.push_back(message.substr(lineStart, lineEnd - lineStart));
+		lineStart = lineEnd + 1;
+	}
+	while (!lines.empty() && lines.back().empty()) {
+		lines.pop_back();
+	}
+	if (lines.empty() || lines[0].starts_with("fixup! ") || lines[0].starts_with("squash! ")) {
+		return std::string(message);
+	}
+
+	// The trailer block is the last paragraph, if it is not the subject and
+	// has only trailers and their indented continuation lines.
+	size_t blockStart = lines.size();
+	while (blockStart > 0 && !lines[blockStart - 1].empty()) {
+		blockStart--;
+	}
+	bool hasBlock = blockStart > 0 && IsTrailer(lines[blockStart]);
+	for (size_t i = blockStart; hasBlock && i < lines.size(); i++) {
+		const bool continuation = i > blockStart && (lines[i][0] == ' ' || lines[i][0] == '\t');
+		hasBlock = continuation || IsTrailer(lines[i]);
+	}
+
+	size_t insertAt = lines.size();
+	if (hasBlock) {
+		for (size_t i = blockStart; i < lines.size(); i++) {
+			if (StartsWithToken(lines[i], "Change-Id")) {
+				return std::string(message);
+			}
+			if (insertAt == lines.size() && StartsWithToken(lines[i], "Signed-off-by")) {
+				insertAt = i;
+			}
+		}
+	}
+
+	const std::string changeIdLine = "Change-Id: " + std::string(changeId);
+	std::string result;
+	for (size_t i = 0; i < lines.size(); i++) {
+		if (i == insertAt) {
+			result += changeIdLine + "\n";
+		}
+		result += lines[i];
+		result += '\n';
+	}
+	if (insertAt == lines.size()) {
+		if (!hasBlock) {
+			result += '\n';
+		}
+		result += changeIdLine + "\n";
+	}
+	return result;
 }
 
 

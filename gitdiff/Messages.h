@@ -17,6 +17,7 @@ constexpr uint32 kMsgRevert = 'GDrv';
 constexpr uint32 kMsgStageFile = 'GDsf';
 constexpr uint32 kMsgCommit = 'GDcm';
 constexpr uint32 kMsgAmendToggled = 'GDam';
+constexpr uint32 kMsgChangeIdToggled = 'GDci';
 constexpr uint32 kMsgNextChunk = 'GDnc';
 constexpr uint32 kMsgPreviousChunk = 'GDpc';
 constexpr uint32 kMsgToggleSyncScrolling = 'GDss';

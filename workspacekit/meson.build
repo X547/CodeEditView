@@ -4,6 +4,7 @@ workspaceKit = static_library(
 	'workspacekit',
 	files(
 		'Document.cpp',
+		'DocumentWatcher.cpp',
 		'FileProvider.cpp',
 		'GitProvider.cpp',
 		'JobQueue.cpp',

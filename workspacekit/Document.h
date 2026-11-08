@@ -43,7 +43,8 @@ struct DocumentStatus {
 	std::string error;
 	// The file existed when last read or saved.
 	bool exists {};
-	// The file changed elsewhere while the text had unsaved edits.
+	// The file changed elsewhere while the text had unsaved edits, or was
+	// deleted (then exists is false).
 	bool changedElsewhere {};
 	// Why the data cannot be edited as text (binary, mixed line endings);
 	// empty if it can.
@@ -118,6 +119,11 @@ public:
 	// Writes the text as it is now. Unless overwrite is set, nothing is
 	// written if the file changed since it was read or saved (a conflict).
 	void Save(Document *document, bool overwrite = false);
+	// Writes the text as it is now to another file, replacing it, and
+	// returns the document of that file, which then holds the text (undo
+	// history starts anew). Throws ProviderError if the location is not
+	// writable or its document has unsaved changes.
+	BReference<Document> SaveAs(Document *document, const Locator &target);
 	// Forgets documents referenced by nobody else, without unsaved edits or
 	// shared marks (breakpoints).
 	void CloseUnused();

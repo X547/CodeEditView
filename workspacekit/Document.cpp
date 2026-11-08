@@ -217,6 +217,15 @@ void DocumentRegistry::Apply(Document &document, const FileData &file, bool forc
 	const std::string bytes = file.data.value_or(std::string());
 	{
 		BAutolock lock(document.fLock);
+		if (!file.data.has_value() && document.fStatus.exists) {
+			// Deleted elsewhere: the text stays, saving creates the file
+			// again.
+			document.fStatus.exists = false;
+			document.fStatus.changedElsewhere = true;
+			document.fStatus.error.clear();
+			document.fVersion.clear();
+			return;
+		}
 		if (document.fLoaded == bytes) {
 			document.fStatus.state = DocumentState::Ready;
 			document.fStatus.exists = file.data.has_value();
@@ -338,6 +347,74 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 		Notify(kNoticeDocumentChanged, *document);
 		Notify(kNoticeDocumentSaved, *document, error, conflict);
 	});
+}
+
+
+BReference<Document> DocumentRegistry::SaveAs(Document *source, const Locator &requested)
+{
+	Provider &provider = fProviders.Get(requested);
+	const Locator target = provider.Resolve(requested);
+	if (!provider.IsWritable(target)) {
+		throw ProviderError("Files of this location are read-only");
+	}
+	if (target == source->GetLocator()) {
+		Save(source, true);
+		return BReference<Document>(source);
+	}
+
+	std::string data;
+	{
+		TextModel &model = *source->Model();
+		ModelLock lock(model);
+		data = SavedData(model);
+	}
+
+	BReference<Document> document;
+	{
+		BAutolock lock(fLock);
+		const auto it = fDocuments.find(target);
+		if (it != fDocuments.end()) {
+			document = it->second;
+		} else {
+			document.SetTo(new Document(target, true), true);
+			fDocuments.emplace(target, document);
+		}
+	}
+	if (document->Status().saving || (document->Status().state == DocumentState::Ready && document->IsModified())) {
+		throw ProviderError(target.DisplayName() + " is open with unsaved changes");
+	}
+	{
+		BAutolock lock(document->fLock);
+		document->fStatus.saving = true;
+		if (document->fStatus.state == DocumentState::Failed) {
+			document->fStatus.state = DocumentState::Loading;
+		}
+	}
+	Notify(kNoticeDocumentChanged, *document);
+
+	fQueue.Post([this, document, data = std::move(data)] {
+		const Locator &locator = document->GetLocator();
+		std::string error;
+		try {
+			FileData file;
+			file.version = fProviders.Get(locator).Write(locator, data, {}, true);
+			file.data = data;
+			Apply(*document, file, true);
+		} catch (const ProviderError &providerError) {
+			error = providerError.what();
+		}
+		{
+			BAutolock lock(document->fLock);
+			document->fStatus.saving = false;
+			document->fStatus.error = error;
+			if (!error.empty() && document->fStatus.state == DocumentState::Loading) {
+				document->fStatus.state = DocumentState::Failed;
+			}
+		}
+		Notify(kNoticeDocumentChanged, *document);
+		Notify(kNoticeDocumentSaved, *document, error);
+	});
+	return document;
 }
 
 

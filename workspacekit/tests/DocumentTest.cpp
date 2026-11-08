@@ -5,6 +5,7 @@
 #include <CodeEditView/TextModel.h>
 
 #include "Document.h"
+#include "DocumentWatcher.h"
 #include "TestSupport.h"
 
 
@@ -207,6 +208,121 @@ TEST_CASE("unsupported locators and failed documents")
 	registry.WaitIdle();
 	CHECK(failed->Status().state == DocumentState::Ready);
 	CHECK(Text(*failed) == "now a file\n");
+}
+
+
+TEST_CASE("deleted files keep their text")
+{
+	TempDirectory directory;
+	directory.Write("a.txt", "one\n");
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(Locator::File(directory / "a.txt"));
+	registry.WaitIdle();
+	std::filesystem::remove(directory / "a.txt");
+	registry.Reload(document);
+	registry.WaitIdle();
+	DocumentStatus status = document->Status();
+	CHECK_FALSE(status.exists);
+	CHECK(status.changedElsewhere);
+	CHECK(Text(*document) == "one\n");
+
+	registry.Save(document);
+	registry.WaitIdle();
+	CHECK(directory.Read("a.txt") == "one\n");
+	status = document->Status();
+	CHECK(status.exists);
+	CHECK_FALSE(status.changedElsewhere);
+}
+
+
+TEST_CASE("save as another file")
+{
+	TestRepository repository;
+	repository.Write("a.txt", "one\n");
+	repository.Commit();
+	DocumentRegistry registry;
+	CollectorHolder collector;
+	registry.AddListener(collector.Messenger());
+	BReference<Document> source = registry.Open(Locator::GitCommit(repository.Path(), "HEAD", "a.txt"));
+	registry.WaitIdle();
+
+	CHECK_THROWS_AS(registry.SaveAs(source, source->GetLocator().WithPath("b.txt")), ProviderError);
+	CHECK_THROWS_AS(registry.SaveAs(source, Locator::Sftp("", "host", 0, "/b.txt")), ProviderError);
+
+	BReference<Document> copy = registry.SaveAs(source, Locator::File(repository / "copy.txt"));
+	REQUIRE(copy.Get() != nullptr);
+	CHECK(registry.Find(Locator::File(repository / "copy.txt")) == copy);
+	registry.WaitIdle();
+	CHECK(repository.Read("copy.txt") == "one\n");
+	CHECK(copy->Status().state == DocumentState::Ready);
+	CHECK(copy->Status().exists);
+	CHECK(Text(*copy) == "one\n");
+	CHECK_FALSE(copy->IsModified());
+	CHECK_FALSE(copy->IsReadOnly());
+	const std::optional<BMessage> saved = TakeSaved(collector, *copy);
+	REQUIRE(saved.has_value());
+	CHECK(std::string(saved->GetString("error", "x")).empty());
+
+	// A document with unsaved edits is not replaced.
+	Type(*copy, "edit\n");
+	CHECK_THROWS_AS(registry.SaveAs(source, copy->GetLocator()), ProviderError);
+	CHECK(repository.Read("copy.txt") == "one\n");
+}
+
+
+// Waits up to two seconds for the condition, which is checked after the
+// registry's background work.
+template<typename Condition>
+static bool WaitFor(DocumentRegistry &registry, Condition condition)
+{
+	const bigtime_t deadline = system_time() + 2000000;
+	for (;;) {
+		registry.WaitIdle();
+		if (condition()) {
+			return true;
+		}
+		if (system_time() > deadline) {
+			return false;
+		}
+		snooze(20000);
+	}
+}
+
+
+TEST_CASE("watched documents follow their files")
+{
+	TempDirectory directory;
+	directory.Write("a.txt", "one\n");
+	DocumentRegistry registry;
+	DocumentWatcher *watcher = new DocumentWatcher(registry);
+	watcher->Run();
+	BReference<Document> document = registry.Open(Locator::File(directory / "a.txt"));
+	registry.WaitIdle();
+	watcher->Update();
+	BMessage reply;
+	BMessenger(watcher).SendMessage('ping', &reply);
+
+	directory.Write("a.txt", "two two\n");
+	CHECK(WaitFor(registry, [&] {return Text(*document) == "two two\n";}));
+
+	// Replaced by a rename, as editors save.
+	directory.Write("a.tmp", "three\n");
+	std::filesystem::rename(directory / "a.tmp", directory / "a.txt");
+	CHECK(WaitFor(registry, [&] {return Text(*document) == "three\n";}));
+	directory.Write("a.txt", "four\n");
+	CHECK(WaitFor(registry, [&] {return Text(*document) == "four\n";}));
+
+	Type(*document, "mine\n");
+	directory.Write("a.txt", "five five\n");
+	CHECK(WaitFor(registry, [&] {return document->Status().changedElsewhere;}));
+	CHECK(Text(*document) == "mine\nfour\n");
+
+	std::filesystem::remove(directory / "a.txt");
+	CHECK(WaitFor(registry, [&] {return !document->Status().exists;}));
+	CHECK(Text(*document) == "mine\nfour\n");
+
+	watcher->Lock();
+	watcher->Quit();
 }
 
 

@@ -350,7 +350,7 @@ std::string Locator::DisplayName() const
 {
 	switch (fKind) {
 		case LocatorKind::File:
-			return fPath;
+			return fPath == "/" ? fPath : Leaf() + std::string(kDash) + Parent().fPath;
 		case LocatorKind::GitCommit: {
 			const std::string revision = IsResolved() ? fRevision.substr(0, kShortOidLength) : fRevision;
 			const std::string repository = Locator::File(fRepository).Leaf() + " @ " + revision;

@@ -46,7 +46,8 @@ TEST_CASE("file locators")
 	CHECK(locator.Leaf() == "a b.cpp");
 	CHECK(locator.Parent() == Locator::File("/boot/home"));
 	CHECK(locator.Sibling("b.h") == Locator::File("/boot/home/b.h"));
-	CHECK(locator.DisplayName() == "/boot/home/a b.cpp");
+	CHECK(locator.DisplayName() == "a b.cpp \xe2\x80\x94 /boot/home");
+	CHECK(Locator::File("/").DisplayName() == "/");
 	CHECK(Locator::File("/a").Parent().Path() == "/");
 	CHECK(Locator::File("/").Parent().Path() == "/");
 	CHECK(Locator::File("/").Leaf().empty());

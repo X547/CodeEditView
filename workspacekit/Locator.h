@@ -75,8 +75,8 @@ public:
 	Locator Parent() const;
 	// A file in the same directory.
 	Locator Sibling(std::string_view name) const;
-	// "a.cpp — repo @ 1a2b3c4", "a.cpp — host:/home/user", or the path of a
-	// local file.
+	// "a.cpp — /boot/home", "a.cpp — repo @ 1a2b3c4",
+	// "a.cpp — user@host:/home/user".
 	std::string DisplayName() const;
 
 	bool operator==(const Locator &other) const = default;

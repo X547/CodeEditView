@@ -28,7 +28,7 @@ DocumentsWindow::DocumentsWindow():
 		.AddMenu("File")
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
 			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit, 'G', B_SHIFT_KEY)
-			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'L', B_SHIFT_KEY)
+			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
 			.AddSeparator()
 			.AddItem("Close", B_QUIT_REQUESTED, 'W')
 			.AddItem("Quit", B_QUIT_REQUESTED, 'Q')
@@ -42,8 +42,9 @@ DocumentsWindow::DocumentsWindow():
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
+			// The frame of the list overlaps the menu bar and window borders.
 			.SetInsets(-1, -1, -1, -1)
-			.Add(new BScrollView("scroll", fList, 0, false, true))
+			.Add(new BScrollView("scroll", fList, 0, false, true, B_PLAIN_BORDER))
 		.End();
 
 	StudioApp::Get().Registry().AddListener(BMessenger(this));

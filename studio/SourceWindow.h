@@ -7,8 +7,11 @@
 
 
 class BFilePanel;
+class BMenuItem;
+class BSplitView;
 class BStringView;
 class CodeEditView;
+class OutlineView;
 
 
 namespace Studio {
@@ -20,6 +23,10 @@ private:
 	BReference<Workspace::Document> fDocument;
 	CodeEditView *fEditView;
 	BStringView *fStatus;
+	BSplitView *fSplitView {};
+	OutlineView *fOutline {};
+	BMenuItem *fOutlineItem {};
+	bool fOutlineRefreshPending {};
 	BFilePanel *fOpenPanel {};
 	BFilePanel *fSavePanel {};
 	// Close when the save started by QuitRequested() finishes.
@@ -36,6 +43,10 @@ private:
 	void ShowOpenPanel();
 	void OpenRefs(BMessage *message);
 	std::string StartDirectory() const;
+	void ScheduleOutlineRefresh();
+	void RefreshOutline();
+	void JumpToOutlineItem(bool focus);
+	void ToggleOutline();
 
 public:
 	SourceWindow(Workspace::Document *document, BRect frame);

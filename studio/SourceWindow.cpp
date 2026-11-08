@@ -11,6 +11,8 @@
 #include <MenuItem.h>
 #include <Path.h>
 #include <ScrollBar.h>
+#include <ScrollView.h>
+#include <SplitView.h>
 #include <StringView.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
@@ -21,6 +23,7 @@
 #include "Messages.h"
 #include "OpenGitWindow.h"
 #include "OpenLocationWindow.h"
+#include "OutlineView.h"
 #include "StudioApp.h"
 
 
@@ -38,6 +41,8 @@ static constexpr uint32 kMsgSave = 'SWsv';
 static constexpr uint32 kMsgSaveAs = 'SWsa';
 static constexpr uint32 kMsgReload = 'SWrl';
 static constexpr uint32 kMsgNewView = 'SWnv';
+static constexpr uint32 kMsgToggleOutline = 'SWto';
+static constexpr uint32 kMsgRefreshOutline = 'SWro';
 
 
 static int32 Ask(const std::string &text, const char *button0, const char *button1, const char *button2 = nullptr)
@@ -70,7 +75,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 		.AddMenu("File")
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
 			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit, 'G', B_SHIFT_KEY)
-			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'L', B_SHIFT_KEY)
+			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
 			.AddSeparator()
 			.AddItem("Save", kMsgSave, 'S')
 			.AddItem("Save as" B_UTF8_ELLIPSIS, kMsgSaveAs, 'S', B_SHIFT_KEY)
@@ -92,6 +97,10 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 		.AddMenu("Search")
 			.GetMenu(searchMenu)
 		.End()
+		.AddMenu("View")
+			.AddItem("Outline", kMsgToggleOutline, 'L', B_SHIFT_KEY)
+				.GetItem(fOutlineItem)
+		.End()
 		.AddMenu("Window")
 			.AddItem("New view", kMsgNewView, 'N', B_SHIFT_KEY)
 			.AddItem("Documents", kMsgShowDocuments, 'D', B_SHIFT_KEY)
@@ -101,12 +110,14 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 	FindKit::AddFindItems(searchMenu);
 	menuBar->FindItem("Quit")->SetTarget(be_app);
 
+	fOutline = new OutlineView();
+	fSplitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
-			// The frame of the pane overlaps the menu bar and window borders.
+			// The frames of the panes overlap the menu bar and window borders.
 			.SetInsets(-1, -1, -1, 0)
-			.Add(new CodeEditScrollView("pane", fEditView))
+			.Add(fSplitView)
 		.End()
 		.AddGroup(B_HORIZONTAL)
 			// The right inset keeps the text clear of the resize corner.
@@ -114,10 +125,59 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 			.Add(fStatus)
 		.End();
 
+	fSplitView->AddChild(new BScrollView("outlineScroll", fOutline, 0, false, true, B_PLAIN_BORDER), 1);
+	fSplitView->AddChild(new CodeEditScrollView("pane", fEditView), 4);
+	fOutlineItem->SetMarked(true);
+
 	StudioApp::Get().Registry().AddListener(BMessenger(this));
 	UpdateTitle();
 	UpdateStatus();
+	ScheduleOutlineRefresh();
 	fEditView->MakeFocus(true);
+}
+
+
+// Edits come in bursts (e.g. undo of a large change); refresh once.
+void SourceWindow::ScheduleOutlineRefresh()
+{
+	if (!fOutlineRefreshPending && fOutlineItem->IsMarked()) {
+		fOutlineRefreshPending = true;
+		PostMessage(kMsgRefreshOutline);
+	}
+}
+
+
+void SourceWindow::RefreshOutline()
+{
+	fOutlineRefreshPending = false;
+	if (!fOutlineItem->IsMarked()) {
+		return;
+	}
+	fOutline->SetOutline(fEditView->Outline());
+	fOutline->SelectAt(fEditView->GetSelection().caret);
+}
+
+
+void SourceWindow::JumpToOutlineItem(bool focus)
+{
+	const OutlineListItem *item = fOutline->SelectedItem();
+	if (item == nullptr) {
+		return;
+	}
+	fEditView->SetSelection({item->NameStart(), item->NameEnd()});
+	fEditView->ScrollToSelection();
+	if (focus) {
+		fEditView->MakeFocus(true);
+	}
+}
+
+
+void SourceWindow::ToggleOutline()
+{
+	const bool visible = !fOutlineItem->IsMarked();
+	fOutlineItem->SetMarked(visible);
+	fSplitView->SetItemCollapsed(0, !visible);
+	ScheduleOutlineRefresh();
 }
 
 
@@ -265,6 +325,7 @@ void SourceWindow::SaveAs(BMessage *message)
 	StudioApp::Get().WindowShows(BMessenger(this), fDocument->GetLocator());
 	UpdateTitle();
 	UpdateStatus();
+	ScheduleOutlineRefresh();
 }
 
 
@@ -321,6 +382,22 @@ void SourceWindow::MessageReceived(BMessage *message)
 			break;
 		case CodeEdit::kMsgContentsChanged:
 			UpdateTitle();
+			ScheduleOutlineRefresh();
+			break;
+		case CodeEdit::kMsgCaretMoved:
+			fOutline->SelectAt(message->GetUInt64("caret", 0));
+			break;
+		case kMsgToggleOutline:
+			ToggleOutline();
+			break;
+		case kMsgRefreshOutline:
+			RefreshOutline();
+			break;
+		case kMsgOutlineSelected:
+			JumpToOutlineItem(false);
+			break;
+		case kMsgOutlineInvoked:
+			JumpToOutlineItem(true);
 			break;
 		case kMsgSave:
 			Save();

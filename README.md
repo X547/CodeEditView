@@ -207,6 +207,7 @@ Each window shows one view of a document; several windows may show the
 same document. Window > New view and files opened from a window join the
 window's stack (Window > Open windows in the same stack). File > Open from
 Git browses the tree of a commit; File > Open location takes a location.
+View > Outline shows the definitions of the document beside it.
 Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
 Without arguments, the Documents window lists the open documents.

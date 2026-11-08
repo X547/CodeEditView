@@ -7,9 +7,11 @@ executable(
 		'OpenLocationWindow.cpp',
 		'SourceWindow.cpp',
 		'StudioApp.cpp',
+		# The outline panel is the demo's.
+		'../demo/OutlineView.cpp',
 	),
 	# BWindowStack is private API.
-	include_directories: include_directories('/boot/system/develop/headers/private/interface'),
+	include_directories: include_directories('/boot/system/develop/headers/private/interface', '../demo'),
 	dependencies: [workspaceKitDep, findKitDep, cpp.find_library('tracker')],
 	install: true
 )

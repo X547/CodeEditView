@@ -451,7 +451,7 @@ void DebugSession::DocumentChanged(CodeEdit::TextModel *model)
 			CodeEdit::ModelLock lock(*model);
 			changes = model->Sync(watched.observer);
 		}
-		if ((changes.marksChanged || !changes.edits.empty() || changes.reset) && !fBreakpointSyncPosted) {
+		if ((changes.overlaysChanged || !changes.edits.empty() || changes.reset) && !fBreakpointSyncPosted) {
 			fBreakpointSyncPosted = true;
 			PostMessage(kMsgSyncBreakpoints);
 		}
@@ -464,7 +464,7 @@ std::vector<int32> DebugSession::EnabledBreakpointLines(CodeEdit::TextModel &mod
 {
 	std::vector<int32> lines;
 	CodeEdit::ModelLock lock(model);
-	for (const CodeEdit::MarkInfo &mark : model.Marks(0, model.Text().NewlineCount())) {
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
 		if (mark.kind == CodeEdit::kMarkBreakpoint) {
 			lines.push_back(static_cast<int32>(mark.line + 1));
 		}
@@ -540,7 +540,7 @@ void DebugSession::PlaceMark(std::optional<PlacedMark> &mark, uint32_t kind, con
 	CodeEdit::ModelLock lock(*document->model);
 	const size_t lastLine = document->model->Text().NewlineCount();
 	const size_t markLine = std::min<size_t>(line - 1, lastLine);
-	mark = PlacedMark {document, document->model->AddMark(kind, markLine, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine)};
+	mark = PlacedMark {document, document->model->SharedMarks().AddMark(kind, markLine, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine)};
 }
 
 
@@ -550,7 +550,7 @@ void DebugSession::RemoveMark(std::optional<PlacedMark> &mark)
 		return;
 	}
 	CodeEdit::ModelLock lock(*mark->document->model);
-	mark->document->model->RemoveMark(mark->id);
+	mark->document->model->SharedMarks().RemoveMark(mark->id);
 	mark.reset();
 }
 
@@ -623,7 +623,7 @@ BMessage DebugSession::BreakpointsNotice()
 		{
 			CodeEdit::TextModel &model = *watched.document->model;
 			CodeEdit::ModelLock lock(model);
-			marks = model.Marks(0, model.Text().NewlineCount());
+			marks = model.SharedMarks().Marks(0, model.Text().NewlineCount());
 		}
 		const std::vector<BreakpointStatus> &statuses = fBreakpointStatus[path];
 		for (const CodeEdit::MarkInfo &mark : marks) {

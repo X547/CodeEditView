@@ -22,6 +22,7 @@ codeEditViewSources = files(
 	'layout/LineLayout.cpp',
 	'layout/RowIndex.cpp',
 	'model/EditRecord.cpp',
+	'model/Overlays.cpp',
 	'model/Rope.cpp',
 	'model/TextModel.cpp',
 	'model/UndoStack.cpp',

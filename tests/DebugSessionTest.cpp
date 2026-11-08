@@ -113,7 +113,7 @@ TEST_CASE("debug session with GDB")
 		const size_t offset = text.find("const int area = Area(square);");
 		REQUIRE(offset != std::string::npos);
 		const size_t line = document->model->Text().LineOfOffset(offset);
-		document->model->AddMark(CodeEdit::kMarkBreakpoint, line);
+		document->model->SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line);
 		breakLine = static_cast<int32>(line + 1);
 	}
 
@@ -133,7 +133,7 @@ TEST_CASE("debug session with GDB")
 	{
 		CodeEdit::ModelLock lock(*document->model);
 		bool execMark = false;
-		for (const CodeEdit::MarkInfo &mark : document->model->Marks(breakLine - 1, breakLine - 1)) {
+		for (const CodeEdit::MarkInfo &mark : document->model->SharedMarks().Marks(breakLine - 1, breakLine - 1)) {
 			execMark = execMark || mark.kind == CodeEdit::kMarkExecLine;
 		}
 		CHECK(execMark);
@@ -195,7 +195,7 @@ TEST_CASE("debug session with GDB")
 	}).has_value());
 	{
 		CodeEdit::ModelLock lock(*document->model);
-		for (const CodeEdit::MarkInfo &info : document->model->Marks(0, document->model->Text().NewlineCount())) {
+		for (const CodeEdit::MarkInfo &info : document->model->SharedMarks().Marks(0, document->model->Text().NewlineCount())) {
 			CHECK(info.kind == CodeEdit::kMarkBreakpoint);
 		}
 	}

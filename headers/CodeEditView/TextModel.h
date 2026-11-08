@@ -18,6 +18,7 @@
 #include <Referenceable.h>
 
 #include <CodeEditView/EditRecord.h>
+#include <CodeEditView/Overlays.h>
 #include <CodeEditView/Rope.h>
 
 
@@ -38,15 +39,8 @@ class UndoStack;
 constexpr uint32_t kMsgModelChanged = 'CEmc';
 
 using ObserverId = int32_t;
-using MarkId = int32_t;
 
 constexpr ObserverId kNoObserver = 0;
-
-constexpr uint32_t kMarkBookmark = 1;
-constexpr uint32_t kMarkBreakpoint = 2;
-constexpr uint32_t kMarkExecLine = 3;
-constexpr uint32_t kMarkBreakpointDisabled = 4;
-constexpr uint32_t kMarkFirstUserKind = 1000;
 
 
 struct Selection {
@@ -74,26 +68,13 @@ enum class LineEnding {
 };
 
 
-// What happens to a mark whose line start is deleted (lines joined).
-enum class MarkDeletePolicy {
-	Remove,
-	MoveToEditLine,
-};
-
-
-struct MarkInfo {
-	MarkId id {};
-	uint32_t kind {};
-	size_t line {};
-	int64_t data {};
-};
-
-
 struct ModelChanges {
 	uint64_t revision {};
 	// Edits are not available (log trimmed); the observer must rebuild all state.
 	bool reset {};
-	bool marksChanged {};
+	// A mark set or decoration set of the model changed (the Revision() of
+	// the sets tells which).
+	bool overlaysChanged {};
 	// A new syntax tree changed the highlighting.
 	bool syntaxChanged {};
 	std::vector<EditRecord> edits;
@@ -116,16 +97,9 @@ private:
 		BMessenger messenger;
 		bool notify {};
 		uint64_t revision {};
-		uint64_t marksRevision {};
+		uint64_t overlaysRevision {};
 		uint64_t syntaxRevision {};
 		bool pending {};
-	};
-
-	struct Mark {
-		uint32_t kind {};
-		size_t anchor {};
-		int64_t data {};
-		MarkDeletePolicy policy {};
 	};
 
 	using Notification = std::pair<ObserverId, BMessenger>;
@@ -133,14 +107,17 @@ private:
 	mutable BLocker fLock;
 	Rope fText;
 	uint64_t fRevision {};
-	uint64_t fMarksRevision {};
+	// Changes with any mark set or decoration set.
+	uint64_t fOverlaysRevision {};
 	std::deque<EditRecord> fLog;
 
 	std::map<ObserverId, Observer> fObservers;
 	ObserverId fNextObserverId = 1;
 
-	std::map<MarkId, Mark> fMarks;
-	MarkId fNextMarkId = 1;
+	// Attached sets, including fSharedMarks.
+	std::vector<MarkSet*> fMarkSets;
+	std::vector<DecorationSet*> fDecorationSets;
+	std::unique_ptr<MarkSet> fSharedMarks;
 
 	std::unique_ptr<UndoStack> fUndo;
 	int32_t fGroupDepth {};
@@ -159,14 +136,15 @@ private:
 	friend class EditorCore;
 	friend class SyntaxState;
 	friend class SyntaxWorker;
+	friend class MarkSet;
+	friend class DecorationSet;
 
 	void AssertLocked() const;
 	void CheckRange(size_t offset, size_t length) const;
 	EditRecord ApplyTextEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
 	EditRecord ApplyEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
-	std::vector<MarkId> WholeLineDeletedMarks(size_t offset, size_t length) const;
-	void UpdateMarks(const EditRecord &edit, const std::vector<MarkId> &deletedLineMarks);
 	void ResetText(std::string_view text);
+	void OverlaysChanged();
 	void TrimLog();
 	std::vector<Notification> CollectNotifications();
 
@@ -212,14 +190,9 @@ public:
 	int32_t CountObservers() const;
 	ModelChanges Sync(ObserverId id);
 
-	// Marks.
-	MarkId AddMark(uint32_t kind, size_t line, int64_t data = 0, MarkDeletePolicy policy = MarkDeletePolicy::Remove);
-	bool RemoveMark(MarkId id);
-	void RemoveMarks(uint32_t kind);
-	bool MoveMark(MarkId id, size_t line);
-	bool SetMarkKind(MarkId id, uint32_t kind);
-	std::optional<MarkInfo> FindMark(MarkId id) const;
-	std::vector<MarkInfo> Marks(size_t firstLine, size_t lastLine) const;
+	// Marks shown by every view of the model (bookmarks, breakpoints). It
+	// lives as long as the model; do not take references to it.
+	MarkSet &SharedMarks() const;
 
 	// File I/O. Text is stored with LF line endings; the dominant line ending
 	// and a UTF-8 BOM are detected on load and restored on save.

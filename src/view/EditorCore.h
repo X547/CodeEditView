@@ -211,6 +211,12 @@ private:
 	std::vector<FoldRange> fHostRegions;
 	// Sorted by start.
 	std::vector<Decoration> fDecorations;
+	// Sets shown besides the model's shared marks, and the revisions of all
+	// shown sets when last drawn (the shared marks first).
+	std::vector<BReference<MarkSet>> fMarkSets;
+	std::vector<BReference<DecorationSet>> fDecorationSets;
+	std::vector<uint64_t> fMarkRevisions;
+	std::vector<uint64_t> fDecorationRevisions;
 
 	// The model must be locked by the caller of the methods below.
 	void Prepare();
@@ -260,6 +266,9 @@ private:
 		bool headersInRange, std::vector<FoldRange> &candidates);
 	bool IsFoldedLocked(size_t headerLine) const;
 	void MapDecorations(const EditRecord &edit);
+	std::vector<uint64_t> MarkRevisions() const;
+	std::vector<uint64_t> DecorationRevisions() const;
+	void CheckOverlays();
 	bool IsReadOnly() const {return fSettings.readOnly;}
 
 public:
@@ -373,7 +382,16 @@ public:
 	// Host decorations; they follow edits until replaced.
 	void SetDecorations(std::vector<Decoration> decorations);
 	std::vector<Decoration> Decorations();
+	// Decorations of the decoration sets in order, then the host
+	// decorations.
 	LineDecorations DecorationsOfLines(size_t firstLine, size_t lastLine);
+
+	// Sets of the model shown besides its shared marks; others throw
+	// std::invalid_argument.
+	void SetMarkSets(std::vector<BReference<MarkSet>> sets);
+	std::vector<BReference<MarkSet>> MarkSets() const {return fMarkSets;}
+	void SetDecorationSets(std::vector<BReference<DecorationSet>> sets);
+	std::vector<BReference<DecorationSet>> DecorationSets() const {return fDecorationSets;}
 
 	// Syntax navigation (no-ops without a syntax tree).
 	void ExpandSelection();
@@ -382,7 +400,8 @@ public:
 	// Definitions in the text; empty without a syntax tree.
 	std::vector<OutlineItem> Outline();
 
-	// Marks of lines firstLine to lastLine, sorted by line.
+	// Marks of lines firstLine to lastLine of the shared marks and the mark
+	// sets, sorted by line; marks of a line in set order.
 	std::vector<MarkInfo> Marks(size_t firstLine, size_t lastLine);
 	// Unfolds folds hiding the line; returns the line's first row.
 	size_t RevealLine(size_t line);

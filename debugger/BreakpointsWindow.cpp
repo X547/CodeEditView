@@ -147,8 +147,8 @@ void BreakpointsWindow::MessageReceived(BMessage *message)
 		case kMsgRemoveAllBreakpoints:
 			for (const BReference<SourceDocument> &document : DocumentRegistry::Default().All()) {
 				CodeEdit::ModelLock lock(*document->model);
-				document->model->RemoveMarks(CodeEdit::kMarkBreakpoint);
-				document->model->RemoveMarks(CodeEdit::kMarkBreakpointDisabled);
+				document->model->SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpoint);
+				document->model->SharedMarks().RemoveMarks(CodeEdit::kMarkBreakpointDisabled);
 			}
 			break;
 		case kNoticeState:

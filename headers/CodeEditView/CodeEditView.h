@@ -158,8 +158,8 @@ public:
 	// (TextModel::BeginGroup()): undoing them restores this view's selection.
 	CodeEdit::ObserverId EditOwner() const;
 	// Shows another model (nullptr: a new empty one). Settings, theme and
-	// mark styles stay; selection, folds, decorations and the scroll position
-	// start anew.
+	// mark styles stay; selection, folds, decorations, mark and decoration
+	// sets and the scroll position start anew.
 	void SetModel(CodeEdit::TextModel *model);
 
 	const CodeEdit::EditorSettings &Settings() const;
@@ -199,6 +199,15 @@ public:
 
 	// Replaces the host decorations. They follow edits until replaced.
 	void SetDecorations(std::vector<CodeEdit::Decoration> decorations);
+
+	// Sets of the model shown by this view, besides the model's shared marks
+	// (e.g. the execution line of the debug session the view follows). Sets
+	// of another model throw std::invalid_argument. Decoration sets are drawn
+	// in order, below the host decorations.
+	void SetMarkSets(std::vector<BReference<CodeEdit::MarkSet>> sets);
+	std::vector<BReference<CodeEdit::MarkSet>> MarkSets() const;
+	void SetDecorationSets(std::vector<BReference<CodeEdit::DecorationSet>> sets);
+	std::vector<BReference<CodeEdit::DecorationSet>> DecorationSets() const;
 
 	// Vertical geometry of lines in view coordinates. LineTop(line + 1) is
 	// the bottom of the line; hidden (folded) lines have no height, and

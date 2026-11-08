@@ -65,14 +65,14 @@ void ToggleBreakpoint(CodeEdit::TextModel &model, size_t line)
 {
 	CodeEdit::ModelLock lock(model);
 	bool removed = false;
-	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(line, line)) {
 		if (mark.kind == CodeEdit::kMarkBreakpoint || mark.kind == CodeEdit::kMarkBreakpointDisabled) {
-			model.RemoveMark(mark.id);
+			model.SharedMarks().RemoveMark(mark.id);
 			removed = true;
 		}
 	}
 	if (!removed) {
-		model.AddMark(CodeEdit::kMarkBreakpoint, line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
+		model.SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
 	}
 }
 
@@ -80,11 +80,11 @@ void ToggleBreakpoint(CodeEdit::TextModel &model, size_t line)
 void ToggleBreakpointEnabled(CodeEdit::TextModel &model, size_t line)
 {
 	CodeEdit::ModelLock lock(model);
-	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(line, line)) {
 		if (mark.kind == CodeEdit::kMarkBreakpoint) {
-			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpointDisabled);
+			model.SharedMarks().SetMarkKind(mark.id, CodeEdit::kMarkBreakpointDisabled);
 		} else if (mark.kind == CodeEdit::kMarkBreakpointDisabled) {
-			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
+			model.SharedMarks().SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
 		}
 	}
 }

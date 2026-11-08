@@ -382,6 +382,36 @@ void CodeEditView::SetDecorations(std::vector<CodeEdit::Decoration> decorations)
 }
 
 
+void CodeEditView::SetMarkSets(std::vector<BReference<CodeEdit::MarkSet>> sets)
+{
+	fCore->SetMarkSets(std::move(sets));
+	if (Window() != nullptr) {
+		ApplyDirty();
+	}
+}
+
+
+std::vector<BReference<CodeEdit::MarkSet>> CodeEditView::MarkSets() const
+{
+	return fCore->MarkSets();
+}
+
+
+void CodeEditView::SetDecorationSets(std::vector<BReference<CodeEdit::DecorationSet>> sets)
+{
+	fCore->SetDecorationSets(std::move(sets));
+	if (Window() != nullptr) {
+		ApplyDirty();
+	}
+}
+
+
+std::vector<BReference<CodeEdit::DecorationSet>> CodeEditView::DecorationSets() const
+{
+	return fCore->DecorationSets();
+}
+
+
 size_t CodeEditView::LineCount()
 {
 	return fCore->LineCount();

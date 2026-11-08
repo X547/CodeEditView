@@ -207,14 +207,14 @@ void DemoWindow::ToggleMark(size_t line, std::initializer_list<uint32_t> kinds)
 	CodeEdit::TextModel &model = *fDocument->model;
 	CodeEdit::ModelLock lock(model);
 	bool removed = false;
-	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(line, line)) {
 		if (std::find(kinds.begin(), kinds.end(), mark.kind) != kinds.end()) {
-			model.RemoveMark(mark.id);
+			model.SharedMarks().RemoveMark(mark.id);
 			removed = true;
 		}
 	}
 	if (!removed) {
-		model.AddMark(*kinds.begin(), line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
+		model.SharedMarks().AddMark(*kinds.begin(), line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
 	}
 }
 
@@ -223,11 +223,11 @@ void DemoWindow::ToggleBreakpointEnabled(size_t line)
 {
 	CodeEdit::TextModel &model = *fDocument->model;
 	CodeEdit::ModelLock lock(model);
-	for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(line, line)) {
 		if (mark.kind == CodeEdit::kMarkBreakpoint) {
-			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpointDisabled);
+			model.SharedMarks().SetMarkKind(mark.id, CodeEdit::kMarkBreakpointDisabled);
 		} else if (mark.kind == CodeEdit::kMarkBreakpointDisabled) {
-			model.SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
+			model.SharedMarks().SetMarkKind(mark.id, CodeEdit::kMarkBreakpoint);
 		}
 	}
 }
@@ -244,7 +244,7 @@ void DemoWindow::GoToBookmark(bool forward)
 		CodeEdit::TextModel &model = *fDocument->model;
 		CodeEdit::ModelLock lock(model);
 		std::vector<size_t> lines;
-		for (const CodeEdit::MarkInfo &mark : model.Marks(0, model.Text().NewlineCount())) {
+		for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
 			if (mark.kind == CodeEdit::kMarkBookmark) {
 				lines.push_back(mark.line);
 			}
@@ -278,12 +278,12 @@ void DemoWindow::MoveExecLine(bool toBreakpoint)
 		CodeEdit::ModelLock lock(model);
 		const CodeEdit::Rope &text = model.Text();
 		size_t first = 0;
-		if (const std::optional<CodeEdit::MarkInfo> mark = model.FindMark(fDocument->execMark)) {
+		if (const std::optional<CodeEdit::MarkInfo> mark = model.SharedMarks().FindMark(fDocument->execMark)) {
 			first = mark->line + 1;
 		}
 		for (size_t line = first; line <= text.NewlineCount() && !target.has_value(); line++) {
 			if (toBreakpoint) {
-				for (const CodeEdit::MarkInfo &mark : model.Marks(line, line)) {
+				for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(line, line)) {
 					if (mark.kind == CodeEdit::kMarkBreakpoint) {
 						target = line;
 					}
@@ -299,12 +299,12 @@ void DemoWindow::MoveExecLine(bool toBreakpoint)
 			}
 		}
 		if (!target.has_value()) {
-			model.RemoveMark(fDocument->execMark);
+			model.SharedMarks().RemoveMark(fDocument->execMark);
 			fDocument->execMark = 0;
 			return;
 		}
-		if (!model.MoveMark(fDocument->execMark, *target)) {
-			fDocument->execMark = model.AddMark(
+		if (!model.SharedMarks().MoveMark(fDocument->execMark, *target)) {
+			fDocument->execMark = model.SharedMarks().AddMark(
 				CodeEdit::kMarkExecLine, *target, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
 		}
 	}
@@ -318,7 +318,7 @@ void DemoWindow::StopExecution()
 {
 	CodeEdit::TextModel &model = *fDocument->model;
 	CodeEdit::ModelLock lock(model);
-	model.RemoveMark(fDocument->execMark);
+	model.SharedMarks().RemoveMark(fDocument->execMark);
 	fDocument->execMark = 0;
 }
 

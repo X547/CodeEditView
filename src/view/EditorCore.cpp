@@ -1,8 +1,10 @@
 #include "EditorCore.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "WordMotion.h"
+#include "model/DecorationMapping.h"
 #include "syntax/Language.h"
 #include "syntax/Outline.h"
 #include "syntax/SyntaxState.h"
@@ -68,6 +70,7 @@ EditorCore::EditorCore(const BReference<TextModel> &model):
 
 	ModelLock lock(*fModel);
 	fObserver = fModel->AddObserver();
+	fMarkRevisions = MarkRevisions();
 	ResetFromModel();
 }
 
@@ -219,10 +222,8 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		ResetFromModel();
 		return;
 	}
-	if (changes.marksChanged) {
-		// Marks may color line backgrounds.
-		fDirty.marksChanged = true;
-		fDirty.AddAll();
+	if (changes.overlaysChanged) {
+		CheckOverlays();
 	}
 	if (changes.syntaxChanged) {
 		fDirty.AddAll();
@@ -1619,7 +1620,15 @@ std::vector<MarkInfo> EditorCore::Marks(size_t firstLine, size_t lastLine)
 {
 	ModelLock lock(*fModel);
 	Prepare();
-	return fModel->Marks(firstLine, lastLine);
+	std::vector<MarkInfo> marks = fModel->SharedMarks().Marks(firstLine, lastLine);
+	for (const BReference<MarkSet> &set : fMarkSets) {
+		const std::vector<MarkInfo> setMarks = set->Marks(firstLine, lastLine);
+		marks.insert(marks.end(), setMarks.begin(), setMarks.end());
+	}
+	std::stable_sort(marks.begin(), marks.end(), [](const MarkInfo &a, const MarkInfo &b) {
+		return a.line < b.line;
+	});
+	return marks;
 }
 
 
@@ -2068,16 +2077,7 @@ void EditorCore::SetDecorations(std::vector<Decoration> decorations)
 {
 	ModelLock lock(*fModel);
 	Prepare();
-	const size_t length = fModel->Text().Length();
-	for (Decoration &decoration : decorations) {
-		decoration.start = std::min(decoration.start, length);
-		decoration.end = decoration.kind == DecorationKind::GapLine
-			? decoration.start
-			: std::clamp(decoration.end, decoration.start, length);
-	}
-	std::stable_sort(decorations.begin(), decorations.end(), [](const Decoration &a, const Decoration &b) {
-		return a.start < b.start;
-	});
+	NormalizeDecorations(decorations, fModel->Text().Length());
 	if (decorations == fDecorations) {
 		return;
 	}
@@ -2094,20 +2094,81 @@ std::vector<Decoration> EditorCore::Decorations()
 }
 
 
-// Ranges shrink when text is inserted at their edges; gap lines stay before
-// text inserted at them.
 void EditorCore::MapDecorations(const EditRecord &edit)
 {
 	for (Decoration &decoration : fDecorations) {
-		if (decoration.kind == DecorationKind::GapLine) {
-			decoration.start = decoration.end = edit.MapOffset(decoration.start, Gravity::Left);
-			continue;
-		}
-		const size_t start = edit.MapOffset(decoration.start, Gravity::Right);
-		const size_t end = edit.MapOffset(decoration.end, Gravity::Left);
-		decoration.start = start;
-		decoration.end = std::max(start, end);
+		MapDecoration(decoration, edit);
 	}
+}
+
+
+std::vector<uint64_t> EditorCore::MarkRevisions() const
+{
+	std::vector<uint64_t> revisions {fModel->SharedMarks().Revision()};
+	for (const BReference<MarkSet> &set : fMarkSets) {
+		revisions.push_back(set->Revision());
+	}
+	return revisions;
+}
+
+
+std::vector<uint64_t> EditorCore::DecorationRevisions() const
+{
+	std::vector<uint64_t> revisions;
+	for (const BReference<DecorationSet> &set : fDecorationSets) {
+		revisions.push_back(set->Revision());
+	}
+	return revisions;
+}
+
+
+// Repaints if a shown set changed; changes of other sets of the model are
+// ignored.
+void EditorCore::CheckOverlays()
+{
+	std::vector<uint64_t> markRevisions = MarkRevisions();
+	if (markRevisions != fMarkRevisions) {
+		fMarkRevisions = std::move(markRevisions);
+		// Marks are drawn in the gutter and may color line backgrounds.
+		fDirty.marksChanged = true;
+		fDirty.AddAll();
+	}
+	std::vector<uint64_t> decorationRevisions = DecorationRevisions();
+	if (decorationRevisions != fDecorationRevisions) {
+		fDecorationRevisions = std::move(decorationRevisions);
+		fDirty.AddAll();
+	}
+}
+
+
+void EditorCore::SetMarkSets(std::vector<BReference<MarkSet>> sets)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	for (const BReference<MarkSet> &set : sets) {
+		if (set.Get() == nullptr || &set->Model() != fModel.Get()) {
+			throw std::invalid_argument("EditorCore::SetMarkSets: set of another model");
+		}
+	}
+	fMarkSets = std::move(sets);
+	fMarkRevisions = MarkRevisions();
+	fDirty.marksChanged = true;
+	fDirty.AddAll();
+}
+
+
+void EditorCore::SetDecorationSets(std::vector<BReference<DecorationSet>> sets)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	for (const BReference<DecorationSet> &set : sets) {
+		if (set.Get() == nullptr || &set->Model() != fModel.Get()) {
+			throw std::invalid_argument("EditorCore::SetDecorationSets: set of another model");
+		}
+	}
+	fDecorationSets = std::move(sets);
+	fDecorationRevisions = DecorationRevisions();
+	fDirty.AddAll();
 }
 
 
@@ -2116,8 +2177,19 @@ LineDecorations EditorCore::DecorationsOfLines(size_t firstLine, size_t lastLine
 	ModelLock lock(*fModel);
 	Prepare();
 	const Rope &text = fModel->Text();
-	LineDecorations result;
+	std::vector<const Decoration*> decorations;
+	for (const BReference<DecorationSet> &set : fDecorationSets) {
+		for (const Decoration &decoration : set->Decorations()) {
+			decorations.push_back(&decoration);
+		}
+	}
 	for (const Decoration &decoration : fDecorations) {
+		decorations.push_back(&decoration);
+	}
+
+	LineDecorations result;
+	for (const Decoration *item : decorations) {
+		const Decoration &decoration = *item;
 		const size_t startLine = text.LineOfOffset(decoration.start);
 		switch (decoration.kind) {
 			case DecorationKind::LineBackground: {

@@ -87,7 +87,7 @@ TEST_CASE("revealing a folded line and mark changes")
 	core.TakeDirty();
 	{
 		ModelLock lock(*model);
-		model->AddMark(kMarkExecLine, 3);
+		model->SharedMarks().AddMark(kMarkExecLine, 3);
 	}
 	REQUIRE(core.Marks(0, 8).size() == 1);
 	CHECK(core.Marks(0, 8).front().line == 3);

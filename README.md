@@ -27,7 +27,7 @@ window->AddChild(new CodeEditScrollView("scroll", editView));
 CodeEditView *secondView = new CodeEditView("editor2", editView->Model());
 ```
 
-`CodeEdit::TextModel` holds the text, undo history and line marks. Lock it with
+`CodeEdit::TextModel` holds the text, undo history and shared line marks. Lock it with
 `CodeEdit::ModelLock` before calling its methods. `Load()` and `Save()` read and
 write a `BPositionIO`; line endings and a UTF-8 BOM are preserved.
 
@@ -91,8 +91,14 @@ when the outline may have changed and `kMsgCaretMoved` when the caret moved.
 The demo shows the outline in a side panel (View > Outline).
 
 Line marks (bookmarks, breakpoints, an execution line, or host-defined kinds)
-belong to the model (`TextModel::AddMark()`), so all views show them. Each
-view draws them in the gutter and may tint the line background, as set per
+are kept in mark sets attached to the model; they follow edits. The model's
+shared set (`TextModel::SharedMarks().AddMark()`) is shown by all views.
+Other sets (`new CodeEdit::MarkSet(model)`) are shown only by the views given
+them with `CodeEditView::SetMarkSets()`, e.g. the execution line of one
+debug session among several. Likewise, a `CodeEdit::DecorationSet` holds
+decorations of the model shared by the views given it
+(`SetDecorationSets()`), e.g. the coverage of one profile. Each
+view draws marks in the gutter and may tint the line background, as set per
 kind by `CodeEditView::SetMarkStyle()`. Clicking the gutter outside the fold
 markers sends `kMsgGutterClicked` with the line to the target;
 `RevealLine()` scrolls to a line without moving the caret. The demo's Marks

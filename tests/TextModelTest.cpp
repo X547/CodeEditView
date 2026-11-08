@@ -99,7 +99,7 @@ static std::string Text(TextModel &model)
 static size_t MarkLine(TextModel &model, MarkId id)
 {
 	ModelLock lock(model);
-	const std::optional<MarkInfo> info = model.FindMark(id);
+	const std::optional<MarkInfo> info = model.SharedMarks().FindMark(id);
 	REQUIRE(info.has_value());
 	return info->line;
 }
@@ -108,7 +108,7 @@ static size_t MarkLine(TextModel &model, MarkId id)
 static bool HasMark(TextModel &model, MarkId id)
 {
 	ModelLock lock(model);
-	return model.FindMark(id).has_value();
+	return model.SharedMarks().FindMark(id).has_value();
 }
 
 
@@ -386,9 +386,9 @@ TEST_CASE("marks follow their lines")
 	auto reset = [&](MarkDeletePolicy policy) {
 		ModelLock lock(model);
 		model.SetText("l0\nl1\nl2\nl3\nl4\n");
-		model.RemoveMarks(kMarkBookmark);
-		mark2 = model.AddMark(kMarkBookmark, 2, 0, policy);
-		mark3 = model.AddMark(kMarkBookmark, 3, 0, policy);
+		model.SharedMarks().RemoveMarks(kMarkBookmark);
+		mark2 = model.SharedMarks().AddMark(kMarkBookmark, 2, 0, policy);
+		mark3 = model.SharedMarks().AddMark(kMarkBookmark, 3, 0, policy);
 	};
 	auto lineStart = [&](size_t line) {
 		ModelLock lock(model);
@@ -459,19 +459,19 @@ TEST_CASE("marks follow their lines")
 	SECTION("queries and removal") {
 		reset(MarkDeletePolicy::Remove);
 		ModelLock lock(model);
-		const MarkId exec = model.AddMark(kMarkExecLine, 1);
-		CHECK(model.Marks(0, 10).size() == 3);
-		CHECK(model.Marks(2, 2).size() == 1);
-		CHECK(model.Marks(1, 2).front().id == exec);
-		model.RemoveMarks(kMarkExecLine);
-		CHECK(model.Marks(0, 10).size() == 2);
-		CHECK(model.MoveMark(mark2, 0));
-		CHECK(model.FindMark(mark2)->line == 0);
-		CHECK(model.RemoveMark(mark2));
-		CHECK_FALSE(model.RemoveMark(mark2));
-		CHECK(model.SetMarkKind(mark3, kMarkBreakpointDisabled));
-		CHECK(model.FindMark(mark3)->kind == kMarkBreakpointDisabled);
-		CHECK_FALSE(model.SetMarkKind(mark2, kMarkBreakpoint));
+		const MarkId exec = model.SharedMarks().AddMark(kMarkExecLine, 1);
+		CHECK(model.SharedMarks().Marks(0, 10).size() == 3);
+		CHECK(model.SharedMarks().Marks(2, 2).size() == 1);
+		CHECK(model.SharedMarks().Marks(1, 2).front().id == exec);
+		model.SharedMarks().RemoveMarks(kMarkExecLine);
+		CHECK(model.SharedMarks().Marks(0, 10).size() == 2);
+		CHECK(model.SharedMarks().MoveMark(mark2, 0));
+		CHECK(model.SharedMarks().FindMark(mark2)->line == 0);
+		CHECK(model.SharedMarks().RemoveMark(mark2));
+		CHECK_FALSE(model.SharedMarks().RemoveMark(mark2));
+		CHECK(model.SharedMarks().SetMarkKind(mark3, kMarkBreakpointDisabled));
+		CHECK(model.SharedMarks().FindMark(mark3)->kind == kMarkBreakpointDisabled);
+		CHECK_FALSE(model.SharedMarks().SetMarkKind(mark2, kMarkBreakpoint));
 	}
 }
 
@@ -485,13 +485,111 @@ TEST_CASE("mark changes are reported to observers")
 		ModelLock lock(model);
 		model.SetText("a\nb\n");
 		id = model.AddObserver(counter.Messenger());
-		model.AddMark(kMarkBreakpoint, 1);
+		model.SharedMarks().AddMark(kMarkBreakpoint, 1);
 	}
 	REQUIRE(counter->Wait(kDeliveryTimeout));
 	ModelLock lock(model);
 	const ModelChanges changes = model.Sync(id);
-	CHECK(changes.marksChanged);
+	CHECK(changes.overlaysChanged);
 	CHECK(changes.edits.empty());
+}
+
+
+TEST_CASE("mark sets are independent and follow edits")
+{
+	TextModel model;
+	BReference<MarkSet> session(new MarkSet(model), true);
+	ModelLock lock(model);
+	model.SetText("l0\nl1\nl2\nl3\n");
+	const ObserverId observer = model.AddObserver();
+	MarkSet &shared = model.SharedMarks();
+	const MarkId bookmark = shared.AddMark(kMarkBookmark, 2);
+	const MarkId exec = session->AddMark(kMarkExecLine, 2);
+	const MarkId removed = session->AddMark(kMarkExecLine, 1);
+	CHECK(&session->Model() == &model);
+	CHECK(shared.Marks(0, 3).size() == 1);
+	CHECK(session->Marks(0, 3).size() == 2);
+
+	// Ids are per set.
+	CHECK(exec == bookmark);
+	CHECK(session->RemoveMark(removed));
+	CHECK(shared.Marks(0, 3).size() == 1);
+
+	model.Sync(observer);
+	const uint64_t sharedRevision = shared.Revision();
+	const uint64_t sessionRevision = session->Revision();
+	model.Insert(0, "x\n");
+	CHECK(shared.FindMark(bookmark)->line == 3);
+	CHECK(session->FindMark(exec)->line == 3);
+	// Moving with the text is not a change of the set.
+	CHECK(shared.Revision() == sharedRevision);
+	CHECK(session->Revision() == sessionRevision);
+	CHECK_FALSE(model.Sync(observer).overlaysChanged);
+
+	session->Clear();
+	CHECK(session->Revision() != sessionRevision);
+	CHECK(shared.Revision() == sharedRevision);
+	CHECK(model.Sync(observer).overlaysChanged);
+
+	// Deleting the line removes the marks of every set.
+	session->AddMark(kMarkExecLine, 3);
+	model.Erase(model.Text().LineStart(3), 3);
+	CHECK(shared.Marks(0, 4).empty());
+	CHECK(session->Marks(0, 4).empty());
+
+	session->AddMark(kMarkExecLine, 1);
+	model.SetText("a\nb\nc");
+	CHECK(session->Marks(1, 1).size() == 1);
+
+	model.Sync(observer);
+	session.Unset();
+	CHECK(model.Sync(observer).overlaysChanged);
+}
+
+
+TEST_CASE("decoration sets follow edits and text resets")
+{
+	TextModel model;
+	BReference<DecorationSet> set(new DecorationSet(model), true);
+	ModelLock lock(model);
+	// Lines: 0 "aa", 1 "bbbb", 2 "cc".
+	model.SetText("aa\nbbbb\ncc");
+	const ObserverId observer = model.AddObserver();
+	const rgb_color color {1, 2, 3, 100};
+	set->SetDecorations({
+		{DecorationKind::RangeBackground, 5, 7, color},
+		{DecorationKind::LineBackground, 0, 100, color},
+		{DecorationKind::GapLine, 8, 0, color},
+	});
+	CHECK(model.Sync(observer).overlaysChanged);
+	const uint64_t revision = set->Revision();
+
+	// Sorted and clamped.
+	std::vector<Decoration> decorations = set->Decorations();
+	REQUIRE(decorations.size() == 3);
+	CHECK(decorations[0].kind == DecorationKind::LineBackground);
+	CHECK(decorations[0].end == 10);
+	CHECK(decorations[2].end == 8);
+
+	model.Insert(0, "x\n");
+	decorations = set->Decorations();
+	CHECK(decorations[1].start == 7);
+	CHECK(decorations[1].end == 9);
+	CHECK(decorations[2].start == 10);
+	CHECK(set->Revision() == revision);
+	CHECK_FALSE(model.Sync(observer).overlaysChanged);
+
+	// Lines and columns stay, clamped to the new lines.
+	model.SetText("x\naa\nbbb\ncc");
+	decorations = set->Decorations();
+	CHECK(decorations[1].start == 7);
+	CHECK(decorations[1].end == 8);
+	CHECK(decorations[2].start == 9);
+
+	set->SetDecorations(set->Decorations());
+	CHECK(set->Revision() == revision);
+	set->SetDecorations({});
+	CHECK(set->Revision() != revision);
 }
 
 

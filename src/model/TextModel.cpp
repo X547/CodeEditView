@@ -83,6 +83,7 @@ TextModel::TextModel():
 	fLock("TextModel"),
 	fUndo(std::make_unique<UndoStack>())
 {
+	fSharedMarks.reset(new MarkSet(*this, true));
 }
 
 
@@ -91,6 +92,9 @@ TextModel::TextModel():
 TextModel::~TextModel()
 {
 	fLock.Lock();
+	fSharedMarks.reset();
+	// Other sets hold a reference to the model.
+	Assert(fMarkSets.empty() && fDecorationSets.empty(), "TextModel destroyed with attached sets");
 	fSyntax.reset();
 	const std::vector<thread_id> workers = std::move(fRetiredWorkers);
 	fLock.Unlock();
@@ -199,9 +203,21 @@ EditRecord TextModel::ApplyTextEdit(size_t offset, size_t length, std::string_vi
 
 EditRecord TextModel::ApplyEdit(size_t offset, size_t length, std::string_view text, std::string &removed)
 {
-	const std::vector<MarkId> deletedLineMarks = WholeLineDeletedMarks(offset, length);
+	// Whole deleted lines are known only before the edit.
+	std::vector<std::vector<MarkId>> deletedLineMarks;
+	deletedLineMarks.reserve(fMarkSets.size());
+	for (const MarkSet *set : fMarkSets) {
+		deletedLineMarks.push_back(set->WholeLineDeletedMarks(fText, offset, length));
+	}
+
 	const EditRecord edit = ApplyTextEdit(offset, length, text, removed);
-	UpdateMarks(edit, deletedLineMarks);
+
+	for (size_t i = 0; i < fMarkSets.size(); i++) {
+		fMarkSets[i]->ApplyEdit(fText, edit, deletedLineMarks[i]);
+	}
+	for (DecorationSet *set : fDecorationSets) {
+		set->ApplyEdit(edit);
+	}
 	return edit;
 }
 
@@ -268,24 +284,32 @@ void TextModel::SetText(std::string_view text)
 }
 
 
-// Replaces the whole text without undo; marks keep their line numbers.
+// Replaces the whole text without undo; marks keep their line numbers and
+// decorations their lines and columns (clamped).
 void TextModel::ResetText(std::string_view text)
 {
 	if (fGroupDepth > 0) {
 		throw std::logic_error("TextModel: text reset inside an edit group");
 	}
 
-	std::vector<std::pair<Mark*, size_t>> markLines;
-	for (auto &[id, mark] : fMarks) {
-		markLines.emplace_back(&mark, fText.LineOfOffset(mark.anchor));
+	std::vector<std::vector<size_t>> markLines;
+	for (const MarkSet *set : fMarkSets) {
+		markLines.push_back(set->Lines(fText));
+	}
+	std::vector<std::vector<std::pair<TextPoint, TextPoint>>> decorationPoints;
+	for (const DecorationSet *set : fDecorationSets) {
+		decorationPoints.push_back(set->Points(fText));
 	}
 
 	const std::string newText(text);
 	std::string removed;
 	ApplyTextEdit(0, fText.Length(), newText, removed);
 
-	for (const auto &[mark, line] : markLines) {
-		mark->anchor = fText.LineStart(std::min(line, fText.NewlineCount()));
+	for (size_t i = 0; i < fMarkSets.size(); i++) {
+		fMarkSets[i]->RestoreLines(fText, markLines[i]);
+	}
+	for (size_t i = 0; i < fDecorationSets.size(); i++) {
+		fDecorationSets[i]->RestorePoints(fText, decorationPoints[i]);
 	}
 	fUndo->Clear();
 }
@@ -378,7 +402,7 @@ ObserverId TextModel::AddObserver()
 	const ObserverId id = fNextObserverId++;
 	Observer &observer = fObservers[id];
 	observer.revision = fRevision;
-	observer.marksRevision = fMarksRevision;
+	observer.overlaysRevision = fOverlaysRevision;
 	observer.syntaxRevision = fSyntaxRevision;
 	return id;
 }
@@ -437,7 +461,7 @@ ModelChanges TextModel::Sync(ObserverId id)
 
 	ModelChanges changes;
 	changes.revision = fRevision;
-	changes.marksChanged = observer.marksRevision != fMarksRevision;
+	changes.overlaysChanged = observer.overlaysRevision != fOverlaysRevision;
 	changes.syntaxChanged = observer.syntaxRevision != fSyntaxRevision;
 	if (observer.revision != fRevision) {
 		if (fLog.empty() || fLog.front().revision > observer.revision + 1) {
@@ -452,7 +476,7 @@ ModelChanges TextModel::Sync(ObserverId id)
 	}
 
 	observer.revision = fRevision;
-	observer.marksRevision = fMarksRevision;
+	observer.overlaysRevision = fOverlaysRevision;
 	observer.syntaxRevision = fSyntaxRevision;
 	observer.pending = false;
 	TrimLog();
@@ -481,7 +505,7 @@ std::vector<TextModel::Notification> TextModel::CollectNotifications()
 		if (!observer.notify || observer.pending) {
 			continue;
 		}
-		if (observer.revision == fRevision && observer.marksRevision == fMarksRevision
+		if (observer.revision == fRevision && observer.overlaysRevision == fOverlaysRevision
 			&& observer.syntaxRevision == fSyntaxRevision) {
 			continue;
 		}
@@ -492,157 +516,17 @@ std::vector<TextModel::Notification> TextModel::CollectNotifications()
 }
 
 
-//#pragma mark - Marks
+//#pragma mark - Overlays
 
-// Marks whose line, including its newline, lies completely inside the range
-// about to be removed.
-std::vector<MarkId> TextModel::WholeLineDeletedMarks(size_t offset, size_t length) const
+MarkSet &TextModel::SharedMarks() const
 {
-	std::vector<MarkId> result;
-	if (length == 0) {
-		return result;
-	}
-	for (const auto &[id, mark] : fMarks) {
-		if (mark.anchor < offset || mark.anchor >= offset + length) {
-			continue;
-		}
-		const size_t line = fText.LineOfOffset(mark.anchor);
-		const size_t lineEnd = line < fText.NewlineCount() ? fText.LineStart(line + 1) : fText.Length();
-		if (lineEnd > mark.anchor && offset + length >= lineEnd) {
-			result.push_back(id);
-		}
-	}
-	return result;
+	return *fSharedMarks;
 }
 
 
-static bool IsLineStart(const Rope &text, size_t offset)
+void TextModel::OverlaysChanged()
 {
-	return offset == 0 || text.ByteAt(offset - 1) == '\n';
-}
-
-
-void TextModel::UpdateMarks(const EditRecord &edit, const std::vector<MarkId> &deletedLineMarks)
-{
-	bool removed = false;
-	for (auto it = fMarks.begin(); it != fMarks.end();) {
-		Mark &mark = it->second;
-		const size_t mapped = edit.MapOffset(mark.anchor, Gravity::Right);
-
-		bool lineDeleted = std::find(deletedLineMarks.begin(), deletedLineMarks.end(), it->first)
-			!= deletedLineMarks.end();
-		if (!lineDeleted && edit.oldLength > 0 && mark.anchor > edit.offset && mark.anchor <= edit.OldEnd()) {
-			// The newline before the mark was deleted: joined into another line.
-			lineDeleted = !IsLineStart(fText, mapped);
-		}
-
-		if (lineDeleted) {
-			if (mark.policy == MarkDeletePolicy::Remove) {
-				it = fMarks.erase(it);
-				removed = true;
-				continue;
-			}
-			mark.anchor = edit.offset;
-		} else {
-			mark.anchor = mapped;
-		}
-		mark.anchor = fText.LineStart(fText.LineOfOffset(mark.anchor));
-		++it;
-	}
-	if (removed) {
-		fMarksRevision++;
-	}
-}
-
-
-MarkId TextModel::AddMark(uint32_t kind, size_t line, int64_t data, MarkDeletePolicy policy)
-{
-	AssertLocked();
-	const size_t anchor = fText.LineStart(line);
-	const MarkId id = fNextMarkId++;
-	fMarks[id] = {kind, anchor, data, policy};
-	fMarksRevision++;
-	return id;
-}
-
-
-bool TextModel::RemoveMark(MarkId id)
-{
-	AssertLocked();
-	if (fMarks.erase(id) == 0) {
-		return false;
-	}
-	fMarksRevision++;
-	return true;
-}
-
-
-void TextModel::RemoveMarks(uint32_t kind)
-{
-	AssertLocked();
-	const size_t count = std::erase_if(fMarks, [kind](const auto &item) {
-		return item.second.kind == kind;
-	});
-	if (count > 0) {
-		fMarksRevision++;
-	}
-}
-
-
-bool TextModel::MoveMark(MarkId id, size_t line)
-{
-	AssertLocked();
-	const auto it = fMarks.find(id);
-	if (it == fMarks.end()) {
-		return false;
-	}
-	it->second.anchor = fText.LineStart(line);
-	fMarksRevision++;
-	return true;
-}
-
-
-bool TextModel::SetMarkKind(MarkId id, uint32_t kind)
-{
-	AssertLocked();
-	const auto it = fMarks.find(id);
-	if (it == fMarks.end()) {
-		return false;
-	}
-	if (it->second.kind != kind) {
-		it->second.kind = kind;
-		fMarksRevision++;
-	}
-	return true;
-}
-
-
-std::optional<MarkInfo> TextModel::FindMark(MarkId id) const
-{
-	AssertLocked();
-	const auto it = fMarks.find(id);
-	if (it == fMarks.end()) {
-		return std::nullopt;
-	}
-	const Mark &mark = it->second;
-	return MarkInfo {id, mark.kind, fText.LineOfOffset(mark.anchor), mark.data};
-}
-
-
-std::vector<MarkInfo> TextModel::Marks(size_t firstLine, size_t lastLine) const
-{
-	AssertLocked();
-	std::vector<MarkInfo> result;
-	for (const auto &[id, mark] : fMarks) {
-		const size_t line = fText.LineOfOffset(mark.anchor);
-		if (line >= firstLine && line <= lastLine) {
-			result.push_back({id, mark.kind, line, mark.data});
-		}
-	}
-	std::sort(result.begin(), result.end(), [](const MarkInfo &a, const MarkInfo &b) {
-		return a.line != b.line ? a.line < b.line : a.id < b.id;
-	});
-	return result;
+	fOverlaysRevision++;
 }
 
 

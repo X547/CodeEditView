@@ -1,7 +1,9 @@
 #include <stdint.h>
 
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -645,6 +647,73 @@ TEST_CASE("decorations follow edits")
 	CHECK(lines.lineBackgrounds[0].first == 2);
 	CHECK(lines.gaps[0].line == 4);
 	CHECK_FALSE(lines.gaps[0].bottom);
+}
+
+
+TEST_CASE("views show the mark and decoration sets given them")
+{
+	// Lines: 0 "aa", 1 "bb", 2 "cc", 3 "dd".
+	BReference<TextModel> model = MakeModel("aa\nbb\ncc\ndd");
+	BReference<MarkSet> session(new MarkSet(*model), true);
+	BReference<DecorationSet> coverage(new DecorationSet(*model), true);
+	EditorCore shown(model);
+	EditorCore other(model);
+	shown.SetMarkSets({session});
+	shown.SetDecorationSets({coverage});
+	CHECK(shown.TakeDirty().marksChanged);
+	other.TakeDirty();
+
+	const rgb_color red {255, 0, 0, 100};
+	const rgb_color blue {0, 0, 255, 100};
+	{
+		ModelLock lock(*model);
+		model->SharedMarks().AddMark(kMarkBreakpoint, 2);
+		session->AddMark(kMarkExecLine, 2);
+		session->AddMark(kMarkExecLine, 0);
+		coverage->SetDecorations({{DecorationKind::LineBackground, 3, 3, red}});
+	}
+	const std::vector<MarkInfo> marks = shown.Marks(0, 3);
+	REQUIRE(marks.size() == 3);
+	CHECK(marks[0].line == 0);
+	// The shared marks first.
+	CHECK(marks[1].kind == kMarkBreakpoint);
+	CHECK(marks[2].kind == kMarkExecLine);
+	REQUIRE(other.Marks(0, 3).size() == 1);
+	CHECK(shown.TakeDirty().marksChanged);
+	CHECK(other.TakeDirty().marksChanged);
+
+	// Host decorations are drawn over the sets.
+	shown.SetDecorations({{DecorationKind::LineBackground, 3, 3, blue}});
+	const LineDecorations lines = shown.DecorationsOfLines(0, 3);
+	REQUIRE(lines.lineBackgrounds.size() == 2);
+	CHECK(lines.lineBackgrounds[0].second == red);
+	CHECK(lines.lineBackgrounds[1].second == blue);
+	CHECK(other.DecorationsOfLines(0, 3).lineBackgrounds.empty());
+
+	// Changes of sets a view does not show do not repaint it.
+	shown.TakeDirty();
+	{
+		ModelLock lock(*model);
+		session->RemoveMarks(kMarkExecLine);
+	}
+	shown.Sync();
+	other.Sync();
+	CHECK(shown.TakeDirty().marksChanged);
+	const DirtyRows dirty = other.TakeDirty();
+	CHECK_FALSE(dirty.marksChanged);
+	CHECK(dirty.IsEmpty());
+	{
+		ModelLock lock(*model);
+		coverage->SetDecorations({});
+	}
+	shown.Sync();
+	other.Sync();
+	CHECK_FALSE(shown.TakeDirty().IsEmpty());
+	CHECK(other.TakeDirty().IsEmpty());
+
+	BReference<TextModel> otherModel = MakeModel("x");
+	BReference<MarkSet> foreign(new MarkSet(*otherModel), true);
+	CHECK_THROWS_AS(shown.SetMarkSets({foreign}), std::invalid_argument);
 }
 
 

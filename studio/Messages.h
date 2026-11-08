@@ -19,6 +19,17 @@ constexpr uint32 kMsgCloseSession = 'CScs';
 constexpr uint32 kMsgSessionClosed = 'CSsc';
 // "session" (int32): shows the session's control window.
 constexpr uint32 kMsgShowSessionControl = 'CSsC';
+// "coverage" (int32), "locator" (string): shows the document in a window
+// following the coverage run.
+constexpr uint32 kMsgShowCoverageSource = 'CScS';
+// "coverage" (int32): to the application, from the run's summary window;
+// to the source windows after the run closed.
+constexpr uint32 kMsgCloseCoverage = 'CScc';
+constexpr uint32 kMsgCoverageClosed = 'CSCc';
+// "coverage" (int32): shows the run's summary window.
+constexpr uint32 kMsgShowCoverageSummary = 'CSCs';
+// Asks for a binary and a profile to open a coverage run.
+constexpr uint32 kMsgShowOpenCoverage = 'CSoc';
 // "directory" (string, optional): where the dialog starts.
 constexpr uint32 kMsgShowOpenFile = 'CSof';
 constexpr uint32 kMsgShowOpenGit = 'CSog';

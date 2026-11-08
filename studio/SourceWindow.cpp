@@ -6,6 +6,7 @@
 
 #include <Alert.h>
 #include <Application.h>
+#include <Beep.h>
 #include <Entry.h>
 #include <FilePanel.h>
 #include <LayoutBuilder.h>
@@ -22,6 +23,9 @@
 #include <CodeEditView/EditorCommands.h>
 
 #include "Common.h"
+#include "Coverage.h"
+#include "CoverageMessages.h"
+#include "CoverageRun.h"
 #include "FindCommands.h"
 #include "Messages.h"
 #include "Protocol.h"
@@ -48,6 +52,9 @@ static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
 static constexpr uint32 kMsgFollowSession = 'SWfs';
+static constexpr uint32 kMsgFollowCoverage = 'SWfc';
+static constexpr uint32 kMsgNextUncovered = 'SWnu';
+static constexpr uint32 kMsgPreviousUncovered = 'SWpu';
 static constexpr uint32 kMsgNewSession = 'SWns';
 static constexpr uint32 kMsgToggleBreakpoint = 'SWtb';
 static constexpr uint32 kMsgToggleBreakpointEnabled = 'SWte';
@@ -77,7 +84,7 @@ static void ShowError(const std::string &text)
 }
 
 
-SourceWindow::SourceWindow(Document *document, BRect frame, int32 session):
+SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32 coverage):
 	BWindow(frame, "CodeEdit", B_DOCUMENT_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
 	fDocument(document),
 	fEditView(new CodeEditView("editor", document->Model())),
@@ -134,6 +141,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session):
 	FindKit::AddFindItems(searchMenu);
 	// Before the Window menu.
 	menuBar->AddItem(CreateDebugMenu(), menuBar->CountItems() - 1);
+	menuBar->AddItem(CreateCoverageMenu(), menuBar->CountItems() - 1);
 	menuBar->FindItem("Quit")->SetTarget(be_app);
 
 	fOutline = new OutlineView();
@@ -156,7 +164,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session):
 	fOutlineItem->SetMarked(true);
 
 	StudioApp::Get().Registry().AddListener(BMessenger(this));
-	FollowSession(session);
+	Follow(session, coverage);
 	UpdateTitle();
 	UpdateStatus();
 	ScheduleOutlineRefresh();
@@ -239,24 +247,149 @@ void SourceWindow::UpdateDebugMenu()
 }
 
 
-// Shows the marks of the session (none: 0) beside the shared ones.
-void SourceWindow::FollowSession(int32 session)
+BMenu *SourceWindow::CreateCoverageMenu()
+{
+	fCoverageMenu = new BMenu("Coverage");
+	fCoverageRunMenu = new BMenu("Run");
+	fCoverageMenu->AddItem(fCoverageRunMenu);
+	fCoverageMenu->AddItem(new BMenuItem("Coverage files", new BMessage(kMsgShowCoverageSummary)));
+	fCoverageMenu->AddSeparatorItem();
+	fCoverageMenu->AddItem(new BMenuItem("Next uncovered line", new BMessage(kMsgNextUncovered), 'J'));
+	fCoverageMenu->AddItem(new BMenuItem("Previous uncovered line", new BMessage(kMsgPreviousUncovered), 'J',
+		B_SHIFT_KEY));
+	UpdateCoverageMenu();
+	return fCoverageMenu;
+}
+
+
+// The runs to follow, and the commands enabled with a run.
+void SourceWindow::UpdateCoverageMenu()
+{
+	while (BMenuItem *item = fCoverageRunMenu->RemoveItem(static_cast<int32>(0))) {
+		delete item;
+	}
+	BMessage *none = new BMessage(kMsgFollowCoverage);
+	none->AddInt32("coverage", 0);
+	BMenuItem *noneItem = new BMenuItem("None", none);
+	noneItem->SetMarked(fCoverage == 0);
+	fCoverageRunMenu->AddItem(noneItem);
+	for (const CoverageInfo &coverage : StudioApp::Get().Coverages()) {
+		BMessage *follow = new BMessage(kMsgFollowCoverage);
+		follow->AddInt32("coverage", coverage.id);
+		BMenuItem *item = new BMenuItem(coverage.name.c_str(), follow);
+		item->SetMarked(coverage.id == fCoverage);
+		fCoverageRunMenu->AddItem(item);
+	}
+	fCoverageRunMenu->AddSeparatorItem();
+	fCoverageRunMenu->AddItem(new BMenuItem("Open coverage" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenCoverage)));
+	fCoverageRunMenu->SetTargetForItems(this);
+
+	const bool following = fCoverage != 0;
+	for (int32 i = 0; BMenuItem *item = fCoverageMenu->ItemAt(i); i++) {
+		if (item->Submenu() == nullptr) {
+			item->SetEnabled(following);
+		}
+	}
+}
+
+
+// Shows the marks of the session and the coverage of the run (none: 0)
+// beside the shared marks.
+void SourceWindow::Follow(int32 session, int32 coverage)
 {
 	StudioApp &app = StudioApp::Get();
+	const Locator &locator = fDocument->GetLocator();
 	BReference<CodeEdit::MarkSet> marks;
 	if (session != 0) {
 		marks = app.SessionMarks(session, fDocument->Model());
 	}
 	fSession = marks.Get() != nullptr ? session : 0;
-	std::vector<BReference<CodeEdit::MarkSet>> sets;
+	std::vector<BReference<CodeEdit::MarkSet>> markSets;
 	if (marks.Get() != nullptr) {
-		sets.push_back(marks);
+		markSets.push_back(marks);
 	}
-	fEditView->SetMarkSets(sets);
-	app.WindowShows(BMessenger(this), fDocument->GetLocator(), fSession);
+	fEditView->SetMarkSets(markSets);
+
+	if (fCoverage != 0) {
+		app.WatchCoverage(fCoverage, BMessenger(this), false);
+	}
+	// A run without a path for the document is followed all the same, so
+	// its status tells; a run that is gone is not.
+	fCoverage = 0;
+	for (const CoverageInfo &info : app.Coverages()) {
+		if (info.id == coverage) {
+			fCoverage = coverage;
+		}
+	}
+	fCoverageSet.Unset();
+	if (fCoverage != 0) {
+		fCoverageSet = app.CoverageDecorations(fCoverage, locator, fDocument->Model());
+		app.WatchCoverage(fCoverage, BMessenger(this), true);
+	}
+	std::vector<BReference<CodeEdit::DecorationSet>> decorationSets;
+	if (fCoverageSet.Get() != nullptr) {
+		decorationSets.push_back(fCoverageSet);
+	}
+	fEditView->SetDecorationSets(decorationSets);
+
+	app.WindowShows(BMessenger(this), locator, fSession, fCoverage);
 	// Shortcuts of disabled items do nothing.
 	UpdateDebugMenu();
+	UpdateCoverageMenu();
 	UpdateStatus();
+}
+
+
+// Moves the caret to the first line of the next or previous run of lines
+// the coverage shows as not executed.
+void SourceWindow::GoToUncovered(bool forward)
+{
+	if (fCoverageSet.Get() == nullptr) {
+		beep();
+		return;
+	}
+	const rgb_color uncovered = Coverage::DefaultColors().uncovered;
+	const size_t caretLine = fEditView->CaretLocation().line;
+	std::optional<size_t> target;
+	{
+		CodeEdit::TextModel &model = *fDocument->Model();
+		CodeEdit::ModelLock lock(model);
+		const CodeEdit::Rope &text = model.Text();
+		std::vector<bool> lines(text.LineCount());
+		for (const CodeEdit::Decoration &decoration : fCoverageSet->Decorations()) {
+			if (decoration.kind != CodeEdit::DecorationKind::LineBackground || decoration.color != uncovered) {
+				continue;
+			}
+			const size_t first = text.LineOfOffset(decoration.start);
+			const size_t last = decoration.end > decoration.start ? text.LineOfOffset(decoration.end - 1) : first;
+			for (size_t line = first; line <= last && line < lines.size(); line++) {
+				lines[line] = true;
+			}
+		}
+		const auto isRunStart = [&lines](size_t line) {
+			return lines[line] && (line == 0 || !lines[line - 1]);
+		};
+		if (forward) {
+			for (size_t line = caretLine + 1; line < lines.size() && !target.has_value(); line++) {
+				if (isRunStart(line)) {
+					target = text.LineStart(line);
+				}
+			}
+		} else {
+			for (size_t line = std::min(caretLine, lines.size()); line-- > 0 && !target.has_value();) {
+				if (isRunStart(line)) {
+					target = text.LineStart(line);
+				}
+			}
+		}
+	}
+	if (!target.has_value()) {
+		beep();
+		return;
+	}
+	fEditView->SetSelection({*target, *target});
+	fEditView->ScrollToSelection();
+	fEditView->MakeFocus(true);
 }
 
 
@@ -371,10 +504,14 @@ void SourceWindow::UpdateStatus()
 	} else {
 		text = locator.ToString();
 	}
+	if (fCoverage != 0) {
+		text = StudioApp::Get().CoverageStatus(fCoverage, locator) + " \xe2\x80\x94 " + text;
+	}
 	if (fSession != 0) {
 		text = "Session " + std::to_string(fSession) + " \xe2\x80\x94 " + text;
 	}
 	fStatus->SetText(text.c_str());
+	fStatus->SetToolTip(text.c_str());
 
 	CodeEdit::EditorSettings settings = fEditView->Settings();
 	const bool readOnly = fDocument->IsReadOnly() || status.state != DocumentState::Ready;
@@ -468,7 +605,7 @@ void SourceWindow::SaveAs(BMessage *message)
 	}
 	fDocument = document;
 	fEditView->SetModel(fDocument->Model());
-	FollowSession(fSession);
+	Follow(fSession, fCoverage);
 	UpdateTitle();
 	UpdateStatus();
 	ScheduleOutlineRefresh();
@@ -557,14 +694,23 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgReload:
 			Reload();
 			break;
-		case kMsgNewView:
-			StudioApp::Get().ShowDocument(fDocument->GetLocator(), this, true, fSession);
+		case kMsgNewView: {
+			ShowOptions options;
+			options.newView = true;
+			options.session = fSession;
+			options.coverage = fCoverage;
+			StudioApp::Get().ShowDocument(fDocument->GetLocator(), this, options);
 			break;
+		}
 		case kMsgOpenLocator: {
 			const std::optional<Locator> locator = Locator::Parse(message->GetString("locator", ""));
 			if (locator.has_value()) {
-				StudioApp::Get().ShowDocument(*locator, this, message->GetBool("newView", false),
-					message->GetInt32("session", 0), message->GetInt32("line", 0));
+				ShowOptions options;
+				options.newView = message->GetBool("newView", false);
+				options.session = message->GetInt32("session", 0);
+				options.coverage = message->GetInt32("coverage", 0);
+				options.line = message->GetInt32("line", 0);
+				StudioApp::Get().ShowDocument(*locator, this, options);
 			}
 			break;
 		}
@@ -572,15 +718,39 @@ void SourceWindow::MessageReceived(BMessage *message)
 			Reveal(message->GetInt32("line", 0));
 			break;
 		case kMsgFollowSession:
-			FollowSession(message->GetInt32("session", 0));
+			Follow(message->GetInt32("session", 0), fCoverage);
 			break;
 		case kMsgNewSession:
-			FollowSession(StudioApp::Get().NewSession());
+			Follow(StudioApp::Get().NewSession(), fCoverage);
 			break;
 		case kMsgSessionClosed:
 			if (message->GetInt32("session", 0) == fSession) {
-				FollowSession(0);
+				Follow(0, fCoverage);
 			}
+			break;
+		case kMsgFollowCoverage:
+			Follow(fSession, message->GetInt32("coverage", 0));
+			break;
+		case kMsgCoverageClosed:
+			if (message->GetInt32("coverage", 0) == fCoverage) {
+				Follow(fSession, 0);
+			}
+			break;
+		case kNoticeCoverageChanged:
+			UpdateStatus();
+			break;
+		case kMsgShowCoverageSummary: {
+			BMessage forward(kMsgShowCoverageSummary);
+			forward.AddInt32("coverage", fCoverage);
+			be_app->PostMessage(&forward);
+			break;
+		}
+		case kMsgShowOpenCoverage:
+			be_app->PostMessage(kMsgShowOpenCoverage);
+			break;
+		case kMsgNextUncovered:
+		case kMsgPreviousUncovered:
+			GoToUncovered(message->what == kMsgNextUncovered);
 			break;
 		case kMsgShowSessionControl:
 		case Debugger::kMsgShowToolWindow: {
@@ -663,6 +833,7 @@ void SourceWindow::MenusBeginning()
 	menuBar->FindItem(kMsgReload)->SetEnabled(!status.saving && status.state != DocumentState::Loading);
 	menuBar->FindItem(kMsgToggleStacking)->SetMarked(StudioApp::Get().Stacking());
 	UpdateDebugMenu();
+	UpdateCoverageMenu();
 	BWindow::MenusBeginning();
 }
 

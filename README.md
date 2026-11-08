@@ -221,6 +221,15 @@ session stops, the line is shown in a window following it, opened in the
 stack of one if needed. Run control: Cmd+R continue, Cmd+P pause, Cmd+N
 step over, Cmd+I step into, Cmd+Shift+I step out.
 
+Coverage > Run > Open coverage (or `CodeEdit --coverage binary profile`)
+opens LLVM source-based coverage of an instrumented binary, as
+CodeEditCoverage does. Its window lists the files with their coverage;
+double click opens a file in a window following the run. Each window
+follows one coverage run or none (Coverage > Run) and shows its line and
+region highlights; Cmd+J and Cmd+Shift+J go to the next and previous
+uncovered lines. Sessions and runs are independent: a window may follow
+one of each.
+
 The documents, locations and their providers are in `workspacekit/`, a
 static library; the debugger (`debugger/`) is a static library shared with
 `CodeEditDebugger`.

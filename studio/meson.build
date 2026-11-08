@@ -2,6 +2,8 @@
 executable(
 	'CodeEdit',
 	files(
+		'CoverageRun.cpp',
+		'CoverageSummaryWindow.cpp',
 		'DocumentsWindow.cpp',
 		'OpenGitWindow.cpp',
 		'OpenLocationWindow.cpp',
@@ -12,6 +14,6 @@ executable(
 	),
 	# BWindowStack is private API.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface', '../demo'),
-	dependencies: [debugKitDep, findKitDep],
+	dependencies: [debugKitDep, coverageUiDep, findKitDep],
 	install: true
 )

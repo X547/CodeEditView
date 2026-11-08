@@ -1,5 +1,7 @@
 #include "StudioApp.h"
 
+#include <string.h>
+
 #include <algorithm>
 
 #include <Alert.h>
@@ -11,11 +13,15 @@
 
 #include "Common.h"
 #include "ControlWindow.h"
+#include "CoverageMessages.h"
+#include "CoverageRun.h"
+#include "CoverageSummaryWindow.h"
 #include "DebugSession.h"
 #include "DocumentsWindow.h"
 #include "Messages.h"
 #include "OpenGitWindow.h"
 #include "OpenLocationWindow.h"
+#include "OpenWindow.h"
 #include "SourceWindow.h"
 
 
@@ -57,17 +63,16 @@ StudioApp &StudioApp::Get()
 }
 
 
-void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin, bool newView, int32 session,
-	int32 line)
+void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin, const ShowOptions &options)
 {
 	BReference<Workspace::Document> document = fRegistry.Open(locator);
 	fWatcher->Update();
-	if (!newView) {
+	BMessage reveal(kMsgReveal);
+	reveal.AddInt32("line", options.line);
+	if (!options.newView) {
 		BAutolock lock(fWindowLock);
 		for (const WindowEntry &entry : fWindows) {
 			if (entry.locator == document->GetLocator()) {
-				BMessage reveal(kMsgReveal);
-				reveal.AddInt32("line", line);
 				entry.messenger.SendMessage(&reveal);
 				return;
 			}
@@ -75,12 +80,10 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 	}
 
 	const bool stack = origin != nullptr && Stacking();
-	SourceWindow *window = new SourceWindow(document, stack ? origin->Frame() : NextWindowFrame(), session);
-	WindowShows(BMessenger(window), document->GetLocator(), session);
+	SourceWindow *window = new SourceWindow(document, stack ? origin->Frame() : NextWindowFrame(), options.session,
+		options.coverage);
 	window->Show();
-	if (line > 0) {
-		BMessage reveal(kMsgReveal);
-		reveal.AddInt32("line", line);
+	if (options.line > 0) {
 		window->PostMessage(&reveal);
 	}
 	if (stack) {
@@ -89,7 +92,8 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 }
 
 
-void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &locator, int32 session)
+void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &locator, int32 session,
+	int32 coverage)
 {
 	{
 		BAutolock lock(fWindowLock);
@@ -99,8 +103,9 @@ void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &
 		if (it != fWindows.end()) {
 			it->locator = locator;
 			it->session = session;
+			it->coverage = coverage;
 		} else {
-			fWindows.push_back({window, locator, session});
+			fWindows.push_back({window, locator, session, coverage});
 		}
 	}
 	fWatcher->Update();
@@ -234,9 +239,10 @@ void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind)
 }
 
 
-// Shows the line in a window following the session: one showing the
-// document, else a new one in the stack of a window following the session.
-void StudioApp::ShowSource(const Workspace::Locator &requested, int32 line, int32 session)
+// Shows the document in a window following the session (or else the
+// coverage run) of the options: one showing the document, else a new one in
+// the stack of a window following it, else a new window.
+void StudioApp::ShowFollowing(const Workspace::Locator &requested, const ShowOptions &options)
 {
 	const Workspace::Locator locator = fRegistry.Open(requested)->GetLocator();
 	BMessenger target;
@@ -244,7 +250,10 @@ void StudioApp::ShowSource(const Workspace::Locator &requested, int32 line, int3
 	{
 		BAutolock lock(fWindowLock);
 		for (const WindowEntry &entry : fWindows) {
-			if (entry.session != session) {
+			const bool follows = options.session != 0
+				? entry.session == options.session
+				: entry.coverage == options.coverage;
+			if (!follows) {
 				continue;
 			}
 			if (entry.locator == locator) {
@@ -259,27 +268,44 @@ void StudioApp::ShowSource(const Workspace::Locator &requested, int32 line, int3
 	}
 	if (sameDocument) {
 		BMessage reveal(kMsgReveal);
-		reveal.AddInt32("line", line);
+		reveal.AddInt32("line", options.line);
 		target.SendMessage(&reveal);
 		return;
 	}
+	ShowOptions newWindow = options;
+	newWindow.newView = true;
 	if (target.IsValid()) {
 		BMessage open(kMsgOpenLocator);
 		open.AddString("locator", locator.ToString().c_str());
 		open.AddBool("newView", true);
-		open.AddInt32("session", session);
-		open.AddInt32("line", line);
+		open.AddInt32("session", options.session);
+		open.AddInt32("coverage", options.coverage);
+		open.AddInt32("line", options.line);
 		target.SendMessage(&open);
 		return;
 	}
-	ShowDocument(locator, nullptr, true, session, line);
+	ShowDocument(locator, nullptr, newWindow);
+}
+
+
+void StudioApp::BroadcastToSourceWindows(BMessage &message)
+{
+	std::vector<BMessenger> windows;
+	{
+		BAutolock lock(fWindowLock);
+		for (const WindowEntry &window : fWindows) {
+			windows.push_back(window.messenger);
+		}
+	}
+	for (const BMessenger &window : windows) {
+		window.SendMessage(&message);
+	}
 }
 
 
 void StudioApp::CloseSession(int32 id)
 {
 	SessionEntry entry;
-	std::vector<BMessenger> windows;
 	{
 		BAutolock lock(fWindowLock);
 		const auto it = fSessions.find(id);
@@ -288,9 +314,6 @@ void StudioApp::CloseSession(int32 id)
 		}
 		entry = it->second;
 		fSessions.erase(it);
-		for (const WindowEntry &window : fWindows) {
-			windows.push_back(window.messenger);
-		}
 	}
 	for (auto &[kind, tool] : entry.tools) {
 		if (tool != nullptr && tool->Lock()) {
@@ -304,24 +327,117 @@ void StudioApp::CloseSession(int32 id)
 	BMessenger(entry.session).SendMessage(B_QUIT_REQUESTED);
 	BMessage closed(kMsgSessionClosed);
 	closed.AddInt32("session", id);
-	for (const BMessenger &window : windows) {
-		window.SendMessage(&closed);
-	}
+	BroadcastToSourceWindows(closed);
+	PostMessage(kMsgWindowClosed);
 }
 
 
+// Sessions and coverage runs, when the application quits.
 void StudioApp::QuitSessions()
 {
 	std::map<int32, SessionEntry> sessions;
+	std::map<int32, CoverageEntry> coverages;
 	{
 		BAutolock lock(fWindowLock);
 		sessions = std::move(fSessions);
 		fSessions.clear();
+		coverages = std::move(fCoverages);
+		fCoverages.clear();
 	}
 	for (auto &[id, entry] : sessions) {
 		if (entry.session->Lock()) {
 			entry.session->Quit();
 		}
+	}
+	for (auto &[id, entry] : coverages) {
+		BMessenger(entry.run).SendMessage(B_QUIT_REQUESTED);
+	}
+}
+
+
+//#pragma mark - Coverage runs
+
+void StudioApp::OpenCoverage(const std::string &binary, const std::string &profile)
+{
+	BAutolock lock(fWindowLock);
+	const int32 id = fNextCoverageId++;
+	CoverageEntry &entry = fCoverages[id];
+	entry.run = new CoverageRun(id, binary, profile);
+	entry.run->Run();
+	entry.summary = new CoverageSummaryWindow(entry.run);
+	entry.summary->Show();
+}
+
+
+void StudioApp::CloseCoverage(int32 id)
+{
+	CoverageEntry entry;
+	{
+		BAutolock lock(fWindowLock);
+		const auto it = fCoverages.find(id);
+		if (it == fCoverages.end()) {
+			return;
+		}
+		entry = it->second;
+		fCoverages.erase(it);
+	}
+	if (entry.summary->Lock()) {
+		entry.summary->Quit();
+	}
+	BMessage closed(kMsgCoverageClosed);
+	closed.AddInt32("coverage", id);
+	BroadcastToSourceWindows(closed);
+	// The run may be busy with llvm-cov.
+	BMessenger(entry.run).SendMessage(B_QUIT_REQUESTED);
+	PostMessage(kMsgWindowClosed);
+}
+
+
+std::vector<CoverageInfo> StudioApp::Coverages()
+{
+	BAutolock lock(fWindowLock);
+	std::vector<CoverageInfo> coverages;
+	for (const auto &[id, entry] : fCoverages) {
+		coverages.push_back({id, entry.run->Name()});
+	}
+	return coverages;
+}
+
+
+BReference<CodeEdit::DecorationSet> StudioApp::CoverageDecorations(int32 coverage, const Workspace::Locator &locator,
+	CodeEdit::TextModel *model)
+{
+	BAutolock lock(fWindowLock);
+	const auto it = fCoverages.find(coverage);
+	if (it == fCoverages.end()) {
+		return {};
+	}
+	return it->second.run->DecorationsFor(locator, model);
+}
+
+
+std::string StudioApp::CoverageStatus(int32 coverage, const Workspace::Locator &locator)
+{
+	BAutolock lock(fWindowLock);
+	const auto it = fCoverages.find(coverage);
+	if (it == fCoverages.end()) {
+		return {};
+	}
+	return it->second.run->Name() + ": " + it->second.run->FileStatus(locator);
+}
+
+
+void StudioApp::WatchCoverage(int32 coverage, const BMessenger &watcher, bool watch)
+{
+	BAutolock lock(fWindowLock);
+	const auto it = fCoverages.find(coverage);
+	if (it == fCoverages.end()) {
+		return;
+	}
+	if (watch) {
+		it->second.run->AddWatcher(watcher);
+	} else {
+		it->second.run->RemoveWatcher(watcher);
 	}
 }
 
@@ -370,11 +486,19 @@ void StudioApp::OpenArgument(const std::string &argument, const char *cwd)
 }
 
 
-// CodeEdit [path or locator...]
+// CodeEdit [--coverage binary profile] [path or locator...]
 void StudioApp::ArgvReceived(int32 argc, char **argv)
 {
 	const char *cwd = CurrentMessage()->GetString("cwd", nullptr);
+	const auto absolute = [cwd](const char *path) {
+		return path[0] == '/' || cwd == nullptr ? std::string(path) : std::string(cwd) + "/" + path;
+	};
 	for (int32 i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--coverage") == 0 && i + 2 < argc) {
+			OpenCoverage(absolute(argv[i + 1]), absolute(argv[i + 2]));
+			i += 2;
+			continue;
+		}
 		OpenArgument(argv[i], cwd);
 	}
 }
@@ -395,7 +519,7 @@ void StudioApp::RefsReceived(BMessage *message)
 void StudioApp::ReadyToRun()
 {
 	BAutolock lock(fWindowLock);
-	if (fWindows.empty()) {
+	if (fWindows.empty() && fCoverages.empty()) {
 		lock.Unlock();
 		ShowDocumentsWindow();
 	}
@@ -409,16 +533,49 @@ void StudioApp::MessageReceived(BMessage *message)
 			const std::optional<Workspace::Locator> locator
 				= Workspace::Locator::Parse(message->GetString("locator", ""));
 			if (locator.has_value()) {
-				ShowDocument(*locator, nullptr, message->GetBool("newView", false), message->GetInt32("session", 0),
-					message->GetInt32("line", 0));
+				ShowOptions options;
+				options.newView = message->GetBool("newView", false);
+				options.session = message->GetInt32("session", 0);
+				options.coverage = message->GetInt32("coverage", 0);
+				options.line = message->GetInt32("line", 0);
+				ShowDocument(*locator, nullptr, options);
 			}
 			break;
 		}
-		case Debugger::kMsgShowSource: {
+		case Debugger::kMsgShowSource:
+		case kMsgShowCoverageSource: {
 			const std::optional<Workspace::Locator> locator
 				= Workspace::Locator::Parse(message->GetString("locator", ""));
 			if (locator.has_value()) {
-				ShowSource(*locator, message->GetInt32("line", 0), message->GetInt32("session", 0));
+				ShowOptions options;
+				options.session = message->GetInt32("session", 0);
+				options.coverage = message->GetInt32("coverage", 0);
+				options.line = message->GetInt32("line", 0);
+				ShowFollowing(*locator, options);
+			}
+			break;
+		}
+		case Coverage::kMsgOpenCoverage:
+			OpenCoverage(message->GetString("binary", ""), message->GetString("profile", ""));
+			break;
+		case kMsgShowOpenCoverage:
+			(new Coverage::OpenWindow(message->GetString("binary", ""), ""))->Show();
+			break;
+		case kMsgCloseCoverage:
+			CloseCoverage(message->GetInt32("coverage", 0));
+			break;
+		case kMsgShowCoverageSummary: {
+			BWindow *summary = nullptr;
+			{
+				BAutolock lock(fWindowLock);
+				const auto it = fCoverages.find(message->GetInt32("coverage", 0));
+				if (it != fCoverages.end()) {
+					summary = it->second.summary;
+				}
+			}
+			if (summary != nullptr && summary->Lock()) {
+				summary->Activate();
+				summary->Unlock();
 			}
 			break;
 		}
@@ -465,7 +622,7 @@ void StudioApp::MessageReceived(BMessage *message)
 			BAutolock lock(fWindowLock);
 			// Documents may have closed.
 			fDocumentsWindow.SendMessage(kMsgWindowClosed);
-			if (fWindows.empty() && !fDocumentsWindow.IsValid()) {
+			if (fWindows.empty() && !fDocumentsWindow.IsValid() && fSessions.empty() && fCoverages.empty()) {
 				PostMessage(B_QUIT_REQUESTED);
 			}
 			break;

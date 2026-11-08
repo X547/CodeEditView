@@ -11,6 +11,7 @@ gitToolCore = static_library(
 		'Plan.cpp',
 		'Replay.cpp',
 		'Snapshot.cpp',
+		'SshConfig.cpp',
 	),
 	dependencies: [diffKitDep]
 )

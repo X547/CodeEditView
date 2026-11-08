@@ -16,6 +16,7 @@
 #include "Plan.h"
 #include "Replay.h"
 #include "Snapshot.h"
+#include "SshConfig.h"
 
 
 namespace GitTool {
@@ -687,6 +688,93 @@ TEST_CASE("Remotes", "[gittool]")
 		CHECK(snapshot.remotes.empty());
 		CHECK(snapshot.FindBranch("main")->upstream.empty());
 	}
+}
+
+
+TEST_CASE("SSH URLs", "[gittool]")
+{
+	const std::optional<SshUrl> scp = SshUrl::Parse("git@alias:group/repo.git");
+	REQUIRE(scp.has_value());
+	CHECK(scp->scpLike);
+	CHECK(scp->user == "git");
+	CHECK(scp->host == "alias");
+	CHECK(scp->path == "group/repo.git");
+	CHECK(scp->ToString() == "git@alias:group/repo.git");
+
+	SshUrl withPort = *scp;
+	withPort.port = 2222;
+	CHECK(withPort.ToString() == "ssh://git@alias:2222/~/group/repo.git");
+	withPort.path = "/srv/repo.git";
+	CHECK(withPort.ToString() == "ssh://git@alias:2222/srv/repo.git");
+
+	const std::optional<SshUrl> full = SshUrl::Parse("ssh://user@[::1]:22/srv/repo.git");
+	REQUIRE(full.has_value());
+	CHECK_FALSE(full->scpLike);
+	CHECK(full->user == "user");
+	CHECK(full->host == "::1");
+	CHECK(full->port == 22);
+	CHECK(full->path == "/srv/repo.git");
+	CHECK(full->ToString() == "ssh://user@[::1]:22/srv/repo.git");
+
+	CHECK(SshUrl::Parse("ssh://host/repo")->ToString() == "ssh://host/repo");
+	CHECK_FALSE(SshUrl::Parse("https://example.com/repo.git").has_value());
+	CHECK_FALSE(SshUrl::Parse("/local/path").has_value());
+	CHECK_FALSE(SshUrl::Parse("./a:b").has_value());
+}
+
+
+TEST_CASE("SSH configuration", "[gittool]")
+{
+	const std::string directory = MakeTemporaryDirectory();
+	const std::string config = directory + "/config";
+	WriteFile(config,
+		"# Comment\n"
+		"Include extra/*.conf\n"
+		"Host work !skip\n"
+		"\tHostName %h.example.com\n"
+		"\tUser alice\n"
+		"\tPort=2222\n"
+		"\tIdentityFile ~/keys/work_%r\n"
+		"\tIdentitiesOnly yes\n"
+		"Host \"quoted\"\n"
+		"\tHostName quoted.example.com\n"
+		"Match originalhost tunnel\n"
+		"\tProxyJump gateway\n"
+		"Host *\n"
+		"\tUser fallback\n"
+		"\tPort 22\n"
+		"\tIdentityFile %d/keys/default\n"
+	);
+	WriteFile(directory + "/extra/a.conf",
+		"Host included\n"
+		"\tHostName included.example.com\n"
+	);
+	const std::vector<std::string> files {config};
+
+	const SshHost work = ResolveSshHost(files, "/home/test", "work", "", 0);
+	CHECK(work.hostName == "work.example.com");
+	CHECK(work.user == "alice");
+	CHECK(work.port == 2222);
+	CHECK(work.identitiesOnly);
+	CHECK(work.identityFiles == std::vector<std::string> {"/home/test/keys/work_alice", "/home/test/keys/default"});
+	CHECK(work.proxy.empty());
+
+	// The user and port of the URL win.
+	const SshHost overridden = ResolveSshHost(files, "/home/test", "work", "bob", 22);
+	CHECK(overridden.user == "bob");
+	CHECK(overridden.port == 22);
+	CHECK(overridden.identityFiles.front() == "/home/test/keys/work_bob");
+
+	const SshHost other = ResolveSshHost(files, "/home/test", "skip", "", 0);
+	CHECK(other.hostName == "skip");
+	CHECK(other.user == "fallback");
+	CHECK_FALSE(other.identitiesOnly);
+
+	CHECK(ResolveSshHost(files, "/home/test", "quoted", "", 0).hostName == "quoted.example.com");
+	CHECK(ResolveSshHost(files, "/home/test", "included", "", 0).hostName == "included.example.com");
+	CHECK(ResolveSshHost(files, "/home/test", "tunnel", "", 0).proxy == "ProxyJump gateway");
+
+	std::filesystem::remove_all(directory);
 }
 
 

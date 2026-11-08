@@ -3,21 +3,37 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <optional>
+
+#include "SshConfig.h"
+
 
 namespace GitTool {
+
+
+static std::string Home()
+{
+	const char *home = getenv("HOME");
+	return home != nullptr ? home : "";
+}
 
 
 // State of the callbacks during one network operation.
 class Callbacks {
 private:
 	NetworkHandler &fHandler;
+	// The URL set from the SSH configuration, not to be resolved again.
+	std::string fResolvedUrl;
+	SshHost fSshHost;
+	std::optional<std::vector<std::string>> fKeys;
 	size_t fKeyAttempt {};
 	bool fTriedUsername {};
 	int fPasswordAttempts {};
 	std::vector<std::string> fRejected;
 
-	static std::vector<std::string> KeyFiles();
+	std::vector<std::string> KeyFiles();
 
+	static int RemoteReady(git_remote *remote, int direction, void *data);
 	static int Credentials(git_credential **out, const char *url, const char *userFromUrl, unsigned int allowed, void *data);
 	static int CertificateCheck(git_cert *certificate, int valid, const char *host, void *data);
 	static int SidebandProgress(const char *text, int length, void *data);
@@ -36,22 +52,82 @@ public:
 };
 
 
+// The IdentityFile keys of the SSH configuration, or else the default ones,
+// as ssh does.
 std::vector<std::string> Callbacks::KeyFiles()
 {
 	std::vector<std::string> files;
-	const char *home = getenv("HOME");
-	if (home == nullptr) {
+	if (!fSshHost.identityFiles.empty()) {
+		for (const std::string &path : fSshHost.identityFiles) {
+			if (access(path.c_str(), R_OK) == 0) {
+				files.push_back(path);
+			} else {
+				fHandler.Log("Cannot read the key " + path);
+			}
+		}
+		return files;
+	}
+	const std::string home = Home();
+	if (home.empty()) {
 		return files;
 	}
 	for (const char *directory : {"/config/settings/ssh/", "/.ssh/"}) {
 		for (const char *name : {"id_ed25519", "id_ecdsa", "id_rsa"}) {
-			const std::string path = std::string(home) + directory + name;
+			const std::string path = home + directory + name;
 			if (access(path.c_str(), R_OK) == 0) {
 				files.push_back(path);
 			}
 		}
 	}
 	return files;
+}
+
+
+// libssh2 does not read the OpenSSH configuration, so the host alias of an
+// SSH URL is replaced by what the configuration says before connecting.
+int Callbacks::RemoteReady(git_remote *remote, int direction, void *data)
+{
+	Callbacks *self = static_cast<Callbacks*>(data);
+	try {
+		const char *pushUrl = git_remote_pushurl(remote);
+		const bool push = direction == GIT_DIRECTION_PUSH && pushUrl != nullptr;
+		const char *urlText = push ? pushUrl : git_remote_url(remote);
+		if (urlText == nullptr || urlText == self->fResolvedUrl) {
+			return 0;
+		}
+		const std::string url = urlText;
+		const std::optional<SshUrl> parsed = SshUrl::Parse(url);
+		if (!parsed.has_value()) {
+			return 0;
+		}
+		const std::string home = Home();
+		self->fSshHost = ResolveSshHost(SshConfigFiles(home), home, parsed->host, parsed->user, parsed->port);
+		self->fKeys.reset();
+		self->fKeyAttempt = 0;
+		if (!self->fSshHost.proxy.empty()) {
+			self->fHandler.Log("Not supported in the SSH configuration: " + self->fSshHost.proxy);
+		}
+		SshUrl resolved = *parsed;
+		resolved.host = self->fSshHost.hostName;
+		resolved.user = self->fSshHost.user;
+		resolved.port = self->fSshHost.port;
+		const std::string resolvedUrl = resolved.ToString();
+		if (resolvedUrl == url) {
+			return 0;
+		}
+		self->fHandler.Log("Using the SSH configuration of " + parsed->host + ": " + resolvedUrl);
+		const int result = push
+			? git_remote_set_instance_pushurl(remote, resolvedUrl.c_str())
+			: git_remote_set_instance_url(remote, resolvedUrl.c_str());
+		if (result < 0) {
+			return result;
+		}
+		self->fResolvedUrl = resolvedUrl;
+		return 0;
+	} catch (const std::exception &error) {
+		self->fHandler.Log(std::string("Cannot use the SSH configuration: ") + error.what());
+		return 0;
+	}
 }
 
 
@@ -65,12 +141,17 @@ int Callbacks::Credentials(git_credential **out, const char *url, const char *us
 		return git_credential_username_new(out, user);
 	}
 	if ((allowed & GIT_CREDENTIAL_SSH_KEY) != 0) {
-		// The agent first, then the key files without passphrase.
-		const std::vector<std::string> keys = KeyFiles();
+		// The agent first, then the key files without passphrase. With
+		// IdentitiesOnly the agent could offer other keys, so it is skipped.
+		if (!self->fKeys.has_value()) {
+			self->fKeys = self->KeyFiles();
+		}
+		const std::vector<std::string> &keys = *self->fKeys;
+		const bool useAgent = !(self->fSshHost.identitiesOnly && !self->fSshHost.identityFiles.empty());
 		while (self->fKeyAttempt <= keys.size()) {
 			const size_t attempt = self->fKeyAttempt++;
 			if (attempt == 0) {
-				if (git_credential_ssh_key_from_agent(out, user) == 0) {
+				if (useAgent && git_credential_ssh_key_from_agent(out, user) == 0) {
 					return 0;
 				}
 				continue;
@@ -188,6 +269,7 @@ int Callbacks::PushUpdateReference(const char *refName, const char *status, void
 git_remote_callbacks Callbacks::Get()
 {
 	git_remote_callbacks callbacks = GIT_REMOTE_CALLBACKS_INIT;
+	callbacks.remote_ready = RemoteReady;
 	callbacks.credentials = Credentials;
 	callbacks.certificate_check = CertificateCheck;
 	callbacks.sideband_progress = SidebandProgress;

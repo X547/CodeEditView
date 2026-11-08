@@ -9,6 +9,9 @@
 #include <Path.h>
 #include <WindowStack.h>
 
+#include "Common.h"
+#include "ControlWindow.h"
+#include "DebugSession.h"
 #include "DocumentsWindow.h"
 #include "Messages.h"
 #include "OpenGitWindow.h"
@@ -41,6 +44,7 @@ StudioApp::StudioApp():
 
 StudioApp::~StudioApp()
 {
+	QuitSessions();
 	fWatcher->Lock();
 	fWatcher->Quit();
 	delete fOpenPanel;
@@ -53,7 +57,8 @@ StudioApp &StudioApp::Get()
 }
 
 
-void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin, bool newView)
+void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin, bool newView, int32 session,
+	int32 line)
 {
 	BReference<Workspace::Document> document = fRegistry.Open(locator);
 	fWatcher->Update();
@@ -61,23 +66,30 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 		BAutolock lock(fWindowLock);
 		for (const WindowEntry &entry : fWindows) {
 			if (entry.locator == document->GetLocator()) {
-				entry.messenger.SendMessage(kMsgActivate);
+				BMessage reveal(kMsgReveal);
+				reveal.AddInt32("line", line);
+				entry.messenger.SendMessage(&reveal);
 				return;
 			}
 		}
 	}
 
 	const bool stack = origin != nullptr && Stacking();
-	SourceWindow *window = new SourceWindow(document, stack ? origin->Frame() : NextWindowFrame());
-	WindowShows(BMessenger(window), document->GetLocator());
+	SourceWindow *window = new SourceWindow(document, stack ? origin->Frame() : NextWindowFrame(), session);
+	WindowShows(BMessenger(window), document->GetLocator(), session);
 	window->Show();
+	if (line > 0) {
+		BMessage reveal(kMsgReveal);
+		reveal.AddInt32("line", line);
+		window->PostMessage(&reveal);
+	}
 	if (stack) {
 		BWindowStack(origin).AddWindow(BMessenger(window));
 	}
 }
 
 
-void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &locator)
+void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &locator, int32 session)
 {
 	{
 		BAutolock lock(fWindowLock);
@@ -86,8 +98,9 @@ void StudioApp::WindowShows(const BMessenger &window, const Workspace::Locator &
 		});
 		if (it != fWindows.end()) {
 			it->locator = locator;
+			it->session = session;
 		} else {
-			fWindows.push_back({window, locator});
+			fWindows.push_back({window, locator, session});
 		}
 	}
 	fWatcher->Update();
@@ -138,6 +151,182 @@ void StudioApp::SetStacking(bool stacking)
 	fStacking = stacking;
 }
 
+
+//#pragma mark - Debug sessions
+
+int32 StudioApp::NewSession()
+{
+	BAutolock lock(fWindowLock);
+	const int32 id = fNextSessionId++;
+	SessionEntry &entry = fSessions[id];
+	entry.name = "Session " + std::to_string(id);
+	entry.session = new Debugger::DebugSession(fRegistry, id);
+	entry.session->Run();
+
+	Debugger::SessionContext context;
+	context.session = BMessenger(entry.session);
+	context.id = id;
+	context.titleSuffix = " \xe2\x80\x94 " + entry.name;
+	context.registry = &fRegistry;
+	// The console collects all output from the start.
+	entry.tools[Debugger::ToolWindowKind::Console] = Debugger::CreateToolWindow(Debugger::ToolWindowKind::Console,
+		context);
+	BMessage closeRequest(kMsgCloseSession);
+	closeRequest.AddInt32("session", id);
+	entry.control = new Debugger::ControlWindow(context, ("Debug" + context.titleSuffix).c_str(), "", "",
+		closeRequest);
+	entry.control->Show();
+	return id;
+}
+
+
+std::vector<SessionInfo> StudioApp::Sessions()
+{
+	BAutolock lock(fWindowLock);
+	std::vector<SessionInfo> sessions;
+	for (const auto &[id, entry] : fSessions) {
+		sessions.push_back({id, entry.name, BMessenger(entry.session)});
+	}
+	return sessions;
+}
+
+
+BReference<CodeEdit::MarkSet> StudioApp::SessionMarks(int32 session, CodeEdit::TextModel *model)
+{
+	BAutolock lock(fWindowLock);
+	const auto it = fSessions.find(session);
+	if (it == fSessions.end()) {
+		return {};
+	}
+	return it->second.session->MarkSetFor(model);
+}
+
+
+void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind)
+{
+	BWindow *window = nullptr;
+	{
+		BAutolock lock(fWindowLock);
+		const auto it = fSessions.find(session);
+		if (it == fSessions.end()) {
+			return;
+		}
+		SessionEntry &entry = it->second;
+		BWindow *&tool = entry.tools[kind];
+		if (tool == nullptr) {
+			Debugger::SessionContext context;
+			context.session = BMessenger(entry.session);
+			context.id = session;
+			context.titleSuffix = " \xe2\x80\x94 " + entry.name;
+			context.registry = &fRegistry;
+			tool = Debugger::CreateToolWindow(kind, context);
+		}
+		window = tool;
+	}
+	if (window == nullptr || !window->Lock()) {
+		return;
+	}
+	if (window->IsHidden()) {
+		window->Show();
+	}
+	window->Activate();
+	window->Unlock();
+}
+
+
+// Shows the line in a window following the session: one showing the
+// document, else a new one in the stack of a window following the session.
+void StudioApp::ShowSource(const Workspace::Locator &requested, int32 line, int32 session)
+{
+	const Workspace::Locator locator = fRegistry.Open(requested)->GetLocator();
+	BMessenger target;
+	bool sameDocument = false;
+	{
+		BAutolock lock(fWindowLock);
+		for (const WindowEntry &entry : fWindows) {
+			if (entry.session != session) {
+				continue;
+			}
+			if (entry.locator == locator) {
+				target = entry.messenger;
+				sameDocument = true;
+				break;
+			}
+			if (!target.IsValid()) {
+				target = entry.messenger;
+			}
+		}
+	}
+	if (sameDocument) {
+		BMessage reveal(kMsgReveal);
+		reveal.AddInt32("line", line);
+		target.SendMessage(&reveal);
+		return;
+	}
+	if (target.IsValid()) {
+		BMessage open(kMsgOpenLocator);
+		open.AddString("locator", locator.ToString().c_str());
+		open.AddBool("newView", true);
+		open.AddInt32("session", session);
+		open.AddInt32("line", line);
+		target.SendMessage(&open);
+		return;
+	}
+	ShowDocument(locator, nullptr, true, session, line);
+}
+
+
+void StudioApp::CloseSession(int32 id)
+{
+	SessionEntry entry;
+	std::vector<BMessenger> windows;
+	{
+		BAutolock lock(fWindowLock);
+		const auto it = fSessions.find(id);
+		if (it == fSessions.end()) {
+			return;
+		}
+		entry = it->second;
+		fSessions.erase(it);
+		for (const WindowEntry &window : fWindows) {
+			windows.push_back(window.messenger);
+		}
+	}
+	for (auto &[kind, tool] : entry.tools) {
+		if (tool != nullptr && tool->Lock()) {
+			tool->Quit();
+		}
+	}
+	if (entry.control->Lock()) {
+		entry.control->Quit();
+	}
+	// Ends the program (QuitRequested() disconnects).
+	BMessenger(entry.session).SendMessage(B_QUIT_REQUESTED);
+	BMessage closed(kMsgSessionClosed);
+	closed.AddInt32("session", id);
+	for (const BMessenger &window : windows) {
+		window.SendMessage(&closed);
+	}
+}
+
+
+void StudioApp::QuitSessions()
+{
+	std::map<int32, SessionEntry> sessions;
+	{
+		BAutolock lock(fWindowLock);
+		sessions = std::move(fSessions);
+		fSessions.clear();
+	}
+	for (auto &[id, entry] : sessions) {
+		if (entry.session->Lock()) {
+			entry.session->Quit();
+		}
+	}
+}
+
+
+//#pragma mark - Windows
 
 void StudioApp::ShowDocumentsWindow()
 {
@@ -220,7 +409,38 @@ void StudioApp::MessageReceived(BMessage *message)
 			const std::optional<Workspace::Locator> locator
 				= Workspace::Locator::Parse(message->GetString("locator", ""));
 			if (locator.has_value()) {
-				ShowDocument(*locator, nullptr);
+				ShowDocument(*locator, nullptr, message->GetBool("newView", false), message->GetInt32("session", 0),
+					message->GetInt32("line", 0));
+			}
+			break;
+		}
+		case Debugger::kMsgShowSource: {
+			const std::optional<Workspace::Locator> locator
+				= Workspace::Locator::Parse(message->GetString("locator", ""));
+			if (locator.has_value()) {
+				ShowSource(*locator, message->GetInt32("line", 0), message->GetInt32("session", 0));
+			}
+			break;
+		}
+		case Debugger::kMsgShowToolWindow:
+			ShowToolWindow(message->GetInt32("session", 0),
+				static_cast<Debugger::ToolWindowKind>(message->GetInt32("window", 0)));
+			break;
+		case kMsgCloseSession:
+			CloseSession(message->GetInt32("session", 0));
+			break;
+		case kMsgShowSessionControl: {
+			BWindow *control = nullptr;
+			{
+				BAutolock lock(fWindowLock);
+				const auto it = fSessions.find(message->GetInt32("session", 0));
+				if (it != fSessions.end()) {
+					control = it->second.control;
+				}
+			}
+			if (control != nullptr && control->Lock()) {
+				control->Activate();
+				control->Unlock();
 			}
 			break;
 		}
@@ -254,6 +474,19 @@ void StudioApp::MessageReceived(BMessage *message)
 			BApplication::MessageReceived(message);
 			break;
 	}
+}
+
+
+bool StudioApp::QuitRequested()
+{
+	// Tool windows close instead of hiding.
+	Debugger::gQuitting = true;
+	if (!BApplication::QuitRequested()) {
+		Debugger::gQuitting = false;
+		return false;
+	}
+	QuitSessions();
+	return true;
 }
 
 

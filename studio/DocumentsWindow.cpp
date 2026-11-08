@@ -27,7 +27,7 @@ DocumentsWindow::DocumentsWindow():
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
-			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit, 'G', B_SHIFT_KEY)
+			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit)
 			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
 			.AddSeparator()
 			.AddItem("Close", B_QUIT_REQUESTED, 'W')

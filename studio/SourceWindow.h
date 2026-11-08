@@ -7,6 +7,7 @@
 
 
 class BFilePanel;
+class BMenu;
 class BMenuItem;
 class BSplitView;
 class BStringView;
@@ -27,6 +28,10 @@ private:
 	OutlineView *fOutline {};
 	BMenuItem *fOutlineItem {};
 	bool fOutlineRefreshPending {};
+	// The debug session followed; 0 for none.
+	int32 fSession {};
+	BMenu *fDebugMenu {};
+	BMenu *fSessionMenu {};
 	BFilePanel *fOpenPanel {};
 	BFilePanel *fSavePanel {};
 	// Close when the save started by QuitRequested() finishes.
@@ -47,9 +52,14 @@ private:
 	void RefreshOutline();
 	void JumpToOutlineItem(bool focus);
 	void ToggleOutline();
+	BMenu *CreateDebugMenu();
+	void UpdateDebugMenu();
+	void FollowSession(int32 session);
+	BMessenger SessionMessenger() const;
+	void Reveal(int32 line);
 
 public:
-	SourceWindow(Workspace::Document *document, BRect frame);
+	SourceWindow(Workspace::Document *document, BRect frame, int32 session);
 	~SourceWindow() override;
 
 	void MessageReceived(BMessage *message) override;

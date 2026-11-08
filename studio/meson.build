@@ -12,6 +12,6 @@ executable(
 	),
 	# BWindowStack is private API.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface', '../demo'),
-	dependencies: [workspaceKitDep, findKitDep, cpp.find_library('tracker')],
+	dependencies: [debugKitDep, findKitDep],
 	install: true
 )

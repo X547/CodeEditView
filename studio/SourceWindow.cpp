@@ -1,5 +1,7 @@
 #include "SourceWindow.h"
 
+#include <algorithm>
+#include <iterator>
 #include <string>
 
 #include <Alert.h>
@@ -19,8 +21,10 @@
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
 
+#include "Common.h"
 #include "FindCommands.h"
 #include "Messages.h"
+#include "Protocol.h"
 #include "OpenGitWindow.h"
 #include "OpenLocationWindow.h"
 #include "OutlineView.h"
@@ -43,6 +47,20 @@ static constexpr uint32 kMsgReload = 'SWrl';
 static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
+static constexpr uint32 kMsgFollowSession = 'SWfs';
+static constexpr uint32 kMsgNewSession = 'SWns';
+static constexpr uint32 kMsgToggleBreakpoint = 'SWtb';
+static constexpr uint32 kMsgToggleBreakpointEnabled = 'SWte';
+
+// Commands forwarded to the session followed.
+static constexpr uint32 kSessionCommands[] = {
+	Debugger::kMsgContinue,
+	Debugger::kMsgPause,
+	Debugger::kMsgStepOver,
+	Debugger::kMsgStepInto,
+	Debugger::kMsgStepOut,
+	Debugger::kMsgStop,
+};
 
 
 static int32 Ask(const std::string &text, const char *button0, const char *button1, const char *button2 = nullptr)
@@ -59,13 +77,19 @@ static void ShowError(const std::string &text)
 }
 
 
-SourceWindow::SourceWindow(Document *document, BRect frame):
+SourceWindow::SourceWindow(Document *document, BRect frame, int32 session):
 	BWindow(frame, "CodeEdit", B_DOCUMENT_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
 	fDocument(document),
 	fEditView(new CodeEditView("editor", document->Model())),
 	fStatus(new BStringView("status", ""))
 {
 	fEditView->SetTarget(BMessenger(this));
+	CodeEdit::MarkStyle frameStyle;
+	frameStyle.shape = CodeEdit::MarkShape::Arrow;
+	frameStyle.color = {60, 170, 80, 255};
+	frameStyle.lineBackground = {60, 170, 80, 64};
+	frameStyle.priority = 25;
+	fEditView->SetMarkStyle(Debugger::kMarkFrameLine, frameStyle);
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fStatus->SetTruncation(B_TRUNCATE_MIDDLE);
 
@@ -74,7 +98,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
-			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit, 'G', B_SHIFT_KEY)
+			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit)
 			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
 			.AddSeparator()
 			.AddItem("Save", kMsgSave, 'S')
@@ -108,6 +132,8 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 			.AddItem("Open windows in the same stack", kMsgToggleStacking)
 		.End();
 	FindKit::AddFindItems(searchMenu);
+	// Before the Window menu.
+	menuBar->AddItem(CreateDebugMenu(), menuBar->CountItems() - 1);
 	menuBar->FindItem("Quit")->SetTarget(be_app);
 
 	fOutline = new OutlineView();
@@ -130,10 +156,127 @@ SourceWindow::SourceWindow(Document *document, BRect frame):
 	fOutlineItem->SetMarked(true);
 
 	StudioApp::Get().Registry().AddListener(BMessenger(this));
+	FollowSession(session);
 	UpdateTitle();
 	UpdateStatus();
 	ScheduleOutlineRefresh();
 	fEditView->MakeFocus(true);
+}
+
+
+BMenu *SourceWindow::CreateDebugMenu()
+{
+	fDebugMenu = new BMenu("Debug");
+	fSessionMenu = new BMenu("Session");
+	fDebugMenu->AddItem(fSessionMenu);
+	fDebugMenu->AddSeparatorItem();
+	fDebugMenu->AddItem(new BMenuItem("Continue", new BMessage(Debugger::kMsgContinue), 'R'));
+	fDebugMenu->AddItem(new BMenuItem("Pause", new BMessage(Debugger::kMsgPause), 'P'));
+	fDebugMenu->AddItem(new BMenuItem("Step over", new BMessage(Debugger::kMsgStepOver), 'N'));
+	fDebugMenu->AddItem(new BMenuItem("Step into", new BMessage(Debugger::kMsgStepInto), 'I'));
+	fDebugMenu->AddItem(new BMenuItem("Step out", new BMessage(Debugger::kMsgStepOut), 'I', B_SHIFT_KEY));
+	fDebugMenu->AddItem(new BMenuItem("Stop", new BMessage(Debugger::kMsgStop)));
+	fDebugMenu->AddSeparatorItem();
+	fDebugMenu->AddItem(new BMenuItem("Toggle breakpoint", new BMessage(kMsgToggleBreakpoint), 'K'));
+	fDebugMenu->AddItem(new BMenuItem("Enable/disable breakpoint", new BMessage(kMsgToggleBreakpointEnabled), 'K',
+		B_SHIFT_KEY));
+	fDebugMenu->AddSeparatorItem();
+	fDebugMenu->AddItem(new BMenuItem("Session control", new BMessage(kMsgShowSessionControl)));
+	struct Entry {
+		const char *label;
+		Debugger::ToolWindowKind window;
+		char shortcut;
+	};
+	static constexpr Entry kEntries[] = {
+		{"Console", Debugger::ToolWindowKind::Console, '1'},
+		{"Threads", Debugger::ToolWindowKind::Threads, '2'},
+		{"Stack", Debugger::ToolWindowKind::Stack, '3'},
+		{"Variables", Debugger::ToolWindowKind::Variables, '4'},
+		{"Breakpoints", Debugger::ToolWindowKind::Breakpoints, '5'},
+	};
+	for (const Entry &entry : kEntries) {
+		BMessage *message = new BMessage(Debugger::kMsgShowToolWindow);
+		message->AddInt32("window", static_cast<int32>(entry.window));
+		fDebugMenu->AddItem(new BMenuItem(entry.label, message, entry.shortcut));
+	}
+	UpdateDebugMenu();
+	return fDebugMenu;
+}
+
+
+// The sessions to follow, and the commands enabled with a session.
+void SourceWindow::UpdateDebugMenu()
+{
+	while (BMenuItem *item = fSessionMenu->RemoveItem(static_cast<int32>(0))) {
+		delete item;
+	}
+	BMessage *none = new BMessage(kMsgFollowSession);
+	none->AddInt32("session", 0);
+	BMenuItem *noneItem = new BMenuItem("None", none);
+	noneItem->SetMarked(fSession == 0);
+	fSessionMenu->AddItem(noneItem);
+	for (const SessionInfo &session : StudioApp::Get().Sessions()) {
+		BMessage *follow = new BMessage(kMsgFollowSession);
+		follow->AddInt32("session", session.id);
+		BMenuItem *item = new BMenuItem(session.name.c_str(), follow);
+		item->SetMarked(session.id == fSession);
+		fSessionMenu->AddItem(item);
+	}
+	fSessionMenu->AddSeparatorItem();
+	fSessionMenu->AddItem(new BMenuItem("New session", new BMessage(kMsgNewSession)));
+	fSessionMenu->SetTargetForItems(this);
+
+	const bool following = fSession != 0;
+	for (int32 i = 0; BMenuItem *item = fDebugMenu->ItemAt(i); i++) {
+		const uint32 command = item->Command();
+		const bool sessionCommand = command == Debugger::kMsgShowToolWindow || command == kMsgShowSessionControl
+			|| std::find(std::begin(kSessionCommands), std::end(kSessionCommands), command)
+				!= std::end(kSessionCommands);
+		if (sessionCommand) {
+			item->SetEnabled(following);
+		}
+	}
+}
+
+
+// Shows the marks of the session (none: 0) beside the shared ones.
+void SourceWindow::FollowSession(int32 session)
+{
+	StudioApp &app = StudioApp::Get();
+	BReference<CodeEdit::MarkSet> marks;
+	if (session != 0) {
+		marks = app.SessionMarks(session, fDocument->Model());
+	}
+	fSession = marks.Get() != nullptr ? session : 0;
+	std::vector<BReference<CodeEdit::MarkSet>> sets;
+	if (marks.Get() != nullptr) {
+		sets.push_back(marks);
+	}
+	fEditView->SetMarkSets(sets);
+	app.WindowShows(BMessenger(this), fDocument->GetLocator(), fSession);
+	// Shortcuts of disabled items do nothing.
+	UpdateDebugMenu();
+	UpdateStatus();
+}
+
+
+BMessenger SourceWindow::SessionMessenger() const
+{
+	for (const SessionInfo &session : StudioApp::Get().Sessions()) {
+		if (session.id == fSession) {
+			return session.messenger;
+		}
+	}
+	return BMessenger();
+}
+
+
+void SourceWindow::Reveal(int32 line)
+{
+	Activate();
+	if (line > 0) {
+		fEditView->RevealLine(line - 1);
+	}
 }
 
 
@@ -227,6 +370,9 @@ void SourceWindow::UpdateStatus()
 		text = "Read-only: " + locator.ToString();
 	} else {
 		text = locator.ToString();
+	}
+	if (fSession != 0) {
+		text = "Session " + std::to_string(fSession) + " \xe2\x80\x94 " + text;
 	}
 	fStatus->SetText(text.c_str());
 
@@ -322,7 +468,7 @@ void SourceWindow::SaveAs(BMessage *message)
 	}
 	fDocument = document;
 	fEditView->SetModel(fDocument->Model());
-	StudioApp::Get().WindowShows(BMessenger(this), fDocument->GetLocator());
+	FollowSession(fSession);
 	UpdateTitle();
 	UpdateStatus();
 	ScheduleOutlineRefresh();
@@ -412,12 +558,61 @@ void SourceWindow::MessageReceived(BMessage *message)
 			Reload();
 			break;
 		case kMsgNewView:
-			StudioApp::Get().ShowDocument(fDocument->GetLocator(), this, true);
+			StudioApp::Get().ShowDocument(fDocument->GetLocator(), this, true, fSession);
 			break;
 		case kMsgOpenLocator: {
 			const std::optional<Locator> locator = Locator::Parse(message->GetString("locator", ""));
 			if (locator.has_value()) {
-				StudioApp::Get().ShowDocument(*locator, this);
+				StudioApp::Get().ShowDocument(*locator, this, message->GetBool("newView", false),
+					message->GetInt32("session", 0), message->GetInt32("line", 0));
+			}
+			break;
+		}
+		case kMsgReveal:
+			Reveal(message->GetInt32("line", 0));
+			break;
+		case kMsgFollowSession:
+			FollowSession(message->GetInt32("session", 0));
+			break;
+		case kMsgNewSession:
+			FollowSession(StudioApp::Get().NewSession());
+			break;
+		case kMsgSessionClosed:
+			if (message->GetInt32("session", 0) == fSession) {
+				FollowSession(0);
+			}
+			break;
+		case kMsgShowSessionControl:
+		case Debugger::kMsgShowToolWindow: {
+			BMessage forward(*message);
+			forward.AddInt32("session", fSession);
+			be_app->PostMessage(&forward);
+			break;
+		}
+		case Debugger::kMsgContinue:
+		case Debugger::kMsgPause:
+		case Debugger::kMsgStepOver:
+		case Debugger::kMsgStepInto:
+		case Debugger::kMsgStepOut:
+		case Debugger::kMsgStop:
+			SessionMessenger().SendMessage(message);
+			break;
+		case kMsgToggleBreakpoint:
+			Debugger::ToggleBreakpoint(*fDocument->Model(), fEditView->CaretLocation().line);
+			break;
+		case kMsgToggleBreakpointEnabled:
+			Debugger::ToggleBreakpointEnabled(*fDocument->Model(), fEditView->CaretLocation().line);
+			break;
+		case CodeEdit::kMsgGutterClicked: {
+			// Click: breakpoint; Shift + click or secondary button: enable or
+			// disable it.
+			const size_t line = message->GetUInt64("line", 0);
+			const bool alternate = (message->GetInt32("modifiers", 0) & B_SHIFT_KEY) != 0
+				|| (message->GetInt32("buttons", 0) & B_SECONDARY_MOUSE_BUTTON) != 0;
+			if (alternate) {
+				Debugger::ToggleBreakpointEnabled(*fDocument->Model(), line);
+			} else {
+				Debugger::ToggleBreakpoint(*fDocument->Model(), line);
 			}
 			break;
 		}
@@ -467,6 +662,7 @@ void SourceWindow::MenusBeginning()
 	menuBar->FindItem(kMsgSaveAs)->SetEnabled(ready);
 	menuBar->FindItem(kMsgReload)->SetEnabled(!status.saving && status.state != DocumentState::Loading);
 	menuBar->FindItem(kMsgToggleStacking)->SetMarked(StudioApp::Get().Stacking());
+	UpdateDebugMenu();
 	BWindow::MenusBeginning();
 }
 

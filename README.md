@@ -212,8 +212,18 @@ Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
 Without arguments, the Documents window lists the open documents.
 
+Debug > Session > New session starts a debug session, with its own control
+window (launch or attach) and tool windows (Debug > Console, Threads, Stack,
+Variables, Breakpoints). Each window follows one session or none (Debug >
+Session) and shows that session's execution line and selected frame;
+breakpoints (gutter clicks, Cmd+K) are shared by all sessions. When a
+session stops, the line is shown in a window following it, opened in the
+stack of one if needed. Run control: Cmd+R continue, Cmd+P pause, Cmd+N
+step over, Cmd+I step into, Cmd+Shift+I step out.
+
 The documents, locations and their providers are in `workspacekit/`, a
-static library.
+static library; the debugger (`debugger/`) is a static library shared with
+`CodeEditDebugger`.
 
 
 ## Building

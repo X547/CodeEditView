@@ -192,6 +192,29 @@ The Files menu copies the selected file or directory to the other side
 deletes it from one side, after asking.
 
 
+## CodeEdit
+
+`CodeEdit [path or location...]` is an editor in the making that will
+combine editing, debug sessions and coverage. Documents are addressed by
+locations:
+
+- `file:///boot/home/src/a.cpp` (or a plain path)
+- `git:///boot/home/src/repo?commit=HEAD&path=src/a.cpp`: a file of a Git
+  commit, read-only (a revision name is resolved to its commit)
+- `sftp://user@host/path` (not supported yet)
+
+Each window shows one view of a document; several windows may show the
+same document. Window > New view and files opened from a window join the
+window's stack (Window > Open windows in the same stack). File > Open from
+Git browses the tree of a commit; File > Open location takes a location.
+Saving refuses to overwrite a file changed by another program unless
+confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
+Without arguments, the Documents window lists the open documents.
+
+The documents, locations and their providers are in `workspacekit/`, a
+static library.
+
+
 ## Building
 
 Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel`, `catch2_devel`
@@ -206,7 +229,8 @@ meson test -C build
 ```
 
 Options: `-Ddemo=false`, `-Ddebugger=false`, `-Dgitdiff=false`,
-`-Ddircompare=false`, `-Dtests=false`.
+`-Ddircompare=false`, `-Dgittool=false`, `-Dcoverage=false`,
+`-Dstudio=false` (CodeEdit), `-Dtests=false`.
 
 The demo application is `build/demo/CodeEditDemo`.
 

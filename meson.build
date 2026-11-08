@@ -53,6 +53,7 @@ endif
 
 if get_option('studio')
 	subdir('workspacekit')
+	subdir('studio')
 endif
 
 # The Git tool shows the diff window of gitdiff.

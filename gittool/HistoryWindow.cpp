@@ -390,7 +390,7 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	BWindow(
 		BRect(120, 120, 979, 719),
 		"History",
-		B_DOCUMENT_WINDOW,
+		B_TITLED_WINDOW,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
 	),
 	fRepositoryPath(repositoryPath),
@@ -464,6 +464,7 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 		fEditMode->SetValue(B_CONTROL_ON);
 		SetEditMode(true);
 	}
+	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 

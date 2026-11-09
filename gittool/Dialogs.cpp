@@ -147,6 +147,15 @@ static BStringView *Label(const char *name, const char *text)
 }
 
 
+// The label of a multi-line field, beside its first line.
+static BStringView *TopLabel(const char *text)
+{
+	BStringView *label = new BStringView("label", text);
+	label->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
+	return label;
+}
+
+
 static BScrollView *ReadOnlyText(BTextView *&textView, const std::string &text, float width, float height)
 {
 	textView = new BTextView("text");
@@ -320,12 +329,20 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 				if (field.kind == FieldKind::Password) {
 					text->TextView()->HideTyping(true);
 				}
-				grid->AddItem(text->CreateLabelLayoutItem(), 0, row);
-				grid->AddItem(text->CreateTextViewLayoutItem(), 1, row);
+				// The items fill the row's height by default, so a taller
+				// button in the row would make the text field taller.
+				BLayoutItem *labelItem = text->CreateLabelLayoutItem();
+				BLayoutItem *textItem = text->CreateTextViewLayoutItem();
+				labelItem->SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_VERTICAL_CENTER));
+				textItem->SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_VERTICAL_CENTER));
+				grid->AddItem(labelItem, 0, row);
 				if (field.kind == FieldKind::Commit && repository != nullptr && snapshot != nullptr) {
+					grid->AddItem(textItem, 1, row);
 					BMessage *message = new BMessage(kMsgPickCommit);
 					message->AddInt32("field", static_cast<int32>(i));
 					grid->AddView(new BButton("pick", "Choose" B_UTF8_ELLIPSIS, message), 2, row);
+				} else {
+					grid->AddItem(textItem, 1, row, 2, 1);
 				}
 				control = text;
 				break;
@@ -334,7 +351,7 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 				BTextView *textView = nullptr;
 				BScrollView *scrollView = ReadOnlyText(textView, field.text, 360, 100);
 				textView->MakeEditable(true);
-				grid->AddView(new BStringView("label", field.label.c_str()), 0, row);
+				grid->AddView(TopLabel(field.label.c_str()), 0, row);
 				grid->AddView(scrollView, 1, row, 2, 1);
 				control = textView;
 				break;
@@ -343,7 +360,7 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 				CodeEditView *editor = GitDiff::CreateMessageEditor(field.name.c_str());
 				GitDiff::SetMessageText(editor, field.text);
 				editor->SetTarget(BMessenger(this));
-				grid->AddView(new BStringView("label", field.label.c_str()), 0, row);
+				grid->AddView(TopLabel(field.label.c_str()), 0, row);
 				grid->AddView(GitDiff::MessageScrollView("messageScroll", editor, 12), 1, row, 2, 1);
 				control = editor;
 				break;

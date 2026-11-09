@@ -44,7 +44,7 @@ static std::optional<std::string> DisplayData(const std::optional<std::string> &
 
 CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id, window_feel feel):
 	BWindow(
-		BRect(100, 100, 1199, 799),
+		BRect(50, 50, 989, 709),
 		("Commit " + ShortId(id)).c_str(),
 		B_TITLED_WINDOW_LOOK,
 		feel,
@@ -107,14 +107,16 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	fDiffView = new DiffView();
 
 	BScrollView *headerScroll = GitDiff::MessageScrollView("headerScroll", fHeader, 10);
+	// Split views ignore preferred sizes; the weights are the initial sizes
+	// in pixels.
 	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Split<>(filesSplit)
-		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 1)
-		.Add(fDiffView, 4);
+		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 220)
+		.Add(fDiffView, 720);
 	BSplitView *mainSplit = new BSplitView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Split<>(mainSplit)
-		.Add(headerScroll, 0)
-		.Add(filesSplit, 1);
+		.Add(headerScroll, 170)
+		.Add(filesSplit, 460);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
@@ -124,6 +126,7 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 
 	ShowHeader();
 	LoadChanges();
+	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 

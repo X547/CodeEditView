@@ -38,7 +38,7 @@ static constexpr bigtime_t kRefreshDelay = 300000;
 
 DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string &relativePath):
 	BWindow(
-		BRect(80, 80, 1279, 799),
+		BRect(50, 50, 989, 709),
 		"Git diff",
 		B_DOCUMENT_WINDOW,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
@@ -119,16 +119,22 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		.SetInsets(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING)
 		.Add(messageLabel)
 		.Add(messageScroll)
+		// The check boxes are stacked, so they do not make the file list
+		// column wide.
 		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
-			.Add(fAmend)
-			.Add(fChangeId)
+			.AddGroup(B_VERTICAL, 0)
+				.Add(fAmend)
+				.Add(fChangeId)
+			.End()
 			.AddGlue()
 			.Add(commitButton)
 		.End();
+	// Split views ignore preferred sizes; the weights are the initial sizes
+	// in pixels.
 	BSplitView *leftSplit = new BSplitView(B_VERTICAL, 0);
 	BLayoutBuilder::Split<>(leftSplit)
-		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 1)
-		.Add(commitBox, 0);
+		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 390)
+		.Add(commitBox, 240);
 	fDiffView = new DiffView();
 	BSplitView *splitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
@@ -142,8 +148,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 			.Add(splitView)
 		.End();
 	splitView->SetInsets(0, -1, 0, 0);
-	splitView->AddChild(leftSplit, 1);
-	splitView->AddChild(fDiffView, 4);
+	splitView->AddChild(leftSplit, 250);
+	splitView->AddChild(fDiffView, 690);
 	UpdateChangeId();
 
 	// The index is replaced through index.lock, so the directory is watched.
@@ -161,6 +167,7 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		fFileList->SelectFirstFile(DiffKind::Staged);
 	}
 	UpdateTitle();
+	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 

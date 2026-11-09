@@ -410,9 +410,9 @@ static std::string FirstLine(const std::string &text)
 
 MainWindow::MainWindow(RepositoryPtr repository):
 	BWindow(
-		BRect(60, 60, 1059, 719),
+		BRect(40, 40, 979, 679),
 		"Git",
-		B_DOCUMENT_WINDOW,
+		B_TITLED_WINDOW,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
 	),
 	fRepository(std::move(repository)),
@@ -458,33 +458,31 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	fLog->MakeEditable(false);
 	fLog->SetWordWrap(true);
 	BScrollView *detailScroll = new BScrollView("detailScroll", fDetails, 0, false, true);
-	detailScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 130));
 	BScrollView *logScroll = new BScrollView("logScroll", fLog, 0, false, true);
-	logScroll->SetExplicitPreferredSize(BSize(B_SIZE_UNSET, 70));
 	BScrollView *categoryScroll = new BScrollView("categoryScroll", fCategories, 0, false, false);
-	categoryScroll->SetExplicitPreferredSize(BSize(170, B_SIZE_UNSET));
 	fStatus = new BStringView("status", "");
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fCancelButton = new BButton("Cancel", new BMessage(kMsgCancelNetwork));
 	fCancelButton->SetEnabled(false);
 
-	// Extra space goes to the object list; the category list, details and
-	// log keep their size unless the user moves a splitter.
+	// A split view ignores preferred sizes: it divides its space by the
+	// weights (limited by the minimum sizes), so the weights are the initial
+	// sizes in pixels for the window's initial size.
 	BSplitView *rightSplit = new BSplitView(B_VERTICAL, B_USE_SMALL_SPACING);
 	BLayoutBuilder::Split<>(rightSplit)
-		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 1)
+		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 300)
 			.Add(fButtons)
 			.Add(fObjects)
 		.End()
-		.Add(detailScroll, 0)
-		.Add(logScroll, 0);
+		.Add(detailScroll, 150)
+		.Add(logScroll, 100);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING)
 			.SetInsets(B_USE_SMALL_SPACING)
 			.AddSplit(B_HORIZONTAL, B_USE_SMALL_SPACING)
-				.Add(categoryScroll, 0)
-				.Add(rightSplit, 1)
+				.Add(categoryScroll, 130)
+				.Add(rightSplit, 790)
 			.End()
 			.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 				.Add(fStatus)
@@ -496,6 +494,7 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	Refresh();
 	fCategories->Select(0);
 	UpdateTitle();
+	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 

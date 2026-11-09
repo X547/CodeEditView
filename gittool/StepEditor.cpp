@@ -68,7 +68,7 @@ static bool HasConflictMarkers(const std::string &text)
 
 StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, const StepEditorInput &input):
 	BWindow(
-		BRect(140, 140, 1139, 799),
+		BRect(0, 0, 939, 639),
 		"",
 		B_TITLED_WINDOW_LOOK,
 		B_MODAL_SUBSET_WINDOW_FEEL,
@@ -228,6 +228,8 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 	if (!fFiles.empty()) {
 		fFileList->Select(0);
 	}
+	CenterIn(history->Frame());
+	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 

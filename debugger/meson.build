@@ -35,7 +35,8 @@ if get_option('debugger')
 			'SourceWindow.cpp',
 		),
 		dependencies: [debugKitDep],
-		install: true
+		install: true,
+		install_dir: appInstallDir
 	)
 endif
 

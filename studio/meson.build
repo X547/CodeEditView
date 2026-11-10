@@ -15,7 +15,8 @@ executable(
 	# BWindowStack is private API.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface', '../demo'),
 	dependencies: [debugKitDep, coverageUiDep, findKitDep],
-	install: true
+	install: true,
+	install_dir: appInstallDir
 )
 
 # Signature, single launch and file types; the installed executable gets
@@ -37,7 +38,7 @@ if rc.found() and xres.found() and mimeset.found()
 		xres.full_path(),
 		mimeset.full_path(),
 		codeEditResources,
-		get_option('bindir') / 'CodeEdit'
+		appInstallDir / 'CodeEdit'
 	)
 else
 	warning('rc, xres or mimeset not found: CodeEdit is installed without file types')

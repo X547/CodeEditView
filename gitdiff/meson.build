@@ -39,7 +39,8 @@ if get_option('gitdiff')
 			'GitDiffApp.cpp',
 		),
 		dependencies: [gitDiffUiDep],
-		install: true
+		install: true,
+		install_dir: appInstallDir
 	)
 endif
 

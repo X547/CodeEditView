@@ -41,7 +41,8 @@ if get_option('coverage')
 			'CoverageWindow.cpp',
 		),
 		dependencies: [coverageUiDep, findKitDep],
-		install: true
+		install: true,
+		install_dir: appInstallDir
 	)
 endif
 

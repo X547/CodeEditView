@@ -51,7 +51,8 @@ codeEditViewLib = shared_library(
 	include_directories: [publicInc, privateInc],
 	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep],
 	version: meson.project_version(),
-	install: true
+	install: true,
+	install_dir: libInstallDir
 )
 
 codeEditViewDep = declare_dependency(

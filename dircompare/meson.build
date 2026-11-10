@@ -27,7 +27,8 @@ executable(
 	# BColumnListView is private API (libcolumnlistview.a), as in the debugger.
 	include_directories: include_directories('/boot/system/develop/headers/private/interface'),
 	dependencies: [dirCompareCoreDep, cpp.find_library('columnlistview'), cpp.find_library('tracker')],
-	install: true
+	install: true,
+	install_dir: appInstallDir
 )
 
 if get_option('tests')

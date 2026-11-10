@@ -8,5 +8,6 @@ executable(
 		'OutlineView.cpp',
 	),
 	dependencies: [codeEditViewDep, findKitDep, trackerDep],
-	install: true
+	install: true,
+	install_dir: appInstallDir
 )

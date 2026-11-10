@@ -17,6 +17,12 @@ beDep = cpp.find_library('be')
 treeSitterDep = dependency('tree-sitter', version: '>= 0.25')
 python = find_program('python3')
 
+# Installed layout: the applications in $prefix/apps/<project>, the shared
+# library in its lib directory, where Haiku looks for the libraries of the
+# applications beside it (%A/lib).
+appInstallDir = 'apps' / meson.project_name()
+libInstallDir = appInstallDir / 'lib'
+
 # The generated grammar parsers are large; build them without debug info.
 grammarOptions = ['debug=false', 'optimization=2', 'warning_level=0']
 treeSitterCDep = subproject('tree-sitter-c', default_options: grammarOptions).get_variable('tree_sitter_c_dep')

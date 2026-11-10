@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include <ctype.h>
+
 #include <exception>
 #include <functional>
 
@@ -22,6 +24,7 @@
 #include <SpaceLayoutItem.h>
 #include <SplitView.h>
 #include <StringView.h>
+#include <TextControl.h>
 #include <TextView.h>
 
 #include "DiffView.h"
@@ -42,6 +45,13 @@ using DiffKit::ShowError;
 
 // Delay before refreshing after a change on disk; changes come in bursts.
 static constexpr bigtime_t kRefreshDelay = 300000;
+// Rows of tags shown at most: Haiku's column list view adds and removes rows
+// in quadratic time, and a list of tens of thousands of tags is no use
+// without the filter anyway.
+static constexpr size_t kTagLimit = 1000;
+
+static constexpr uint32 kMsgSnapshotLoaded = 'GTSL';
+static constexpr uint32 kMsgTagFilter = 'GTtf';
 
 
 enum class Action {
@@ -455,6 +465,8 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	fObjects->SetSelectionMessage(new BMessage(kMsgObjectSelected));
 	fObjects->SetInvocationMessage(new BMessage(kMsgObjectInvoked));
 
+	fSnapshotLoader = std::make_unique<DiffKit::BackgroundLoader<std::pair<uint64, Snapshot>>>(BMessenger(this),
+		kMsgSnapshotLoaded);
 	fButtons = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
 	ShowCategoryButtons();
 
@@ -526,6 +538,13 @@ void MainWindow::ShowCategoryButtons()
 		fButtons->AddChild(new BButton(item.label, ActionMessage(item.action)));
 	}
 	layout->AddItem(BSpaceLayoutItem::CreateGlue());
+	fTagFilter = nullptr;
+	if (fCategory == Category::Tags) {
+		fTagFilter = new BTextControl("tagFilter", "Filter:", fTagFilterText.c_str(), nullptr);
+		fTagFilter->SetModificationMessage(new BMessage(kMsgTagFilter));
+		fTagFilter->SetExplicitMinSize(BSize(160, B_SIZE_UNSET));
+		fButtons->AddChild(fTagFilter);
+	}
 }
 
 
@@ -560,23 +579,62 @@ void MainWindow::UpdateTitle()
 void MainWindow::Refresh()
 {
 	fRefreshRunner.reset();
-	bool sameTags = false;
-	try {
-		Snapshot snapshot = Snapshot::Load(fRepository.get());
-		// Unchanged tags keep their details, and their rows are not rebuilt.
-		sameTags = SameTags(fSnapshot.tags, snapshot.tags);
-		if (sameTags) {
-			snapshot.tags = std::move(fSnapshot.tags);
+	const uint64 request = ++fRefreshRequest;
+	const std::string path = fRepositoryPath;
+	fSnapshotLoader->Load([path, request]() {
+		RepositoryPtr repository = OpenRepository(path);
+		return std::pair<uint64, Snapshot>(request, Snapshot::Load(repository.get()));
+	});
+}
+
+
+void MainWindow::AfterRefresh(std::function<void()> work)
+{
+	fAfterRefresh.emplace_back(fRefreshRequest, std::move(work));
+}
+
+
+void MainWindow::SnapshotLoaded()
+{
+	std::string error;
+	std::optional<std::pair<uint64, Snapshot>> loaded = fSnapshotLoader->Take(error);
+	if (!loaded.has_value()) {
+		if (!error.empty()) {
+			AppendLog("Cannot read the repository: " + error);
 		}
-		fSnapshot = std::move(snapshot);
-	} catch (const std::exception &e) {
-		AppendLog(std::string("Cannot read the repository: ") + e.what());
+		return;
 	}
+	const uint64 request = loaded->first;
+	Snapshot &snapshot = loaded->second;
+	// Unchanged tags keep their details, and their rows are not rebuilt.
+	const bool sameTags = fLoaded && SameTags(fSnapshot.tags, snapshot.tags);
+	if (sameTags) {
+		snapshot.tags = std::move(fSnapshot.tags);
+	}
+	fSnapshot = std::move(snapshot);
+	fLoaded = true;
 	FillCategories();
 	if (fCategory != Category::Tags || !sameTags) {
 		FillObjects();
 	}
 	ShowDetails();
+
+	std::vector<std::function<void()>> ready;
+	for (auto it = fAfterRefresh.begin(); it != fAfterRefresh.end();) {
+		if (it->first <= request) {
+			ready.push_back(std::move(it->second));
+			it = fAfterRefresh.erase(it);
+		} else {
+			++it;
+		}
+	}
+	for (std::function<void()> &work : ready) {
+		try {
+			work();
+		} catch (const std::exception &e) {
+			ShowError(e.what());
+		}
+	}
 }
 
 
@@ -598,7 +656,8 @@ void MainWindow::FillCategories()
 	static const char *kNames[] = {"Worktrees", "Branches", "Remotes", "Tags"};
 	for (int32 i = 0; i < 4; i++) {
 		BStringItem *item = static_cast<BStringItem*>(fCategories->ItemAt(i));
-		item->SetText((std::string(kNames[i]) + " (" + std::to_string(counts[i]) + ")").c_str());
+		const std::string count = fLoaded ? std::to_string(counts[i]) : std::string(B_UTF8_ELLIPSIS);
+		item->SetText((std::string(kNames[i]) + " (" + count + ")").c_str());
 	}
 	fCategories->Invalidate();
 }
@@ -617,14 +676,25 @@ void MainWindow::FillObjects()
 		column->SetTitle(title != nullptr ? title : "");
 		fObjects->SetColumnVisible(i, title != nullptr);
 	}
+	// Changed titles are not redrawn by the title view itself.
+	for (int32 i = 0; BView *child = fObjects->ChildAt(i); i++) {
+		child->Invalidate();
+	}
 
-	auto addRow = [this](ObjectKind kind, const std::string &name, const std::vector<std::string> &fields,
+	// Top rows are added together at the end: one by one, each addition
+	// takes time in proportion to the rows before it.
+	BList topRows;
+	auto addRow = [this, &topRows](ObjectKind kind, const std::string &name, const std::vector<std::string> &fields,
 		BRow *parent = nullptr) {
 		ObjectRow *row = new ObjectRow(kind, name);
 		for (size_t i = 0; i < fields.size(); i++) {
 			row->SetField(new BStringField(fields[i].c_str()), static_cast<int32>(i));
 		}
-		fObjects->AddRow(row, parent);
+		if (parent != nullptr) {
+			fObjects->AddRow(row, parent);
+		} else {
+			topRows.AddItem(row);
+		}
 		return row;
 	};
 
@@ -643,7 +713,11 @@ void MainWindow::FillObjects()
 			break;
 		case Category::Remotes:
 			for (const RemoteInfo &remote : fSnapshot.remotes) {
-				BRow *parent = addRow(ObjectKind::Remote, remote.name, {remote.name, remote.url});
+				// The children need their parent in the list.
+				ObjectRow *parent = new ObjectRow(ObjectKind::Remote, remote.name);
+				parent->SetField(new BStringField(remote.name.c_str()), 0);
+				parent->SetField(new BStringField(remote.url.c_str()), 1);
+				fObjects->AddRow(parent);
 				for (const RemoteCopyInfo &copy : remote.copies) {
 					addRow(ObjectKind::RemoteCopy, copy.name, {copy.name, ShortId(copy.commit) + " " + copy.summary},
 						parent);
@@ -651,19 +725,47 @@ void MainWindow::FillObjects()
 				fObjects->ExpandOrCollapse(parent, true);
 			}
 			break;
-		case Category::Tags:
-			for (size_t i = 0; i < fSnapshot.tags.size(); i++) {
-				ObjectRow *row = new ObjectRow(ObjectKind::Tag, fSnapshot.tags[i].name);
-				row->SetField(new BStringField(fSnapshot.tags[i].name.c_str()), 0);
+		case Category::Tags: {
+			// Newest (highest) names first; at most kTagLimit of those that
+			// contain the filter text, ignoring case.
+			std::string filter;
+			for (char c : fTagFilterText) {
+				filter += static_cast<char>(tolower(static_cast<unsigned char>(c)));
+			}
+			size_t matches = 0;
+			for (size_t i = fSnapshot.tags.size(); i-- > 0;) {
+				const std::string &name = fSnapshot.tags[i].name;
+				if (!filter.empty()) {
+					std::string lower;
+					for (char c : name) {
+						lower += static_cast<char>(tolower(static_cast<unsigned char>(c)));
+					}
+					if (lower.find(filter) == std::string::npos) {
+						continue;
+					}
+				}
+				if (++matches > kTagLimit) {
+					continue;
+				}
+				ObjectRow *row = new ObjectRow(ObjectKind::Tag, name);
+				row->SetField(new BStringField(name.c_str()), 0);
 				for (int32 column = 1; column <= 3; column++) {
 					row->SetField(new LazyField([this, i, column]() {
 						return TagText(i, column);
 					}), column);
 				}
-				fObjects->AddRow(row);
+				topRows.AddItem(row);
+			}
+			if (matches > kTagLimit) {
+				ObjectRow *row = new ObjectRow(ObjectKind::None, std::string());
+				row->SetField(new BStringField((B_UTF8_ELLIPSIS " " + std::to_string(matches - kTagLimit)
+					+ " more; type in the filter to find them").c_str()), 0);
+				topRows.AddItem(row);
 			}
 			break;
+		}
 	}
+	fObjects->AddRows(&topRows, -1, nullptr);
 
 	for (int32 i = 0; i < fObjects->CountRows(); i++) {
 		ObjectRow *row = static_cast<ObjectRow*>(fObjects->RowAt(i));
@@ -1558,8 +1660,13 @@ void MainWindow::RunBranchAction(Action action)
 			const std::string remote = UpstreamRemote(repository, branch.name);
 			const std::string serverBranch = branch.upstream.substr(std::min(remote.size() + 1, branch.upstream.size()));
 			Execute(PlanDeleteBranches(repository, fSnapshot, {branch.name}));
-			if (deleteOnServer && fSnapshot.FindBranch(branch.name) == nullptr) {
-				Execute(PlanDeleteOnServer(fSnapshot, remote, "refs/heads/" + serverBranch));
+			if (deleteOnServer) {
+				const std::string name = branch.name;
+				AfterRefresh([this, name, remote, serverBranch]() {
+					if (fSnapshot.FindBranch(name) == nullptr) {
+						Execute(PlanDeleteOnServer(fSnapshot, remote, "refs/heads/" + serverBranch));
+					}
+				});
 			}
 			break;
 		}
@@ -1603,8 +1710,12 @@ void MainWindow::RunRemoteAction(Action action)
 			}
 			const std::string name = form.Text("name");
 			Execute(PlanAddRemote(repository, fSnapshot, name, form.Text("url"), form.Text("pushUrl")));
-			if (form.Checked("download") && fSnapshot.FindRemote(name) != nullptr) {
-				Execute(PlanDownload(fSnapshot, name, false, false));
+			if (form.Checked("download")) {
+				AfterRefresh([this, name]() {
+					if (fSnapshot.FindRemote(name) != nullptr) {
+						Execute(PlanDownload(fSnapshot, name, false, false));
+					}
+				});
 			}
 			return;
 		}
@@ -2024,6 +2135,16 @@ void MainWindow::MessageReceived(BMessage *message)
 		case kMsgRefresh:
 		case kMsgRefreshTimer:
 			Refresh();
+			break;
+		case kMsgSnapshotLoaded:
+			SnapshotLoaded();
+			break;
+		case kMsgTagFilter:
+			if (fTagFilter != nullptr && fTagFilterText != fTagFilter->Text()) {
+				fTagFilterText = fTagFilter->Text();
+				FillObjects();
+				ShowDetails();
+			}
 			break;
 		case B_NODE_MONITOR:
 			ScheduleRefresh();

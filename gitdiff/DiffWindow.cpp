@@ -100,6 +100,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	),
 	fRepository(std::move(repository))
 {
+	fStatusLoader = std::make_unique<DiffKit::BackgroundLoader<std::vector<StatusEntry>>>(BMessenger(this),
+		kMsgStatusLoaded);
 	fChangeView = new ChangeView("changes", MessageMode::Editable, 8);
 	fChangeView->ShareTopBorder();
 	fDiffView = fChangeView->Diff();
@@ -175,14 +177,9 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		watch_node(&fGitDirNode, B_WATCH_DIRECTORY, this);
 	}
 
-	// The selection message shows the file once the window is laid out.
+	// The first status selects the file.
+	fInitialPath = relativePath;
 	Refresh();
-	const bool shown = !relativePath.empty()
-		&& (fChangeView->Select(FileKey(relativePath, DiffKind::Unstaged))
-			|| fChangeView->Select(FileKey(relativePath, DiffKind::Staged)));
-	if (!shown && !fChangeView->SelectFirst(0)) {
-		fChangeView->SelectFirst(1);
-	}
 	UpdateTitle();
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
@@ -238,8 +235,8 @@ void DiffWindow::ShowPath(const std::string &path)
 		return;
 	}
 	fOpened.insert(path);
+	fPendingSelect = FileKey(path, DiffKind::Unstaged);
 	Refresh();
-	fChangeView->Select(FileKey(path, DiffKind::Unstaged));
 }
 
 
@@ -305,13 +302,39 @@ void DiffWindow::ChangesCopied(int pane)
 void DiffWindow::Refresh()
 {
 	fRefreshRunner.reset();
-	std::vector<StatusEntry> status;
-	try {
-		status = fRepository->Status();
-	} catch (const std::exception &e) {
-		fprintf(stderr, "Git diff: %s\n", e.what());
+	const std::string workdir = fRepository->Workdir();
+	fStatusLoader->Load([workdir]() {
+		Repository repository(workdir);
+		return repository.Status();
+	});
+}
+
+
+void DiffWindow::StatusLoaded()
+{
+	std::string error;
+	std::optional<std::vector<StatusEntry>> loaded = fStatusLoader->Take(error);
+	if (!loaded.has_value()) {
+		if (!error.empty()) {
+			fprintf(stderr, "Git diff: %s\n", error.c_str());
+		}
+		return;
 	}
+	const std::vector<StatusEntry> &status = *loaded;
 	fChangeView->SetSections(FileSections(status, fOpened));
+	if (fFirstStatus) {
+		fFirstStatus = false;
+		const bool shown = !fInitialPath.empty()
+			&& (fChangeView->Select(FileKey(fInitialPath, DiffKind::Unstaged))
+				|| fChangeView->Select(FileKey(fInitialPath, DiffKind::Staged)));
+		if (!shown && !fChangeView->SelectFirst(0)) {
+			fChangeView->SelectFirst(1);
+		}
+	}
+	if (fPendingSelect.has_value()) {
+		fChangeView->Select(*fPendingSelect);
+		fPendingSelect.reset();
+	}
 
 	std::set<std::string> listed = fOpened;
 	for (const StatusEntry &entry : status) {
@@ -553,6 +576,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgRefreshTimer:
 		case kMsgStatusChanged:
 			Refresh();
+			break;
+		case kMsgStatusLoaded:
+			StatusLoaded();
 			break;
 		case B_NODE_MONITOR:
 			ScheduleRefresh();

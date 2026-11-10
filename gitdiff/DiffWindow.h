@@ -2,13 +2,16 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <Node.h>
 #include <Referenceable.h>
 #include <Window.h>
 
+#include "BackgroundLoader.h"
 #include "DiffView.h"
 #include "FileDocument.h"
 #include "Repository.h"
@@ -34,6 +37,11 @@ private:
 	std::map<std::string, BReference<FileDocument>> fDocuments;
 	// Files chosen in the path menu; listed until the window closes.
 	std::set<std::string> fOpened;
+	// The status is read on a thread; files to select wait for it.
+	std::unique_ptr<DiffKit::BackgroundLoader<std::vector<StatusEntry>>> fStatusLoader;
+	bool fFirstStatus = true;
+	std::string fInitialPath;
+	std::optional<std::string> fPendingSelect;
 	ChangeView *fChangeView {};
 	DiffView *fDiffView {};
 	// The document and diff shown in fDiffView.
@@ -54,7 +62,9 @@ private:
 	// Lists a file in "Other files" unless it has unstaged changes, and
 	// shows it.
 	void ShowPath(const std::string &path);
+	// Reads the status on a thread; StatusLoaded() updates the window.
 	void Refresh();
+	void StatusLoaded();
 	void ScheduleRefresh();
 	void UpdateTitle();
 	void Save(bool all);

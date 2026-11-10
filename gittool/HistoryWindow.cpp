@@ -397,7 +397,7 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fRepository(OpenRepository(repositoryPath)),
 	fStats(std::make_unique<StatsLoader>(repositoryPath, BMessenger(this)))
 {
-	Reload();
+	fLoader = std::make_unique<DiffKit::BackgroundLoader<Loaded>>(BMessenger(this), kMsgHistoryLoaded);
 	fRefField = new BMenuField("refs", "History of:", RefMenu(fSnapshot, spec));
 	fSpecField = new BTextControl("spec", nullptr, spec.c_str(), nullptr);
 	BButton *show = new BButton("Show", new BMessage(kMsgHistoryOf));
@@ -457,13 +457,10 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 			.Add(fApply)
 		.End();
 
-	ShowHistoryOf(spec);
-	if (!onto.empty() && fEditMode->IsEnabled()) {
-		StartRebase(onto);
-	} else if (edit && fEditMode->IsEnabled()) {
-		fEditMode->SetValue(B_CONTROL_ON);
-		SetEditMode(true);
-	}
+	// The snapshot says whether spec is a branch, so edit mode waits for it.
+	fPendingEdit = edit;
+	fPendingOnto = onto;
+	ShowHistoryOf(spec, true);
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
@@ -479,7 +476,7 @@ void HistoryWindow::Reload()
 }
 
 
-void HistoryWindow::ShowHistoryOf(const std::string &spec)
+void HistoryWindow::ShowHistoryOf(const std::string &spec, bool withSnapshot)
 {
 	if (!ConfirmDiscard()) {
 		return;
@@ -490,12 +487,61 @@ void HistoryWindow::ShowHistoryOf(const std::string &spec)
 	fSpecField->SetText(spec.c_str());
 	SetTitle(("History of " + spec).c_str());
 	fCommits.clear();
-	try {
-		fCommits = History(fRepository.get(), ResolveCommit(fRepository.get(), spec), kHistoryLimit);
-	} catch (const std::exception &e) {
-		fStatus->SetText(e.what());
-	}
 	FillList();
+	fStatus->SetText("Reading the history" B_UTF8_ELLIPSIS);
+	fEditMode->SetEnabled(false);
+	const std::string path = fRepositoryPath;
+	fLoader->Load([path, spec, withSnapshot]() {
+		RepositoryPtr repository = OpenRepository(path);
+		Loaded loaded;
+		loaded.spec = spec;
+		if (withSnapshot) {
+			loaded.snapshot = Snapshot::Load(repository.get());
+			loaded.labels = ReferenceLabels(repository.get());
+		}
+		try {
+			loaded.commits = History(repository.get(), ResolveCommit(repository.get(), spec), kHistoryLimit);
+		} catch (const std::exception &e) {
+			loaded.historyError = e.what();
+		}
+		return loaded;
+	});
+}
+
+
+void HistoryWindow::HistoryLoaded()
+{
+	std::string error;
+	std::optional<Loaded> loaded = fLoader->Take(error);
+	if (!loaded.has_value()) {
+		if (!error.empty()) {
+			fStatus->SetText(error.c_str());
+		}
+		return;
+	}
+	if (loaded->snapshot.has_value()) {
+		fSnapshot = std::move(*loaded->snapshot);
+		fLabels = std::move(loaded->labels);
+		FillRefMenu(fRefField->Menu(), fSnapshot, loaded->spec);
+	}
+	if (loaded->spec != fSpec) {
+		return;
+	}
+	fCommits = std::move(loaded->commits);
+	FillList();
+	if (!loaded->historyError.empty()) {
+		fStatus->SetText(loaded->historyError.c_str());
+	}
+	const bool edit = fPendingEdit;
+	const std::string onto = fPendingOnto;
+	fPendingEdit = false;
+	fPendingOnto.clear();
+	if (!onto.empty() && fEditMode->IsEnabled()) {
+		StartRebase(onto);
+	} else if (edit && fEditMode->IsEnabled()) {
+		fEditMode->SetValue(B_CONTROL_ON);
+		SetEditMode(true);
+	}
 }
 
 
@@ -510,13 +556,20 @@ void HistoryWindow::FillList()
 	fList->SetDropLimit(fEdit != nullptr ? static_cast<int32>(fEdit->Steps().size()) : -1);
 
 	fStats->Clear();
-	auto addRow = [this](const git_oid &commit, int32 step, const std::string &state, const std::string &summary,
-		const git_oid &statsCommit) {
+	// The rows are added together at the end: one by one, each addition
+	// takes time in proportion to the rows before it.
+	BList newRows;
+	auto addRow = [this, &newRows](const git_oid &commit, int32 step, const std::string &state,
+		const std::string &summary, const git_oid &statsCommit, const CommitInfo *known = nullptr) {
 		CommitRow *row = new CommitRow(commit, step, statsCommit);
 		CommitInfo info;
-		try {
-			info = ReadCommit(fRepository.get(), commit);
-		} catch (const GitError &e) {
+		if (known != nullptr) {
+			info = *known;
+		} else {
+			try {
+				info = ReadCommit(fRepository.get(), commit);
+			} catch (const GitError &e) {
+			}
 		}
 		std::string labels;
 		const auto found = fLabels.find(OidString(statsCommit));
@@ -539,7 +592,7 @@ void HistoryWindow::FillList()
 			row->SetField(new StatsField(statsCommit), column);
 		}
 		row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
-		fList->AddRow(row);
+		newRows.AddItem(row);
 		return row;
 	};
 
@@ -559,9 +612,10 @@ void HistoryWindow::FillList()
 		}
 	} else {
 		for (const CommitInfo &commit : fCommits) {
-			rows.push_back(addRow(commit.id, -1, std::string(), std::string(), commit.id));
+			rows.push_back(addRow(commit.id, -1, std::string(), std::string(), commit.id, &commit));
 		}
 	}
+	fList->AddRows(&newRows, -1, nullptr);
 	for (CommitRow *row : rows) {
 		if (selected.count(OidString(row->commit)) > 0) {
 			fList->AddToSelection(row);
@@ -875,9 +929,8 @@ void HistoryWindow::Apply()
 	}
 	Reload();
 	fEdit.reset();
+	fPendingEdit = true;
 	ShowHistoryOf(fSpec);
-	fEditMode->SetValue(B_CONTROL_ON);
-	SetEditMode(true);
 }
 
 
@@ -1083,6 +1136,9 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgStatsReady:
 			StatsReady(message);
+			break;
+		case kMsgHistoryLoaded:
+			HistoryLoaded();
 			break;
 		case kMsgDragCommits:
 			Dropped(message);

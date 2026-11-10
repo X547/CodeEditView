@@ -13,6 +13,7 @@
 class BCheckBox;
 class BColumnListView;
 class BButton;
+class BMenu;
 class BMenuField;
 class BPopUpMenu;
 class BTextControl;
@@ -114,6 +115,8 @@ bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::strin
 // The branches, remote copies, worktree positions and recent tags; items
 // send kMsgHistoryOf with "spec", the one equal to current is marked.
 BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current);
+// Replaces the items of a menu by those of RefMenu.
+void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &current);
 
 
 // Shows the preview of a plan; true if the user chose to run it, with the

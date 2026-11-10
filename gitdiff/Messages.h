@@ -29,6 +29,8 @@ constexpr uint32 kMsgShowPath = 'GDsp';
 // The index or a working tree file was written; the status may differ.
 constexpr uint32 kMsgStatusChanged = 'GDsc';
 constexpr uint32 kMsgRefreshTimer = 'GDrt';
+// The status was read on a thread.
+constexpr uint32 kMsgStatusLoaded = 'GDsl';
 constexpr uint32 kMsgWindowClosed = 'GDwc';
 
 

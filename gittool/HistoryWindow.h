@@ -8,6 +8,7 @@
 
 #include <Window.h>
 
+#include "BackgroundLoader.h"
 #include "HistoryEdit.h"
 #include "Snapshot.h"
 #include "StatsLoader.h"
@@ -46,6 +47,20 @@ private:
 	// Branches, remote copies and tags by commit (ReferenceLabels).
 	std::map<std::string, std::vector<std::string>> fLabels;
 
+	// What is read on a thread: the history, and with it on opening the
+	// snapshot and the labels.
+	struct Loaded {
+		std::string spec;
+		std::vector<CommitInfo> commits;
+		std::string historyError;
+		std::optional<Snapshot> snapshot;
+		std::map<std::string, std::vector<std::string>> labels;
+	};
+	std::unique_ptr<DiffKit::BackgroundLoader<Loaded>> fLoader;
+	// Asked for when opening; done once the first history is shown.
+	bool fPendingEdit {};
+	std::string fPendingOnto;
+
 	BMenuField *fRefField {};
 	BTextControl *fSpecField {};
 	BCheckBox *fEditMode {};
@@ -62,8 +77,12 @@ private:
 	BButton *fReset {};
 	BButton *fApply {};
 
+	// Reads the snapshot and labels now (for operations).
 	void Reload();
-	void ShowHistoryOf(const std::string &spec);
+	// Shows the history of spec once it is read; withSnapshot reads the
+	// snapshot and labels too.
+	void ShowHistoryOf(const std::string &spec, bool withSnapshot = false);
+	void HistoryLoaded();
 	void FillList();
 	void UpdateControls();
 	std::vector<size_t> SelectedSteps() const;

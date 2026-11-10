@@ -44,6 +44,9 @@ constexpr uint32 kMsgShowCommit = 'GTsh';
 // "parent" (int32).
 constexpr uint32 kMsgSetParent = 'GTsp';
 
+// History window: a history read on a thread.
+constexpr uint32 kMsgHistoryLoaded = 'GThl';
+
 // History window.
 constexpr uint32 kMsgEditMode = 'GTem';
 constexpr uint32 kMsgRemoveSteps = 'GTrs';

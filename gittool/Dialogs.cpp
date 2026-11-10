@@ -517,6 +517,16 @@ static void AddRefItem(BMenu *menu, const std::string &label, const std::string 
 BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current)
 {
 	BPopUpMenu *menu = new BPopUpMenu("refs");
+	FillRefMenu(menu, snapshot, current);
+	return menu;
+}
+
+
+void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &current)
+{
+	while (BMenuItem *item = menu->RemoveItem(static_cast<int32>(0))) {
+		delete item;
+	}
 	for (const WorktreeInfo &worktree : snapshot.worktrees) {
 		if (worktree.commit.has_value()) {
 			AddRefItem(menu, "Worktree " + worktree.path, OidString(*worktree.commit), current);
@@ -548,7 +558,6 @@ BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current)
 		more->SetEnabled(false);
 		menu->AddItem(more);
 	}
-	return menu;
 }
 
 

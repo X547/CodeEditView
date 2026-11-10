@@ -1,14 +1,17 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Messenger.h>
 #include <Node.h>
 #include <Window.h>
 
+#include "BackgroundLoader.h"
 #include "NetworkTask.h"
 #include "Plan.h"
 #include "Snapshot.h"
@@ -21,6 +24,7 @@ class BListView;
 class BMenu;
 class BMessageRunner;
 class BStringView;
+class BTextControl;
 class BTextView;
 
 
@@ -57,7 +61,16 @@ private:
 	// tasks.
 	std::string fRepositoryPath;
 	Snapshot fSnapshot;
+	// Whether a snapshot was read since the window opened.
+	bool fLoaded {};
 	Category fCategory = Category::Worktrees;
+	// Snapshots are read on a thread; each request has a number, and work
+	// waiting for a refresh runs once a snapshot of its request arrives.
+	std::unique_ptr<DiffKit::BackgroundLoader<std::pair<uint64, Snapshot>>> fSnapshotLoader;
+	uint64 fRefreshRequest {};
+	std::vector<std::pair<uint64, std::function<void()>>> fAfterRefresh;
+	BTextControl *fTagFilter {};
+	std::string fTagFilterText;
 
 	BListView *fCategories {};
 	BColumnListView *fObjects {};
@@ -75,7 +88,12 @@ private:
 
 	void ShowCategoryButtons();
 	void Watch();
+	// Reads the repository again on a thread; the window is updated when the
+	// snapshot arrives.
 	void Refresh();
+	void SnapshotLoaded();
+	// Runs work once the snapshot of the latest refresh is shown.
+	void AfterRefresh(std::function<void()> work);
 	void ScheduleRefresh();
 	void FillCategories();
 	void FillObjects();

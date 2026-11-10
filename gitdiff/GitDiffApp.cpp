@@ -12,6 +12,7 @@
 #include <Path.h>
 
 #include "DiffView.h"
+#include "FreezeWatchdog.h"
 #include "DiffWindow.h"
 #include "Git.h"
 #include "Messages.h"
@@ -61,6 +62,7 @@ public:
 GitDiffApp::GitDiffApp():
 	BApplication(kAppSignature)
 {
+	DiffKit::StartFreezeWatchdog("CodeEditGitDiff");
 }
 
 

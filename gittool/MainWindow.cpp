@@ -29,6 +29,7 @@
 
 #include "DiffView.h"
 #include "DiffWindow.h"
+#include "Ask.h"
 #include "Dialogs.h"
 #include "HistoryEdit.h"
 #include "HistoryWindow.h"
@@ -2102,9 +2103,11 @@ void MainWindow::RebaseBranch(const std::string &branch, const std::string &onto
 		+ " has conflicts. Resolve them in the history editor?").c_str(), "Cancel", "Open the editor", nullptr,
 		B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	if (alert->Go() == 1) {
-		ShowHistory(branch, true, onto);
-	}
+	DiffKit::Ask(this, alert, [this, branch, onto](int32 button) {
+		if (button == 1) {
+			ShowHistory(branch, true, onto);
+		}
+	});
 }
 
 
@@ -2202,15 +2205,35 @@ void MainWindow::WindowActivated(bool active)
 }
 
 
+// During a network operation, the window stays open and asks; the answer
+// closes it, or asks the application to quit again if the request came from
+// there.
 bool MainWindow::QuitRequested()
 {
-	if (fTask != nullptr) {
-		BAlert *alert = new BAlert("Git", "A network operation is running. Cancel it and close?", "Keep running",
-			"Cancel and close", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
-		alert->SetShortcut(0, B_ESCAPE);
-		if (alert->Go() != 1) {
-			return false;
+	if (fTask != nullptr && !fCloseConfirmed) {
+		if (!fAskingClose) {
+			fAskingClose = true;
+			// The application asks its windows from its own thread.
+			const bool fromApplication = find_thread(nullptr) != Thread();
+			BAlert *alert = new BAlert("Git", "A network operation is running. Cancel it and close?", "Keep running",
+				"Cancel and close", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			DiffKit::Ask(this, alert, [this, fromApplication](int32 button) {
+				fAskingClose = false;
+				if (button != 1) {
+					return;
+				}
+				fCloseConfirmed = true;
+				if (fromApplication) {
+					be_app->PostMessage(B_QUIT_REQUESTED);
+				} else {
+					PostMessage(B_QUIT_REQUESTED);
+				}
+			});
 		}
+		return false;
+	}
+	if (fTask != nullptr) {
 		fTask->Cancel();
 		fTask.reset();
 	}

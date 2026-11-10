@@ -5,6 +5,7 @@
 #include <set>
 
 #include <Alert.h>
+#include <Application.h>
 #include <Beep.h>
 #include <Button.h>
 #include <CheckBox.h>
@@ -21,6 +22,7 @@
 
 #include "CommitWindow.h"
 #include "DiffView.h"
+#include "Ask.h"
 #include "Dialogs.h"
 #include "Messages.h"
 #include "Operations.h"
@@ -478,9 +480,14 @@ void HistoryWindow::Reload()
 
 void HistoryWindow::ShowHistoryOf(const std::string &spec, bool withSnapshot)
 {
-	if (!ConfirmDiscard()) {
-		return;
-	}
+	ConfirmDiscard([this, spec, withSnapshot]() {
+		LoadHistory(spec, withSnapshot);
+	});
+}
+
+
+void HistoryWindow::LoadHistory(const std::string &spec, bool withSnapshot)
+{
 	fEdit.reset();
 	fEditMode->SetValue(B_CONTROL_OFF);
 	fSpec = spec;
@@ -704,27 +711,34 @@ void HistoryWindow::UpdateControls()
 }
 
 
-bool HistoryWindow::ConfirmDiscard()
+void HistoryWindow::ConfirmDiscard(std::function<void()> discard, std::function<void()> keep)
 {
 	if (fEdit == nullptr || !fEdit->HasChanges()) {
-		return true;
+		discard();
+		return;
 	}
 	BAlert *alert = new BAlert("History", "Discard the pending history edits?", "Cancel", "Discard", nullptr,
 		B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	return alert->Go() == 1;
+	DiffKit::Ask(this, alert, [discard = std::move(discard), keep = std::move(keep)](int32 button) {
+		if (button == 1) {
+			discard();
+		} else if (keep) {
+			keep();
+		}
+	});
 }
 
 
 void HistoryWindow::SetEditMode(bool edit)
 {
 	if (!edit) {
-		if (!ConfirmDiscard()) {
+		ConfirmDiscard([this]() {
+			fEdit.reset();
+			FillList();
+		}, [this]() {
 			fEditMode->SetValue(B_CONTROL_ON);
-			return;
-		}
-		fEdit.reset();
-		FillList();
+		});
 		return;
 	}
 	try {
@@ -881,9 +895,14 @@ void HistoryWindow::StepEdited(BMessage *message)
 
 void HistoryWindow::StartRebase(const std::string &onto)
 {
-	if (!ConfirmDiscard()) {
-		return;
-	}
+	ConfirmDiscard([this, onto]() {
+		StartRebaseNow(onto);
+	});
+}
+
+
+void HistoryWindow::StartRebaseNow(const std::string &onto)
+{
 	try {
 		const git_oid commit = ResolveCommit(fRepository.get(), onto);
 		fEdit = std::make_unique<HistoryEdit>(fRepository.get(), fSpec, commit, kHistoryLimit);
@@ -1101,10 +1120,12 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			Reword();
 			break;
 		case kMsgResetEdits:
-			if (ConfirmDiscard()) {
-				fEdit->Reset();
-				FillList();
-			}
+			ConfirmDiscard([this]() {
+				if (fEdit != nullptr) {
+					fEdit->Reset();
+					FillList();
+				}
+			});
 			break;
 		case kMsgRebaseOnto:
 			ChooseRebase();
@@ -1150,9 +1171,30 @@ void HistoryWindow::MessageReceived(BMessage *message)
 }
 
 
+// With pending edits, the window stays open and asks; the answer closes
+// it, or asks the application to quit again if the request came from there.
 bool HistoryWindow::QuitRequested()
 {
-	return ConfirmDiscard();
+	if (fCloseConfirmed || fEdit == nullptr || !fEdit->HasChanges()) {
+		return true;
+	}
+	if (!fAskingClose) {
+		fAskingClose = true;
+		// The application asks its windows from its own thread.
+		const bool fromApplication = find_thread(nullptr) != Thread();
+		ConfirmDiscard([this, fromApplication]() {
+			fAskingClose = false;
+			fCloseConfirmed = true;
+			if (fromApplication) {
+				be_app->PostMessage(B_QUIT_REQUESTED);
+			} else {
+				PostMessage(B_QUIT_REQUESTED);
+			}
+		}, [this]() {
+			fAskingClose = false;
+		});
+	}
+	return false;
 }
 
 

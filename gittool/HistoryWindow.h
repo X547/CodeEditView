@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -59,6 +60,9 @@ private:
 	std::unique_ptr<DiffKit::BackgroundLoader<Loaded>> fLoader;
 	// Asked for when opening; done once the first history is shown.
 	bool fPendingEdit {};
+	// Closing asks about pending edits without blocking.
+	bool fAskingClose {};
+	bool fCloseConfirmed {};
 	std::string fPendingOnto;
 
 	BMenuField *fRefField {};
@@ -82,12 +86,15 @@ private:
 	// Shows the history of spec once it is read; withSnapshot reads the
 	// snapshot and labels too.
 	void ShowHistoryOf(const std::string &spec, bool withSnapshot = false);
+	void LoadHistory(const std::string &spec, bool withSnapshot);
 	void HistoryLoaded();
 	void FillList();
 	void UpdateControls();
 	std::vector<size_t> SelectedSteps() const;
 	std::vector<git_oid> SelectedCommits() const;
-	bool ConfirmDiscard();
+	// Runs discard at once without pending edits, else after the user agrees
+	// to discard them; keep runs if the user does not.
+	void ConfirmDiscard(std::function<void()> discard, std::function<void()> keep = nullptr);
 	void SetEditMode(bool edit);
 	void Dropped(BMessage *message);
 	void Remove();
@@ -98,6 +105,7 @@ private:
 	void Apply();
 	// Replaces the edits by a rebase of the branch onto the commit.
 	void StartRebase(const std::string &onto);
+	void StartRebaseNow(const std::string &onto);
 	void ChooseRebase();
 	void ShowChanges();
 	void StatsReady(BMessage *message);

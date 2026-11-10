@@ -27,6 +27,7 @@
 
 #include "CommitWindow.h"
 #include "DiffView.h"
+#include "Ask.h"
 #include "MessageEditor.h"
 #include "Messages.h"
 
@@ -45,6 +46,32 @@ ModalDialog::ModalDialog(const char *title, uint32 flags, window_feel feel):
 		flags | B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE
 	)
 {
+}
+
+
+void ModalDialog::Open(BWindow *owner, std::function<void(bool accepted)> done)
+{
+	fAnswer = DiffKit::AnswerMessage(owner, [done = std::move(done)](BMessage *answer) {
+		done(answer->GetBool("accepted", false));
+	});
+	fAnswerTarget = BMessenger(owner);
+	fAnswerPending = true;
+	DiffKit::AttachDialog(owner, this);
+	ResizeToPreferred();
+	CenterIn(owner->Frame());
+	Show();
+}
+
+
+void ModalDialog::SendAnswer(bool accepted)
+{
+	if (!fAnswerPending) {
+		return;
+	}
+	fAnswerPending = false;
+	BMessage answer(fAnswer);
+	answer.AddBool("accepted", accepted);
+	fAnswerTarget.SendMessage(&answer);
 }
 
 
@@ -88,6 +115,7 @@ bool ModalDialog::Go()
 
 void ModalDialog::Finish(bool accepted)
 {
+	SendAnswer(accepted);
 	if (fAccepted != nullptr) {
 		*fAccepted = accepted;
 		fAccepted = nullptr;
@@ -99,6 +127,7 @@ void ModalDialog::Finish(bool accepted)
 
 bool ModalDialog::QuitRequested()
 {
+	SendAnswer(false);
 	if (fAccepted != nullptr) {
 		*fAccepted = false;
 		fAccepted = nullptr;
@@ -289,9 +318,12 @@ Form &Form::AddLabel(const std::string &text)
 
 class FormDialog: public ModalDialog {
 private:
-	Form &fForm;
-	git_repository *fRepository;
-	const Snapshot *fSnapshot;
+	// Shared with the owner's callback, which reads it after the answer.
+	std::shared_ptr<Form> fForm;
+	// Its own: the owner goes on using its handle and refreshing its
+	// snapshot meanwhile.
+	RepositoryPtr fRepository;
+	std::optional<Snapshot> fSnapshot;
 	// One control per field: BTextControl, BTextView, BCheckBox, BMenuField
 	// or nullptr.
 	std::vector<BView*> fControls;
@@ -299,18 +331,27 @@ private:
 	bool Accept() final;
 
 public:
-	FormDialog(Form &form, git_repository *repository, const Snapshot *snapshot);
+	FormDialog(std::shared_ptr<Form> form, git_repository *repository, const Snapshot *snapshot);
 
 	void MessageReceived(BMessage *message) final;
 };
 
 
-FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *snapshot):
-	ModalDialog(form.title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
-	fForm(form),
-	fRepository(repository),
-	fSnapshot(snapshot)
+FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *repository, const Snapshot *snapshot):
+	ModalDialog(sharedForm->title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+	fForm(std::move(sharedForm))
 {
+	Form &form = *fForm;
+	if (repository != nullptr && snapshot != nullptr) {
+		try {
+			fRepository = OpenRepository(git_repository_commondir(repository));
+			fSnapshot = *snapshot;
+		} catch (const std::exception &e) {
+			fRepository.reset();
+		}
+	}
+	repository = fRepository.get();
+	snapshot = fSnapshot.has_value() ? &*fSnapshot : nullptr;
 	// The grid has a view, so the controls of its layout items are added to
 	// the window.
 	BGridView *gridView = new BGridView(B_USE_DEFAULT_SPACING, B_USE_SMALL_SPACING);
@@ -404,9 +445,9 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 		.Add(ButtonRow(cancel, ok));
 	SetDefaultButton(ok);
 	// A commit dropped from a history window fills the first commit field.
-	for (size_t i = 0; i < fForm.Fields().size(); i++) {
+	for (size_t i = 0; i < fForm->Fields().size(); i++) {
 		BTextControl *commitField = dynamic_cast<BTextControl*>(fControls[i]);
-		if (fForm.Fields()[i].kind == FieldKind::Commit && commitField != nullptr) {
+		if (fForm->Fields()[i].kind == FieldKind::Commit && commitField != nullptr) {
 			AddCommonFilter(new CommitDropFilter([commitField](const git_oid &commit) {
 				commitField->SetText(OidString(commit).c_str());
 			}));
@@ -423,8 +464,8 @@ FormDialog::FormDialog(Form &form, git_repository *repository, const Snapshot *s
 
 bool FormDialog::Accept()
 {
-	for (size_t i = 0; i < fForm.Fields().size(); i++) {
-		FormField &field = fForm.Fields()[i];
+	for (size_t i = 0; i < fForm->Fields().size(); i++) {
+		FormField &field = fForm->Fields()[i];
 		BView *control = fControls[i];
 		if (BTextControl *text = dynamic_cast<BTextControl*>(control)) {
 			field.text = text->Text();
@@ -464,16 +505,37 @@ void FormDialog::MessageReceived(BMessage *message)
 	if (text == nullptr) {
 		return;
 	}
+	if (fRepository == nullptr || !fSnapshot.has_value()) {
+		return;
+	}
 	std::string spec = text->Text();
-	if (PickCommit(fRepository, *fSnapshot, spec)) {
+	if (PickCommit(fRepository.get(), *fSnapshot, spec)) {
 		text->SetText(spec.c_str());
 	}
 }
 
 
+void Form::Open(BWindow *owner, std::function<void(const Form &form)> accepted, git_repository *repository,
+	const Snapshot *snapshot, std::function<void()> cancelled) const
+{
+	std::shared_ptr<Form> form = std::make_shared<Form>(*this);
+	FormDialog *dialog = new FormDialog(form, repository, snapshot);
+	dialog->Open(owner, [form, accepted = std::move(accepted), cancelled = std::move(cancelled)](bool ok) {
+		if (ok) {
+			accepted(*form);
+		} else if (cancelled) {
+			cancelled();
+		}
+	});
+}
+
+
 bool Form::Go(git_repository *repository, const Snapshot *snapshot)
 {
-	return (new FormDialog(*this, repository, snapshot))->Go();
+	std::shared_ptr<Form> form = std::make_shared<Form>(*this);
+	const bool accepted = (new FormDialog(form, repository, snapshot))->Go();
+	*this = *form;
+	return accepted;
 }
 
 

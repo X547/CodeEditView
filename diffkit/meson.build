@@ -5,6 +5,7 @@ libgit2Dep = dependency('libgit2', version: '>= 1.5')
 diffKit = static_library(
 	'diffkit',
 	files(
+		'Ask.cpp',
 		'Chunks.cpp',
 		'DiffView.cpp',
 		'FileIO.cpp',

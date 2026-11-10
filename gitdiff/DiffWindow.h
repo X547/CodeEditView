@@ -53,6 +53,10 @@ private:
 	CodeEditView *fMessage {};
 	BCheckBox *fAmend {};
 	BCheckBox *fChangeId {};
+	// Closing asks about modified files without blocking: the answer closes
+	// the window (or quits the application, if it asked).
+	bool fAskingClose {};
+	bool fCloseConfirmed {};
 
 	FileDocument *DocumentFor(const std::string &path);
 	void UpdateDiffState();
@@ -73,8 +77,10 @@ private:
 	void AmendToggled();
 	void UpdateChangeId();
 	void ChangeIdToggled();
+	// Commits the index, asking first to write edited staged versions.
 	void Commit();
-	bool ConfirmClose();
+	void CommitNow(bool writeIndex);
+	bool HasModifiedDocuments() const;
 
 public:
 	// Takes the repository; shows the file at relativePath if not empty.

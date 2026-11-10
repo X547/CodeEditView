@@ -70,6 +70,9 @@ private:
 	uint64 fRefreshRequest {};
 	std::vector<std::pair<uint64, std::function<void()>>> fAfterRefresh;
 	BTextControl *fTagFilter {};
+	// Closing during a network operation asks without blocking.
+	bool fAskingClose {};
+	bool fCloseConfirmed {};
 	std::string fTagFilterText;
 
 	BListView *fCategories {};

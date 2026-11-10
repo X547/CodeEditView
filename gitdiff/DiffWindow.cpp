@@ -23,6 +23,7 @@
 
 #include <CodeEditView/CodeEditView.h>
 
+#include "Ask.h"
 #include "ChangeView.h"
 #include "MessageEditor.h"
 #include "Messages.h"
@@ -480,14 +481,25 @@ void DiffWindow::Commit()
 	for (const auto &[path, document] : fDocuments) {
 		indexModified = indexModified || document->IsModified(Side::Index);
 	}
+	if (!indexModified) {
+		CommitNow(false);
+		return;
+	}
+	BAlert *alert = new BAlert("Git diff", "Some staged versions are edited but not written to the index. "
+		"Write them and commit?", "Cancel", "Write and commit", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+	alert->SetShortcut(0, B_ESCAPE);
+	DiffKit::Ask(this, alert, [this](int32 button) {
+		if (button == 1) {
+			CommitNow(true);
+		}
+	});
+}
+
+
+void DiffWindow::CommitNow(bool writeIndex)
+{
 	try {
-		if (indexModified) {
-			BAlert *alert = new BAlert("Git diff", "Some staged versions are edited but not written to the index. "
-				"Write them and commit?", "Cancel", "Write and commit", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
-			alert->SetShortcut(0, B_ESCAPE);
-			if (alert->Go() != 1) {
-				return;
-			}
+		if (writeIndex) {
 			for (const auto &[path, document] : fDocuments) {
 				if (document->IsModified(Side::Index)) {
 					document->WriteIndex(*fRepository);
@@ -506,27 +518,14 @@ void DiffWindow::Commit()
 }
 
 
-bool DiffWindow::ConfirmClose()
+bool DiffWindow::HasModifiedDocuments() const
 {
-	bool modified = false;
 	for (const auto &[path, document] : fDocuments) {
-		modified = modified || document->IsModified(Side::Index) || document->IsModified(Side::Worktree);
-	}
-	if (!modified) {
-		return true;
-	}
-	BAlert *alert = new BAlert("Git diff", "Write the modified index and working tree files before closing?",
-		"Cancel", "Discard", "Write", B_WIDTH_AS_USUAL, B_WARNING_ALERT);
-	alert->SetShortcut(0, B_ESCAPE);
-	switch (alert->Go()) {
-		case 1:
+		if (document->IsModified(Side::Index) || document->IsModified(Side::Worktree)) {
 			return true;
-		case 2:
-			Save(true);
-			return true;
-		default:
-			return false;
+		}
 	}
+	return false;
 }
 
 
@@ -540,9 +539,34 @@ void DiffWindow::WindowActivated(bool active)
 }
 
 
+// With modified files, the window stays open and asks; the answer closes
+// it, or asks the application to quit again if the request came from there.
 bool DiffWindow::QuitRequested()
 {
-	if (!ConfirmClose()) {
+	if (!fCloseConfirmed && HasModifiedDocuments()) {
+		if (!fAskingClose) {
+			fAskingClose = true;
+			// The application asks its windows from its own thread.
+			const bool fromApplication = find_thread(nullptr) != Thread();
+			BAlert *alert = new BAlert("Git diff", "Write the modified index and working tree files before closing?",
+				"Cancel", "Discard", "Write", B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			DiffKit::Ask(this, alert, [this, fromApplication](int32 button) {
+				fAskingClose = false;
+				if (button != 1 && button != 2) {
+					return;
+				}
+				if (button == 2) {
+					Save(true);
+				}
+				fCloseConfirmed = true;
+				if (fromApplication) {
+					be_app->PostMessage(B_QUIT_REQUESTED);
+				} else {
+					PostMessage(B_QUIT_REQUESTED);
+				}
+			});
+		}
 		return false;
 	}
 	be_app->PostMessage(kMsgWindowClosed);

@@ -1,8 +1,12 @@
 #pragma once
 
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include <Messenger.h>
 #include <OS.h>
 #include <Window.h>
 
@@ -23,12 +27,18 @@ class BTextView;
 namespace GitTool {
 
 
-// A window that the calling thread waits for, like BAlert::Go(). A calling
-// window keeps drawing meanwhile.
+// A dialog opened without blocking (Open()), or, on a thread that is not a
+// looper's, waited for (Go()).
 class ModalDialog: public BWindow {
 private:
 	sem_id fSemaphore = -1;
 	bool *fAccepted = nullptr;
+	// Open(): the answer for the owner, until sent.
+	BMessage fAnswer;
+	BMessenger fAnswerTarget;
+	bool fAnswerPending {};
+
+	void SendAnswer(bool accepted);
 
 protected:
 	// Called in the dialog thread when the user accepts; false keeps the
@@ -39,8 +49,13 @@ protected:
 public:
 	ModalDialog(const char *title, uint32 flags, window_feel feel = B_MODAL_APP_WINDOW_FEEL);
 
-	// Shows the dialog and waits until it closes; true if accepted. The
-	// dialog deletes itself.
+	// Shows the dialog modal to owner only and returns at once; done runs on
+	// the owner's thread with whether it was accepted, unless the owner
+	// closed first. Call on the owner's thread. The dialog deletes itself.
+	void Open(BWindow *owner, std::function<void(bool accepted)> done);
+	// Shows the dialog and waits until it closes; true if accepted. Only for
+	// threads that are not loopers' (as network work); the dialog deletes
+	// itself.
 	bool Go();
 
 	void MessageReceived(BMessage *message) override;
@@ -72,7 +87,8 @@ struct FormField {
 };
 
 
-// Input fields shown in a modal dialog; the values are read after Go().
+// Input fields shown in a modal dialog; the values are read after it is
+// accepted.
 class Form {
 private:
 	std::vector<FormField> fFields;
@@ -103,8 +119,14 @@ public:
 	bool Checked(const std::string &name) const {return Field(name).checked;}
 	int Choice(const std::string &name) const {return Field(name).choice;}
 
-	// False if cancelled. The repository and snapshot serve the commit
-	// picker.
+	// Opens the form modal to owner and returns at once; accepted runs on the
+	// owner's thread with the values, cancelled (if any) when the form is
+	// cancelled. The repository and snapshot serve the commit picker; the
+	// dialog uses its own handle and copy.
+	void Open(BWindow *owner, std::function<void(const Form &form)> accepted,
+		git_repository *repository = nullptr, const Snapshot *snapshot = nullptr,
+		std::function<void()> cancelled = nullptr) const;
+	// False if cancelled. Only for threads that are not loopers'.
 	bool Go(git_repository *repository = nullptr, const Snapshot *snapshot = nullptr);
 };
 

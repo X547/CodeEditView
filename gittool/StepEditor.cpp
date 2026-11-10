@@ -21,6 +21,7 @@
 #include <CodeEditView/EditorCommands.h>
 #include <CodeEditView/TextModel.h>
 
+#include "Ask.h"
 #include "ChangeView.h"
 #include "CommitDiff.h"
 #include "DiffView.h"
@@ -411,7 +412,7 @@ void StepEditor::TakeLeft()
 }
 
 
-bool StepEditor::Finish()
+void StepEditor::Finish()
 {
 	if (fInput.mode == StepEditMode::Resolve) {
 		std::string marked;
@@ -424,12 +425,22 @@ bool StepEditor::Finish()
 			BAlert *alert = new BAlert("Resolve", ("Conflict markers remain in:" + marked + "\n\nUse the files anyway?").c_str(),
 				"Cancel", "Use them", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 			alert->SetShortcut(0, B_ESCAPE);
-			if (alert->Go() != 1) {
-				return false;
-			}
+			DiffKit::Ask(this, alert, [this](int32 button) {
+				if (button == 1 && SendResult()) {
+					Quit();
+				}
+			});
+			return;
 		}
 	}
+	if (SendResult()) {
+		Quit();
+	}
+}
 
+
+bool StepEditor::SendResult()
+{
 	BMessage message(kMsgStepEdited);
 	message.AddInt32("step", static_cast<int32>(fInput.step));
 	message.AddInt32("mode", static_cast<int32>(fInput.mode));
@@ -551,9 +562,7 @@ void StepEditor::MessageReceived(BMessage *message)
 			UpdateFileList();
 			break;
 		case kMsgDialogOk:
-			if (Finish()) {
-				Quit();
-			}
+			Finish();
 			break;
 		case kMsgDialogCancel:
 			Quit();

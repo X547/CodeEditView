@@ -101,7 +101,9 @@ private:
 	void ShowSelected();
 	void UpdateFileList();
 	void TakeLeft();
-	bool Finish();
+	// Sends the result and closes, asking first if conflict markers remain.
+	void Finish();
+	bool SendResult();
 	// The focused code editor, or the editable side of the diff.
 	CodeEditView *TargetEditor();
 

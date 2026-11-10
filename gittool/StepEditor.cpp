@@ -21,6 +21,7 @@
 #include <CodeEditView/EditorCommands.h>
 #include <CodeEditView/TextModel.h>
 
+#include "ChangeView.h"
 #include "CommitDiff.h"
 #include "DiffView.h"
 #include "FindCommands.h"
@@ -108,9 +109,11 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 		}
 	}
 
-	fFileList = new BListView("files", B_SINGLE_SELECTION_LIST);
-	fFileList->SetSelectionMessage(new BMessage(kMsgStepFileSelected));
-	fDiffView = new DiffKit::DiffView();
+	// Split edits the message of the first part; the other modes keep the
+	// commit's message.
+	fChangeView = new GitDiff::ChangeView("changes",
+		input.mode == StepEditMode::Split ? GitDiff::MessageMode::Editable : GitDiff::MessageMode::Hidden, 6);
+	fDiffView = fChangeView->Diff();
 	fDeleted = new BCheckBox("deleted", "Delete the file", new BMessage(kMsgDeleteToggled));
 	fTakeLeft = new BButton("takeLeft", "Use the left version", new BMessage(kMsgTakeLeft));
 
@@ -125,12 +128,8 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 	hint->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	hint->SetExplicitMinSize(BSize(50, B_SIZE_UNSET));
 
-	BSplitView *split = new BSplitView(B_HORIZONTAL, B_USE_SMALL_SPACING);
-	BLayoutBuilder::Split<>(split)
-		.Add(new BScrollView("fileScroll", fFileList, 0, false, true), 1)
-		.Add(fDiffView, 4);
-
-	BGroupLayout *fileRow = BLayoutBuilder::Group<>(B_HORIZONTAL, B_USE_SMALL_SPACING)
+	BGroupLayout *fileRow = fChangeView->ActionRow();
+	BLayoutBuilder::Group<>(fileRow)
 		.Add(fDeleted)
 		.Add(fTakeLeft)
 		.AddGlue();
@@ -156,6 +155,8 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 	BButton *cancel = new BButton("Cancel", new BMessage(kMsgDialogCancel));
 	BButton *ok = new BButton(input.mode == StepEditMode::Split ? "Split" : "OK", new BMessage(kMsgDialogOk));
 	BMenu *searchMenu = nullptr;
+	BMenu *changesMenu = nullptr;
+	BMenu *viewMenu = nullptr;
 	BMessage *toggleDeleted = new BMessage(kMsgDeleteToggled);
 	toggleDeleted->AddBool("toggle", true);
 	BMenuBar *menuBar = new BMenuBar("menuBar");
@@ -182,17 +183,13 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 			.AddItem("Use the left version of the file", kMsgTakeLeft)
 			.AddItem("Delete the file", toggleDeleted)
 			.AddSeparator()
-			.AddItem("Next change", kMsgNextChange, B_DOWN_ARROW, B_SHIFT_KEY)
-			.AddItem("Previous change", kMsgPreviousChange, B_UP_ARROW, B_SHIFT_KEY)
+			.GetMenu(changesMenu)
 		.End()
 		.AddMenu("View")
-			.AddItem("Synchronize scrolling", kMsgToggleSyncScrolling)
-				.GetItem(fSyncScrollingItem)
-			.AddItem("Hide unchanged lines", kMsgToggleHideUnchanged)
-				.GetItem(fHideUnchangedItem)
-			.AddItem("Word wrap", kMsgToggleWordWrap)
-				.GetItem(fWordWrapItem)
+			.GetMenu(viewMenu)
 		.End();
+	fChangeView->AddNavigationItems(changesMenu);
+	fChangeView->AddViewItems(viewMenu);
 	FindKit::AddFindItems(searchMenu);
 	if (input.mode == StepEditMode::Edit) {
 		// Any file of the commit or of its parent, as the "Other file" field.
@@ -210,31 +207,27 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 			ShowError(e.what());
 		}
 	}
-	fSyncScrollingItem->SetMarked(true);
-	fHideUnchangedItem->SetMarked(true);
-
-	BGroupView *content = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
-	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
-		.Add(menuBar)
-		.Add(content);
-	BLayoutBuilder::Group<> layout = BLayoutBuilder::Group<>(content)
-		.SetInsets(B_USE_SMALL_SPACING)
-		.Add(hint)
-		.Add(split, 1)
-		.Add(fileRow);
 	if (input.mode == StepEditMode::Split) {
-		fMessage = GitDiff::CreateMessageEditor("message");
-		fMessage->SetTarget(BMessenger(this));
 		std::string message = input.message;
 		const size_t subjectEnd = message.find('\n');
 		message.insert(subjectEnd == std::string::npos ? message.size() : subjectEnd, " (part 1)");
-		GitDiff::SetMessageText(fMessage, message);
-		BStringView *messageLabel = new BStringView("messageLabel", "Message of the first part:");
-		messageLabel->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
-		layout.Add(messageLabel);
-		layout.Add(GitDiff::MessageScrollView("messageScroll", fMessage, 6));
+		fChangeView->SetMessage(message);
+		fChangeView->SetMessageLabel("Message of the first part:");
 	}
-	layout.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
+
+	// The frames of the list and the panes overlap the window borders.
+	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+		.Add(menuBar)
+		.AddGroup(B_VERTICAL, 0)
+			.SetInsets(B_USE_SMALL_SPACING)
+			.Add(hint)
+		.End()
+		.AddGroup(B_VERTICAL, 0)
+			.SetInsets(-1, 0, -1, 0)
+			.Add(fChangeView, 1)
+		.End()
+		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
+			.SetInsets(B_USE_SMALL_SPACING)
 			.AddGlue()
 			.Add(cancel)
 			.Add(ok)
@@ -242,9 +235,7 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 	SetDefaultButton(ok);
 
 	UpdateFileList();
-	if (!fFiles.empty()) {
-		fFileList->Select(0);
-	}
+	fChangeView->SelectFirst();
 	CenterIn(history->Frame());
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
@@ -339,8 +330,12 @@ void StepEditor::LoadSides(File &file)
 
 StepEditor::File *StepEditor::Selected() const
 {
-	const int32 index = fFileList->CurrentSelection();
-	return index >= 0 && static_cast<size_t>(index) < fFiles.size() ? fFiles[index].get() : nullptr;
+	const std::optional<std::string> key = fChangeView->SelectedKey();
+	if (!key.has_value()) {
+		return nullptr;
+	}
+	const size_t index = std::stoul(*key);
+	return index < fFiles.size() ? fFiles[index].get() : nullptr;
 }
 
 
@@ -371,16 +366,11 @@ void StepEditor::ShowSelected()
 }
 
 
-// The marks of the files; the items are updated in place, so editing does
-// not change the selection.
+// The marks of the files; ChangeView updates the items in place, so editing
+// does not change the selection.
 void StepEditor::UpdateFileList()
 {
-	const bool rebuild = fFileList->CountItems() != static_cast<int32>(fFiles.size());
-	if (rebuild) {
-		for (int32 i = fFileList->CountItems() - 1; i >= 0; i--) {
-			delete fFileList->RemoveItem(i);
-		}
-	}
+	GitDiff::ChangeSection section;
 	for (size_t i = 0; i < fFiles.size(); i++) {
 		const File &file = *fFiles[i];
 		std::string mark = "    ";
@@ -391,17 +381,9 @@ void StepEditor::UpdateFileList()
 		} else if (file.right->IsModified() || file.deleted != file.initiallyDeleted) {
 			mark = "●  ";
 		}
-		const std::string text = mark + file.path;
-		if (rebuild) {
-			fFileList->AddItem(new BStringItem(text.c_str()));
-		} else {
-			BStringItem *item = static_cast<BStringItem*>(fFileList->ItemAt(static_cast<int32>(i)));
-			if (text != item->Text()) {
-				item->SetText(text.c_str());
-				fFileList->InvalidateItem(static_cast<int32>(i));
-			}
-		}
+		section.items.push_back({std::to_string(i), mark + file.path});
 	}
+	fChangeView->SetSections({section});
 }
 
 
@@ -485,8 +467,8 @@ bool StepEditor::Finish()
 		ShowError(e.what());
 		return false;
 	}
-	if (fMessage != nullptr) {
-		message.AddString("message", GitDiff::MessageText(fMessage).c_str());
+	if (fChangeView->Message() != nullptr) {
+		message.AddString("message", fChangeView->MessageText().c_str());
 	}
 	fTarget.SendMessage(&message);
 	return true;
@@ -496,7 +478,7 @@ bool StepEditor::Finish()
 void StepEditor::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
-		case kMsgStepFileSelected:
+		case GitDiff::kMsgChangeViewFileSelected:
 			ShowSelected();
 			break;
 		case kMsgLeftVersion:
@@ -525,22 +507,6 @@ void StepEditor::MessageReceived(BMessage *message)
 			if (File *file = Selected(); file != nullptr && !file->wholeFile && !file->deleted) {
 				fDiffView->CopyChanges(1);
 			}
-			break;
-		case kMsgNextChange:
-		case kMsgPreviousChange:
-			fDiffView->GoToChunk(message->what == kMsgNextChange);
-			break;
-		case kMsgToggleSyncScrolling:
-			fSyncScrollingItem->SetMarked(!fSyncScrollingItem->IsMarked());
-			fDiffView->SetSyncScrolling(fSyncScrollingItem->IsMarked());
-			break;
-		case kMsgToggleHideUnchanged:
-			fHideUnchangedItem->SetMarked(!fHideUnchangedItem->IsMarked());
-			fDiffView->SetHideUnchanged(fHideUnchangedItem->IsMarked());
-			break;
-		case kMsgToggleWordWrap:
-			fWordWrapItem->SetMarked(!fWordWrapItem->IsMarked());
-			fDiffView->SetWordWrap(fWordWrapItem->IsMarked());
 			break;
 		case B_UNDO:
 		case B_REDO:
@@ -574,7 +540,7 @@ void StepEditor::MessageReceived(BMessage *message)
 				}
 				UpdateFileList();
 			}
-			fFileList->Select(static_cast<int32>(index));
+			fChangeView->Select(std::to_string(index));
 			if (chosen == nullptr && field != nullptr) {
 				field->SetText("");
 			}
@@ -583,11 +549,6 @@ void StepEditor::MessageReceived(BMessage *message)
 		case DiffKit::kMsgDiffEdited:
 		case DiffKit::kMsgChangesCopied:
 			UpdateFileList();
-			break;
-		case CodeEdit::kMsgContentsChanged:
-			if (fMessage != nullptr) {
-				GitDiff::UpdateMessageDecorations(fMessage);
-			}
 			break;
 		case kMsgDialogOk:
 			if (Finish()) {
@@ -598,7 +559,8 @@ void StepEditor::MessageReceived(BMessage *message)
 			Quit();
 			break;
 		default:
-			if (!CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
+			if (!fChangeView->HandleCommand(message)
+				&& !CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
 				BWindow::MessageReceived(message);
 			}
 			break;

@@ -27,6 +27,11 @@ class DiffView;
 }
 
 
+namespace GitDiff {
+class ChangeView;
+}
+
+
 namespace GitTool {
 
 
@@ -82,15 +87,11 @@ private:
 	StepEditorInput fInput;
 	std::vector<std::unique_ptr<File>> fFiles;
 
-	BListView *fFileList {};
+	GitDiff::ChangeView *fChangeView {};
 	DiffKit::DiffView *fDiffView {};
 	BMenuField *fLeftField {};
 	BCheckBox *fDeleted {};
 	BButton *fTakeLeft {};
-	CodeEditView *fMessage {};
-	BMenuItem *fSyncScrollingItem {};
-	BMenuItem *fHideUnchangedItem {};
-	BMenuItem *fWordWrapItem {};
 
 	std::optional<std::string> ReadVersion(const std::optional<FileVersion> &version);
 	void AddFile(const std::string &path, const std::optional<FileVersion> &first,

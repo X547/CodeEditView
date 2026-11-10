@@ -18,18 +18,9 @@ constexpr uint32 kMsgStageFile = 'GDsf';
 constexpr uint32 kMsgCommit = 'GDcm';
 constexpr uint32 kMsgAmendToggled = 'GDam';
 constexpr uint32 kMsgChangeIdToggled = 'GDci';
-constexpr uint32 kMsgNextChunk = 'GDnc';
-constexpr uint32 kMsgPreviousChunk = 'GDpc';
-constexpr uint32 kMsgToggleSyncScrolling = 'GDss';
-constexpr uint32 kMsgToggleHideUnchanged = 'GDhu';
-constexpr uint32 kMsgToggleWordWrap = 'GDww';
-// "algorithm" (int32): DiffAlgorithm.
-constexpr uint32 kMsgSetAlgorithm = 'GDal';
 constexpr uint32 kMsgQuitApplication = 'GDqu';
 
 // File list.
-constexpr uint32 kMsgFileSelected = 'GDfs';
-constexpr uint32 kMsgFileInvoked = 'GDfi';
 // "path" (string): a file chosen in the path menu, relative to the working
 // tree.
 constexpr uint32 kMsgShowPath = 'GDsp';

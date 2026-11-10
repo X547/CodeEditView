@@ -16,7 +16,6 @@
 
 class BButton;
 class BCheckBox;
-class BMenuItem;
 class BMessageRunner;
 class CodeEditView;
 
@@ -24,7 +23,7 @@ class CodeEditView;
 namespace GitDiff {
 
 
-class FileListView;
+class ChangeView;
 
 
 // The changed files of one repository and a diff of the selected one.
@@ -35,17 +34,14 @@ private:
 	std::map<std::string, BReference<FileDocument>> fDocuments;
 	// Files chosen in the path menu; listed until the window closes.
 	std::set<std::string> fOpened;
-	FileListView *fFileList {};
+	ChangeView *fChangeView {};
 	DiffView *fDiffView {};
 	// The document and diff shown in fDiffView.
 	BReference<FileDocument> fDocument;
 	DiffKind fKind = DiffKind::Unstaged;
 	std::unique_ptr<BMessageRunner> fRefreshRunner;
-	BMenuItem *fSyncScrollingItem {};
-	BMenuItem *fHideUnchangedItem {};
-	BMenuItem *fWordWrapItem {};
-	BMenuItem *fAlgorithmItems[3] {};
 	node_ref fGitDirNode {};
+	// The commit message, in fChangeView.
 	CodeEditView *fMessage {};
 	BCheckBox *fAmend {};
 	BCheckBox *fChangeId {};

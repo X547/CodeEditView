@@ -3,16 +3,13 @@
 #include <exception>
 
 #include <LayoutBuilder.h>
-#include <ListView.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
-#include <ScrollView.h>
-#include <SplitView.h>
 
 #include <CodeEditView/CodeEditView.h>
 
+#include "ChangeView.h"
 #include "CommitMessage.h"
-#include "MessageEditor.h"
 #include "DiffView.h"
 #include "Dialogs.h"
 #include "Messages.h"
@@ -53,7 +50,12 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	fRepository(OpenRepository(repositoryPath)),
 	fDetails(ReadCommitDetails(fRepository.get(), id))
 {
+	fChangeView = new GitDiff::ChangeView("changes", GitDiff::MessageMode::ReadOnly, 10);
+	fDiffView = fChangeView->Diff();
+	fChangeView->ShareTopBorder();
+
 	BMenu *parentMenu = nullptr;
+	BMenu *viewMenu = nullptr;
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
@@ -64,22 +66,14 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 			.AddItem("Select all", B_SELECT_ALL, 'A')
 		.End()
 		.AddMenu("View")
-			.AddItem("Synchronize scrolling", kMsgToggleSyncScrolling)
-				.GetItem(fSyncScrollingItem)
-			.AddItem("Hide unchanged lines", kMsgToggleHideUnchanged)
-				.GetItem(fHideUnchangedItem)
-			.AddItem("Word wrap", kMsgToggleWordWrap)
-				.GetItem(fWordWrapItem)
-			.AddSeparator()
-			.AddItem("Next change", kMsgNextChange, B_DOWN_ARROW, B_SHIFT_KEY)
-			.AddItem("Previous change", kMsgPreviousChange, B_UP_ARROW, B_SHIFT_KEY)
-			.AddSeparator()
-			.AddMenu("Compare with")
-				.GetMenu(parentMenu)
-			.End()
+			.GetMenu(viewMenu)
 		.End();
-	fSyncScrollingItem->SetMarked(true);
-	fHideUnchangedItem->SetMarked(true);
+	fChangeView->AddViewItems(viewMenu);
+	viewMenu->AddSeparatorItem();
+	fChangeView->AddNavigationItems(viewMenu);
+	viewMenu->AddSeparatorItem();
+	parentMenu = new BMenu("Compare with");
+	viewMenu->AddItem(parentMenu);
 
 	parentMenu->SetRadioMode(true);
 	for (size_t i = 0; i < fDetails.parents.size(); i++) {
@@ -98,30 +92,12 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 		parentMenu->AddItem(item);
 	}
 
-	fHeader = GitDiff::CreateMessageEditor("header");
-	CodeEdit::EditorSettings settings = fHeader->Settings();
-	settings.readOnly = true;
-	fHeader->SetSettings(settings);
-	fFiles = new BListView("files", B_SINGLE_SELECTION_LIST);
-	fFiles->SetSelectionMessage(new BMessage(kMsgCommitFileSelected));
-	fDiffView = new DiffView();
-
-	BScrollView *headerScroll = GitDiff::MessageScrollView("headerScroll", fHeader, 10);
-	// Split views ignore preferred sizes; the weights are the initial sizes
-	// in pixels.
-	BSplitView *filesSplit = new BSplitView(B_HORIZONTAL, 0);
-	BLayoutBuilder::Split<>(filesSplit)
-		.Add(new BScrollView("fileScroll", fFiles, 0, false, true, B_PLAIN_BORDER), 220)
-		.Add(fDiffView, 720);
-	BSplitView *mainSplit = new BSplitView(B_VERTICAL, B_USE_SMALL_SPACING);
-	BLayoutBuilder::Split<>(mainSplit)
-		.Add(headerScroll, 170)
-		.Add(filesSplit, 460);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
+			// The frames overlap the window borders.
 			.SetInsets(-1, 0, -1, -1)
-			.Add(mainSplit)
+			.Add(fChangeView)
 		.End();
 
 	ShowHeader();
@@ -147,16 +123,17 @@ void CommitWindow::ShowHeader()
 	text += "\n";
 	const size_t messageStart = text.size();
 	text += fDetails.message;
+	CodeEditView *header = fChangeView->Message();
 	{
-		CodeEdit::ModelLock lock(*fHeader->Model());
-		fHeader->Model()->SetText(text);
+		CodeEdit::ModelLock lock(*header->Model());
+		header->Model()->SetText(text);
 	}
 	std::vector<CodeEdit::Decoration> decorations = GitDiff::CommitMessageDecorations(fDetails.message);
 	for (CodeEdit::Decoration &decoration : decorations) {
 		decoration.start += messageStart;
 		decoration.end += messageStart;
 	}
-	fHeader->SetDecorations(std::move(decorations));
+	header->SetDecorations(std::move(decorations));
 }
 
 
@@ -164,26 +141,27 @@ void CommitWindow::LoadChanges()
 {
 	fDiffView->SetModels(nullptr, nullptr, std::string());
 	fSides.clear();
-	for (int32 i = fFiles->CountItems() - 1; i >= 0; i--) {
-		delete fFiles->RemoveItem(i);
-	}
+	fChangeView->SetSections({});
 	try {
 		fChanges = CommitChanges(fRepository.get(), fDetails.id, fParent);
 	} catch (const std::exception &e) {
 		fChanges.clear();
 		DiffKit::ShowError(e.what());
 	}
-	for (const FileChange &change : fChanges) {
+	GitDiff::ChangeSection section;
+	for (size_t i = 0; i < fChanges.size(); i++) {
+		const FileChange &change = fChanges[i];
 		std::string label = std::string(1, change.status) + "   ";
 		if (change.status == 'R' || change.status == 'C') {
 			label += change.oldPath + " → " + change.newPath;
 		} else {
 			label += change.Path();
 		}
-		fFiles->AddItem(new BStringItem(label.c_str()));
+		section.items.push_back({std::to_string(i), label});
 	}
+	fChangeView->SetSections({section});
 	if (!fChanges.empty()) {
-		fFiles->Select(0);
+		fChangeView->SelectFirst();
 	} else {
 		fDiffView->SetLabel(0, "");
 		fDiffView->SetLabel(1, "No changes");
@@ -193,8 +171,12 @@ void CommitWindow::LoadChanges()
 
 void CommitWindow::ShowSelectedFile()
 {
-	const int32 index = fFiles->CurrentSelection();
-	if (index < 0 || static_cast<size_t>(index) >= fChanges.size()) {
+	const std::optional<std::string> key = fChangeView->SelectedKey();
+	if (!key.has_value()) {
+		return;
+	}
+	const size_t index = std::stoul(*key);
+	if (index >= fChanges.size()) {
 		return;
 	}
 	const FileChange &change = fChanges[index];
@@ -226,8 +208,11 @@ void CommitWindow::ShowSelectedFile()
 
 void CommitWindow::MessageReceived(BMessage *message)
 {
+	if (fChangeView->HandleCommand(message)) {
+		return;
+	}
 	switch (message->what) {
-		case kMsgCommitFileSelected:
+		case GitDiff::kMsgChangeViewFileSelected:
 			ShowSelectedFile();
 			break;
 		case kMsgSetParent: {
@@ -235,30 +220,6 @@ void CommitWindow::MessageReceived(BMessage *message)
 			if (parent != fParent) {
 				fParent = parent;
 				LoadChanges();
-			}
-			break;
-		}
-		case kMsgNextChange:
-		case kMsgPreviousChange:
-			fDiffView->GoToChunk(message->what == kMsgNextChange);
-			break;
-		case kMsgToggleSyncScrolling:
-			fSyncScrollingItem->SetMarked(!fSyncScrollingItem->IsMarked());
-			fDiffView->SetSyncScrolling(fSyncScrollingItem->IsMarked());
-			break;
-		case kMsgToggleHideUnchanged:
-			fHideUnchangedItem->SetMarked(!fHideUnchangedItem->IsMarked());
-			fDiffView->SetHideUnchanged(fHideUnchangedItem->IsMarked());
-			break;
-		case kMsgToggleWordWrap:
-			fWordWrapItem->SetMarked(!fWordWrapItem->IsMarked());
-			fDiffView->SetWordWrap(fWordWrapItem->IsMarked());
-			break;
-		case B_COPY:
-		case B_SELECT_ALL: {
-			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
-				PostMessage(message, focus);
 			}
 			break;
 		}

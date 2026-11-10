@@ -20,8 +20,8 @@ gitDiffCoreDep = declare_dependency(
 gitDiffUi = static_library(
 	'gitdiffui',
 	files(
+		'ChangeView.cpp',
 		'DiffWindow.cpp',
-		'FileListView.cpp',
 		'MessageEditor.cpp',
 		'PathMenu.cpp',
 	),

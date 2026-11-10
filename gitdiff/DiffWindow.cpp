@@ -23,8 +23,8 @@
 
 #include <CodeEditView/CodeEditView.h>
 
+#include "ChangeView.h"
 #include "MessageEditor.h"
-#include "FileListView.h"
 #include "Messages.h"
 #include "PathMenu.h"
 
@@ -37,6 +37,60 @@ namespace GitDiff {
 static constexpr bigtime_t kRefreshDelay = 300000;
 
 
+// The key of a file in the list: its section and path.
+static std::string FileKey(const std::string &path, DiffKind kind)
+{
+	return (kind == DiffKind::Unstaged ? "u:" : "s:") + path;
+}
+
+
+static std::optional<std::pair<std::string, DiffKind>> ParseFileKey(const std::optional<std::string> &key)
+{
+	if (!key.has_value() || key->size() < 2) {
+		return std::nullopt;
+	}
+	return std::pair(key->substr(2), (*key)[0] == 'u' ? DiffKind::Unstaged : DiffKind::Staged);
+}
+
+
+// Changed files in two sections, like Git GUI, conflicted files in the
+// unstaged one; files opened from the path menu without unstaged changes in
+// a third, as unstaged (index against working tree).
+static std::vector<ChangeSection> FileSections(const std::vector<StatusEntry> &entries,
+	const std::set<std::string> &opened)
+{
+	std::vector<ChangeSection> sections(2);
+	sections[0].title = "Unstaged changes";
+	sections[1].title = "Staged changes";
+	std::set<std::string> unstaged;
+	for (const StatusEntry &entry : entries) {
+		if (entry.conflicted || entry.unstaged != ' ') {
+			const char letter = entry.conflicted ? 'U' : entry.unstaged;
+			sections[0].items.push_back({FileKey(entry.path, DiffKind::Unstaged),
+				std::string(1, letter) + "   " + entry.path});
+			unstaged.insert(entry.path);
+		}
+	}
+	for (const StatusEntry &entry : entries) {
+		if (entry.staged != ' ' && !entry.conflicted) {
+			sections[1].items.push_back({FileKey(entry.path, DiffKind::Staged),
+				std::string(1, entry.staged) + "   " + entry.path});
+		}
+	}
+	ChangeSection others;
+	others.title = "Other files";
+	for (const std::string &path : opened) {
+		if (unstaged.count(path) == 0) {
+			others.items.push_back({FileKey(path, DiffKind::Unstaged), "    " + path});
+		}
+	}
+	if (!others.items.empty()) {
+		sections.push_back(std::move(others));
+	}
+	return sections;
+}
+
+
 DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string &relativePath):
 	BWindow(
 		BRect(50, 50, 989, 709),
@@ -46,8 +100,14 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	),
 	fRepository(std::move(repository))
 {
-	BMenu *algorithmMenu = nullptr;
+	fChangeView = new ChangeView("changes", MessageMode::Editable, 8);
+	fChangeView->ShareTopBorder();
+	fDiffView = fChangeView->Diff();
+	fMessage = fChangeView->Message();
+
 	BMenu *fileMenu = nullptr;
+	BMenu *changesMenu = nullptr;
+	BMenu *viewMenu = nullptr;
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
@@ -78,85 +138,35 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 			.AddItem("Stage/unstage file", kMsgStageFile, 'T', B_SHIFT_KEY)
 			.AddItem("Commit staged changes", kMsgCommit, 'K')
 			.AddSeparator()
-			.AddItem("Next change", kMsgNextChunk, B_DOWN_ARROW, B_SHIFT_KEY)
-			.AddItem("Previous change", kMsgPreviousChunk, B_UP_ARROW, B_SHIFT_KEY)
+			.GetMenu(changesMenu)
 		.End()
 		.AddMenu("View")
-			.AddItem("Synchronize scrolling", kMsgToggleSyncScrolling)
-				.GetItem(fSyncScrollingItem)
-			.AddItem("Hide unchanged lines", kMsgToggleHideUnchanged)
-				.GetItem(fHideUnchangedItem)
-			.AddItem("Word wrap", kMsgToggleWordWrap)
-				.GetItem(fWordWrapItem)
-			.AddSeparator()
-			.AddMenu("Diff algorithm")
-				.GetMenu(algorithmMenu)
-			.End()
+			.GetMenu(viewMenu)
 		.End();
+	fChangeView->AddNavigationItems(changesMenu);
+	fChangeView->AddViewItems(viewMenu);
 
 	// Any file of the working tree, after "Refresh".
 	fileMenu->AddItem(new BMenuItem(new PathMenu("Show file", std::make_shared<FolderPathSource>(fRepository->Workdir()),
 		std::string(), BMessage(kMsgShowPath), BMessenger(this))), 2);
 
-	static const char *kAlgorithmNames[] = {"Myers", "Minimal", "Patience"};
-	for (int i = 0; i < 3; i++) {
-		BMessage *message = new BMessage(kMsgSetAlgorithm);
-		message->AddInt32("algorithm", i);
-		fAlgorithmItems[i] = new BMenuItem(kAlgorithmNames[i], message);
-		algorithmMenu->AddItem(fAlgorithmItems[i]);
-	}
-	algorithmMenu->SetRadioMode(true);
-	fAlgorithmItems[0]->SetMarked(true);
-	fSyncScrollingItem->SetMarked(true);
-	fHideUnchangedItem->SetMarked(true);
-
-	fFileList = new FileListView();
-	fMessage = CreateMessageEditor("message");
-	fMessage->SetTarget(BMessenger(this));
-	BScrollView *messageScroll = MessageScrollView("messageScroll", fMessage, 8);
-	// The label would limit the width of the column to its own.
-	BStringView *messageLabel = new BStringView("messageLabel", "Commit message:");
-	messageLabel->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fAmend = new BCheckBox("amend", "Amend last commit", new BMessage(kMsgAmendToggled));
 	fChangeId = new BCheckBox("changeId", "Add Change-Id", new BMessage(kMsgChangeIdToggled));
 	fChangeId->SetToolTip("Add a Gerrit Change-Id to the message (gerrit.createChangeId in the repository settings)");
 	BButton *commitButton = new BButton("commit", "Commit", new BMessage(kMsgCommit));
-	BGroupView *commitBox = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
-	BLayoutBuilder::Group<>(commitBox)
-		.SetInsets(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING, B_USE_SMALL_SPACING)
-		.Add(messageLabel)
-		.Add(messageScroll)
-		// The check boxes are stacked, so they do not make the file list
-		// column wide.
-		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
-			.AddGroup(B_VERTICAL, 0)
-				.Add(fAmend)
-				.Add(fChangeId)
-			.End()
-			.AddGlue()
-			.Add(commitButton)
-		.End();
-	// Split views ignore preferred sizes; the weights are the initial sizes
-	// in pixels.
-	BSplitView *leftSplit = new BSplitView(B_VERTICAL, 0);
-	BLayoutBuilder::Split<>(leftSplit)
-		.Add(new BScrollView("fileScroll", fFileList, 0, false, true, B_PLAIN_BORDER), 390)
-		.Add(commitBox, 240);
-	fDiffView = new DiffView();
-	BSplitView *splitView = new BSplitView(B_HORIZONTAL, 0);
+	BLayoutBuilder::Group<>(fChangeView->MessageOptionRow())
+		.Add(fAmend)
+		.Add(fChangeId)
+		.AddGlue()
+		.Add(commitButton);
+
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_VERTICAL, 0)
-			// The frames of the file list and the panes overlap the window
-			// borders. The split view starts below the menu bar, so its
-			// splitters do not cover the menu bar border; its items start one
-			// pixel higher, which hides the top frame line of the file list.
+			// The frames of the list and the panes overlap the window borders.
 			.SetInsets(-1, 0, -1, -1)
-			.Add(splitView)
+			.Add(fChangeView)
 		.End();
-	splitView->SetInsets(0, -1, 0, 0);
-	splitView->AddChild(leftSplit, 250);
-	splitView->AddChild(fDiffView, 690);
 	UpdateChangeId();
 
 	// The index is replaced through index.lock, so the directory is watched.
@@ -168,10 +178,10 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	// The selection message shows the file once the window is laid out.
 	Refresh();
 	const bool shown = !relativePath.empty()
-		&& (fFileList->SelectFile(relativePath, DiffKind::Unstaged)
-			|| fFileList->SelectFile(relativePath, DiffKind::Staged));
-	if (!shown && !fFileList->SelectFirstFile(DiffKind::Unstaged)) {
-		fFileList->SelectFirstFile(DiffKind::Staged);
+		&& (fChangeView->Select(FileKey(relativePath, DiffKind::Unstaged))
+			|| fChangeView->Select(FileKey(relativePath, DiffKind::Staged)));
+	if (!shown && !fChangeView->SelectFirst(0)) {
+		fChangeView->SelectFirst(1);
 	}
 	UpdateTitle();
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
@@ -204,7 +214,7 @@ FileDocument *DiffWindow::DocumentFor(const std::string &path)
 
 void DiffWindow::ShowSelectedFile()
 {
-	const std::optional<std::pair<std::string, DiffKind>> selected = fFileList->Selected();
+	const std::optional<std::pair<std::string, DiffKind>> selected = ParseFileKey(fChangeView->SelectedKey());
 	if (!selected.has_value()) {
 		return;
 	}
@@ -229,7 +239,7 @@ void DiffWindow::ShowPath(const std::string &path)
 	}
 	fOpened.insert(path);
 	Refresh();
-	fFileList->SelectFile(path, DiffKind::Unstaged);
+	fChangeView->Select(FileKey(path, DiffKind::Unstaged));
 }
 
 
@@ -301,7 +311,7 @@ void DiffWindow::Refresh()
 	} catch (const std::exception &e) {
 		fprintf(stderr, "Git diff: %s\n", e.what());
 	}
-	fFileList->SetStatus(status, fOpened);
+	fChangeView->SetSections(FileSections(status, fOpened));
 
 	std::set<std::string> listed = fOpened;
 	for (const StatusEntry &entry : status) {
@@ -519,6 +529,9 @@ bool DiffWindow::QuitRequested()
 
 void DiffWindow::MessageReceived(BMessage *message)
 {
+	if (fChangeView->HandleCommand(message)) {
+		return;
+	}
 	switch (message->what) {
 		case kMsgOpenRepository:
 			be_app->PostMessage(message->what);
@@ -526,10 +539,10 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgQuitApplication:
 			be_app->PostMessage(B_QUIT_REQUESTED);
 			break;
-		case kMsgFileSelected:
+		case kMsgChangeViewFileSelected:
 			ShowSelectedFile();
 			break;
-		case kMsgFileInvoked:
+		case kMsgChangeViewFileInvoked:
 			ShowSelectedFile();
 			StageFile();
 			break;
@@ -580,40 +593,6 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgChangeIdToggled:
 			ChangeIdToggled();
 			break;
-		case CodeEdit::kMsgContentsChanged:
-			UpdateMessageDecorations(fMessage);
-			break;
-		case kMsgNextChunk:
-		case kMsgPreviousChunk:
-			fDiffView->GoToChunk(message->what == kMsgNextChunk);
-			break;
-		case kMsgToggleSyncScrolling:
-			fSyncScrollingItem->SetMarked(!fSyncScrollingItem->IsMarked());
-			fDiffView->SetSyncScrolling(fSyncScrollingItem->IsMarked());
-			break;
-		case kMsgToggleHideUnchanged:
-			fHideUnchangedItem->SetMarked(!fHideUnchangedItem->IsMarked());
-			fDiffView->SetHideUnchanged(fHideUnchangedItem->IsMarked());
-			break;
-		case kMsgToggleWordWrap:
-			fWordWrapItem->SetMarked(!fWordWrapItem->IsMarked());
-			fDiffView->SetWordWrap(fWordWrapItem->IsMarked());
-			break;
-		case kMsgSetAlgorithm:
-			fDiffView->SetAlgorithm(static_cast<DiffAlgorithm>(message->GetInt32("algorithm", 0)));
-			break;
-		case B_UNDO:
-		case B_REDO:
-		case B_CUT:
-		case B_COPY:
-		case B_PASTE:
-		case B_SELECT_ALL: {
-			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
-				PostMessage(message, focus);
-			}
-			break;
-		}
 		default:
 			BWindow::MessageReceived(message);
 			break;

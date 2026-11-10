@@ -41,14 +41,8 @@ constexpr uint32 kMsgCommitInvoked = 'GTci';
 constexpr uint32 kMsgShowCommit = 'GTsh';
 
 // Commit window.
-constexpr uint32 kMsgCommitFileSelected = 'GTcf';
 // "parent" (int32).
 constexpr uint32 kMsgSetParent = 'GTsp';
-constexpr uint32 kMsgNextChange = 'GTnx';
-constexpr uint32 kMsgPreviousChange = 'GTpv';
-constexpr uint32 kMsgToggleSyncScrolling = 'GTss';
-constexpr uint32 kMsgToggleHideUnchanged = 'GThu';
-constexpr uint32 kMsgToggleWordWrap = 'GTww';
 
 // History window.
 constexpr uint32 kMsgEditMode = 'GTem';
@@ -76,7 +70,6 @@ constexpr uint32 kMsgResolveStep = 'GTrv';
 // Step editor.
 // To the history window; see StepEditor.
 constexpr uint32 kMsgStepEdited = 'GTsd';
-constexpr uint32 kMsgStepFileSelected = 'GTsf';
 // "version" (int32).
 constexpr uint32 kMsgLeftVersion = 'GTlv';
 constexpr uint32 kMsgDeleteToggled = 'GTdt';

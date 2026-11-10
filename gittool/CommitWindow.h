@@ -12,13 +12,13 @@
 #include "TextSide.h"
 
 
-class BListView;
-class BMenuItem;
-class CodeEditView;
-
-
 namespace DiffKit {
 class DiffView;
+}
+
+
+namespace GitDiff {
+class ChangeView;
 }
 
 
@@ -39,12 +39,8 @@ private:
 	// The loaded versions of the files shown, by index in fChanges.
 	std::map<size_t, Sides> fSides;
 
-	CodeEditView *fHeader {};
-	BListView *fFiles {};
+	GitDiff::ChangeView *fChangeView {};
 	DiffKit::DiffView *fDiffView {};
-	BMenuItem *fSyncScrollingItem {};
-	BMenuItem *fHideUnchangedItem {};
-	BMenuItem *fWordWrapItem {};
 
 	void ShowHeader();
 	void LoadChanges();

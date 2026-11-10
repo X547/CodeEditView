@@ -41,6 +41,8 @@ private:
 	BFilePanel *fOpenPanel {};
 	BFilePanel *fSavePanel {};
 	// Close when the save started by QuitRequested() finishes.
+	// Closing asks about unsaved changes without blocking.
+	bool fAskingClose {};
 	bool fCloseAfterSave {};
 
 	bool IsDocumentNotice(BMessage *message) const;

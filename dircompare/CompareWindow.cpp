@@ -1,3 +1,4 @@
+#include "Ask.h"
 #include "CompareWindow.h"
 
 #include <stdio.h>
@@ -446,9 +447,14 @@ void CompareWindow::Reload()
 		BAlert *alert = new BAlert("Reload", "Discard the changes to this file and load it from disk?",
 			"Cancel", "Discard", nullptr, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 		alert->SetShortcut(0, B_ESCAPE);
-		if (alert->Go() != 1) {
-			return;
-		}
+		DiffKit::Ask(this, alert, [this, pair = fPair](int32 button) {
+			// Another file may be shown meanwhile.
+			if (button == 1 && fPair == pair) {
+				fPair->Load(true);
+				UpdateDiffState();
+			}
+		});
+		return;
 	}
 	fPair->Load(true);
 	UpdateDiffState();
@@ -515,10 +521,22 @@ void CompareWindow::CopyEntry(int toPane)
 	BAlert *alert = new BAlert("Copy", question.c_str(), "Cancel", "Copy", nullptr, B_WIDTH_AS_USUAL,
 		B_WARNING_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	if (alert->Go() != 1) {
+	DiffKit::Ask(this, alert, [this, fromPane, toPane, entry = *path](int32 button) {
+		if (button == 1) {
+			CopyEntryNow(fromPane, toPane, entry);
+		}
+	});
+}
+
+
+void CompareWindow::CopyEntryNow(int fromPane, int toPane, const std::string &entry)
+{
+	// The comparison may have been rescanned meanwhile.
+	const Node *node = fComparison != nullptr ? fComparison->Find(entry) : nullptr;
+	if (node == nullptr) {
 		return;
 	}
-
+	const std::optional<std::string> path = entry;
 	std::vector<std::string> errors;
 	DirCompare::CopyEntry(FullPath(fromPane, *path), FullPath(toPane, *path), errors);
 	ShowErrors(errors);
@@ -547,10 +565,17 @@ void CompareWindow::DeleteEntry(int pane)
 	BAlert *alert = new BAlert("Delete", question.c_str(), "Cancel", "Delete", nullptr, B_WIDTH_AS_USUAL,
 		B_STOP_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	if (alert->Go() != 1) {
-		return;
-	}
+	DiffKit::Ask(this, alert, [this, pane, entry = *path](int32 button) {
+		if (button == 1) {
+			DeleteEntryNow(pane, entry);
+		}
+	});
+}
 
+
+void CompareWindow::DeleteEntryNow(int pane, const std::string &entry)
+{
+	const std::optional<std::string> path = entry;
 	std::vector<std::string> errors;
 	DirCompare::DeleteEntry(FullPath(pane, *path), errors);
 	ShowErrors(errors);
@@ -578,31 +603,39 @@ void CompareWindow::ShowInTracker(int pane)
 }
 
 
-bool CompareWindow::ConfirmDiscard(const char *question)
+void CompareWindow::ConfirmDiscard(const char *question, std::function<void()> then)
 {
 	if (!HasModifiedPairs()) {
-		return true;
+		then();
+		return;
 	}
 	BAlert *alert = new BAlert("Compare", question, "Cancel", "Discard", "Save", B_WIDTH_AS_USUAL,
 		B_WARNING_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	switch (alert->Go()) {
-		case 1:
-			return true;
-		case 2:
+	DiffKit::Ask(this, alert, [this, then = std::move(then)](int32 button) {
+		if (button == 2) {
 			Save(true);
-			return !HasModifiedPairs();
-		default:
-			return false;
-	}
+			if (HasModifiedPairs()) {
+				return;
+			}
+		}
+		if (button == 1 || button == 2) {
+			then();
+		}
+	});
 }
 
 
 void CompareWindow::SwapSides()
 {
-	if (!ConfirmDiscard("Save the modified files before swapping the sides?")) {
-		return;
-	}
+	ConfirmDiscard("Save the modified files before swapping the sides?", [this]() {
+		SwapSidesNow();
+	});
+}
+
+
+void CompareWindow::SwapSidesNow()
+{
 	std::swap(fRoots[0], fRoots[1]);
 	ShowPair(nullptr, "");
 	fPairs.clear();
@@ -629,9 +662,37 @@ void CompareWindow::WindowActivated(bool active)
 }
 
 
+// With modified files, the window stays open and asks; the answer closes
+// it, or asks the application to quit again if the request came from there.
 bool CompareWindow::QuitRequested()
 {
-	if (!ConfirmDiscard("Save the modified files before closing?")) {
+	if (!fCloseConfirmed && HasModifiedPairs()) {
+		if (!fAskingClose) {
+			fAskingClose = true;
+			// The application asks its windows from its own thread.
+			const bool fromApplication = find_thread(nullptr) != Thread();
+			BAlert *alert = new BAlert("Compare", "Save the modified files before closing?", "Cancel", "Discard",
+				"Save", B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			DiffKit::Ask(this, alert, [this, fromApplication](int32 button) {
+				fAskingClose = false;
+				if (button == 2) {
+					Save(true);
+					if (HasModifiedPairs()) {
+						return;
+					}
+				}
+				if (button != 1 && button != 2) {
+					return;
+				}
+				fCloseConfirmed = true;
+				if (fromApplication) {
+					be_app->PostMessage(B_QUIT_REQUESTED);
+				} else {
+					PostMessage(B_QUIT_REQUESTED);
+				}
+			});
+		}
 		return false;
 	}
 	be_app->PostMessage(kMsgWindowClosed);

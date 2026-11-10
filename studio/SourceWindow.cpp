@@ -1,7 +1,9 @@
+#include "Ask.h"
 #include "SourceWindow.h"
 
 #include <algorithm>
 #include <iterator>
+#include <functional>
 #include <string>
 
 #include <Alert.h>
@@ -70,11 +72,13 @@ static constexpr uint32 kSessionCommands[] = {
 };
 
 
-static int32 Ask(const std::string &text, const char *button0, const char *button1, const char *button2 = nullptr)
+// Asks without blocking; done runs on the window's thread with the button.
+static void Ask(BWindow *window, const std::string &text, const char *button0, const char *button1,
+	const char *button2, std::function<void(int32 button)> done)
 {
 	BAlert *alert = new BAlert("CodeEdit", text.c_str(), button0, button1, button2, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 	alert->SetShortcut(0, B_ESCAPE);
-	return alert->Go();
+	DiffKit::Ask(window, alert, std::move(done));
 }
 
 
@@ -546,10 +550,12 @@ void SourceWindow::SavedNotice(BMessage *message)
 	if (message->GetBool("conflict", false)) {
 		const std::string question = fDocument->GetLocator().DisplayName()
 			+ " was changed by another program since it was read. Overwrite it?";
-		if (Ask(question, "Cancel", "Overwrite") == 1) {
-			fCloseAfterSave = closing;
-			StudioApp::Get().Registry().Save(fDocument, true);
-		}
+		Ask(this, question, "Cancel", "Overwrite", nullptr, [this, closing](int32 button) {
+			if (button == 1) {
+				fCloseAfterSave = closing;
+				StudioApp::Get().Registry().Save(fDocument, true);
+			}
+		});
 		return;
 	}
 	ShowError("Cannot save " + fDocument->GetLocator().DisplayName() + ":\n" + error);
@@ -616,9 +622,12 @@ void SourceWindow::Reload()
 {
 	if (fDocument->IsModified()) {
 		const std::string question = "Discard your changes to " + fDocument->GetLocator().DisplayName() + "?";
-		if (Ask(question, "Cancel", "Discard") != 1) {
-			return;
-		}
+		Ask(this, question, "Cancel", "Discard", nullptr, [this](int32 button) {
+			if (button == 1) {
+				StudioApp::Get().Registry().Reload(fDocument, true);
+			}
+		});
+		return;
 	}
 	StudioApp::Get().Registry().Reload(fDocument, true);
 }
@@ -853,19 +862,30 @@ bool SourceWindow::QuitRequested()
 	const Locator &locator = fDocument->GetLocator();
 	if (!fCloseAfterSave && fDocument->IsModified() && !fDocument->IsReadOnly()
 		&& app.CountWindowsShowing(locator) <= 1) {
-		const std::string question = "Save changes to " + locator.DisplayName() + "?";
-		switch (Ask(question, "Cancel", "Don't save", "Save")) {
-			case 1:
-				// The registry keeps the document; it takes the file again.
-				app.Registry().Reload(fDocument, true);
-				break;
-			case 2:
-				fCloseAfterSave = true;
-				Save();
-				return false;
-			default:
-				return false;
+		// The window stays open and asks; the answer closes it, or asks the
+		// application to quit again if the request came from there.
+		if (!fAskingClose) {
+			fAskingClose = true;
+			// The application asks its windows from its own thread.
+			const bool fromApplication = find_thread(nullptr) != Thread();
+			const std::string question = "Save changes to " + locator.DisplayName() + "?";
+			Ask(this, question, "Cancel", "Don't save", "Save", [this, fromApplication](int32 button) {
+				fAskingClose = false;
+				if (button == 1) {
+					// The registry keeps the document; it takes the file again.
+					StudioApp::Get().Registry().Reload(fDocument, true);
+					if (fromApplication) {
+						be_app->PostMessage(B_QUIT_REQUESTED);
+					} else {
+						PostMessage(B_QUIT_REQUESTED);
+					}
+				} else if (button == 2) {
+					fCloseAfterSave = true;
+					Save();
+				}
+			});
 		}
+		return false;
 	} else if (fCloseAfterSave) {
 		// Closing after a save that has not finished.
 		return false;

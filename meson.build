@@ -77,3 +77,10 @@ endif
 if get_option('studio')
 	subdir('studio')
 endif
+
+if get_option('tests')
+	# Window threads must not wait for dialogs (DiffKit::Ask() and the Open()
+	# methods instead).
+	test('NoBlockingDialogs', python,
+		args: [files('tools/check_blocking_dialogs.py'), meson.project_source_root()])
+endif

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -31,6 +32,9 @@ class DirTreeView;
 // or two files as a diff only. Both sides can be edited and saved.
 class CompareWindow: public BWindow {
 private:
+	// Closing asks about modified files without blocking.
+	bool fAskingClose {};
+	bool fCloseConfirmed {};
 	std::string fRoots[2];
 	// Comparing two files: no tree.
 	bool fFileMode {};
@@ -71,7 +75,12 @@ private:
 	void ShowInTracker(int pane);
 	void SwapSides();
 	void ReloadPairsUnder(const std::string &path);
-	bool ConfirmDiscard(const char *question);
+	// Runs then at once without modified files, else after the user saves or
+	// discards them.
+	void ConfirmDiscard(const char *question, std::function<void()> then);
+	void SwapSidesNow();
+	void CopyEntryNow(int fromPane, int toPane, const std::string &path);
+	void DeleteEntryNow(int pane, const std::string &path);
 
 public:
 	// Compares two directories, or two files.

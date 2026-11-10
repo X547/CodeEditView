@@ -22,7 +22,7 @@ FileListView::FileListView():
 }
 
 
-void FileListView::SetStatus(const std::vector<StatusEntry> &entries)
+void FileListView::SetStatus(const std::vector<StatusEntry> &entries, const std::set<std::string> &others)
 {
 	const std::optional<std::pair<std::string, DiffKind>> selected = Selected();
 
@@ -37,12 +37,16 @@ void FileListView::SetStatus(const std::vector<StatusEntry> &entries)
 
 	fSections[0] = new BStringItem("Unstaged changes");
 	fSections[1] = new BStringItem("Staged changes");
+	fSections[2] = nullptr;
 	AddItem(fSections[0]);
+	std::set<std::string> unstaged;
 	for (const StatusEntry &entry : entries) {
 		if (entry.conflicted) {
 			AddUnder(new FileItem(entry.path, DiffKind::Unstaged, 'U'), fSections[0]);
+			unstaged.insert(entry.path);
 		} else if (entry.unstaged != ' ') {
 			AddUnder(new FileItem(entry.path, DiffKind::Unstaged, entry.unstaged), fSections[0]);
+			unstaged.insert(entry.path);
 		}
 	}
 	AddItem(fSections[1]);
@@ -50,6 +54,16 @@ void FileListView::SetStatus(const std::vector<StatusEntry> &entries)
 		if (entry.staged != ' ' && !entry.conflicted) {
 			AddUnder(new FileItem(entry.path, DiffKind::Staged, entry.staged), fSections[1]);
 		}
+	}
+	for (const std::string &path : others) {
+		if (unstaged.count(path) > 0) {
+			continue;
+		}
+		if (fSections[2] == nullptr) {
+			fSections[2] = new BStringItem("Other files");
+			AddItem(fSections[2]);
+		}
+		AddUnder(new FileItem(path, DiffKind::Unstaged, ' '), fSections[2]);
 	}
 
 	if (selected.has_value()) {

@@ -30,6 +30,9 @@ constexpr uint32 kMsgQuitApplication = 'GDqu';
 // File list.
 constexpr uint32 kMsgFileSelected = 'GDfs';
 constexpr uint32 kMsgFileInvoked = 'GDfi';
+// "path" (string): a file chosen in the path menu, relative to the working
+// tree.
+constexpr uint32 kMsgShowPath = 'GDsp';
 
 // Internal notifications.
 // The index or a working tree file was written; the status may differ.

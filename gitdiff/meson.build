@@ -4,6 +4,7 @@ gitDiffCore = static_library(
 	files(
 		'CommitMessage.cpp',
 		'FileDocument.cpp',
+		'PathSource.cpp',
 		'Repository.cpp',
 	),
 	dependencies: [diffKitDep]
@@ -22,6 +23,7 @@ gitDiffUi = static_library(
 		'DiffWindow.cpp',
 		'FileListView.cpp',
 		'MessageEditor.cpp',
+		'PathMenu.cpp',
 	),
 	dependencies: [gitDiffCoreDep]
 )

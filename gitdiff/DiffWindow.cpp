@@ -26,6 +26,7 @@
 #include "MessageEditor.h"
 #include "FileListView.h"
 #include "Messages.h"
+#include "PathMenu.h"
 
 
 namespace GitDiff {
@@ -46,9 +47,11 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fRepository(std::move(repository))
 {
 	BMenu *algorithmMenu = nullptr;
+	BMenu *fileMenu = nullptr;
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
+			.GetMenu(fileMenu)
 			.AddItem("Open repository" B_UTF8_ELLIPSIS, kMsgOpenRepository, 'O')
 			.AddItem("Refresh", kMsgRefresh, 'R', B_SHIFT_KEY)
 			.AddSeparator()
@@ -90,6 +93,10 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 				.GetMenu(algorithmMenu)
 			.End()
 		.End();
+
+	// Any file of the working tree, after "Refresh".
+	fileMenu->AddItem(new BMenuItem(new PathMenu("Show file", std::make_shared<FolderPathSource>(fRepository->Workdir()),
+		std::string(), BMessage(kMsgShowPath), BMessenger(this))), 2);
 
 	static const char *kAlgorithmNames[] = {"Myers", "Minimal", "Patience"};
 	for (int i = 0; i < 3; i++) {
@@ -215,6 +222,17 @@ void DiffWindow::ShowSelectedFile()
 }
 
 
+void DiffWindow::ShowPath(const std::string &path)
+{
+	if (path.empty()) {
+		return;
+	}
+	fOpened.insert(path);
+	Refresh();
+	fFileList->SelectFile(path, DiffKind::Unstaged);
+}
+
+
 bool DiffWindow::CanEdit() const
 {
 	return fDocument != nullptr && fDocument->ReadOnlyReason().empty();
@@ -283,9 +301,9 @@ void DiffWindow::Refresh()
 	} catch (const std::exception &e) {
 		fprintf(stderr, "Git diff: %s\n", e.what());
 	}
-	fFileList->SetStatus(status);
+	fFileList->SetStatus(status, fOpened);
 
-	std::set<std::string> listed;
+	std::set<std::string> listed = fOpened;
 	for (const StatusEntry &entry : status) {
 		listed.insert(entry.path);
 	}
@@ -514,6 +532,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgFileInvoked:
 			ShowSelectedFile();
 			StageFile();
+			break;
+		case kMsgShowPath:
+			ShowPath(message->GetString("path", ""));
 			break;
 		case kMsgRefresh:
 		case kMsgRefreshTimer:

@@ -14,6 +14,7 @@
 #include "Chunks.h"
 #include "FileDocument.h"
 #include "Git.h"
+#include "PathSource.h"
 #include "Repository.h"
 
 
@@ -51,9 +52,18 @@ public:
 	}
 
 	const std::string &Directory() const {return fDirectory;}
+	git_repository *Get() const {return fRepository.get();}
+
+	git_oid Head() const
+	{
+		git_oid id;
+		Check(git_reference_name_to_id(&id, fRepository.get(), "HEAD"), "head");
+		return id;
+	}
 
 	void Write(const std::string &path, std::string_view data)
 	{
+		std::filesystem::create_directories(std::filesystem::path(fDirectory + "/" + path).parent_path());
 		std::ofstream file(fDirectory + "/" + path, std::ios::binary | std::ios::trunc);
 		file.write(data.data(), data.size());
 	}
@@ -380,6 +390,62 @@ TEST_CASE("Change-Id setting")
 	repository.SetCreatesChangeId(false);
 	repository.Commit("Plain", true);
 	CHECK(repository.HeadMessage() == "Plain\n");
+}
+
+
+TEST_CASE("path sources")
+{
+	using Entries = PathSource::Entries;
+
+	CHECK(NameLess("a", "B"));
+	CHECK(NameLess("file2", "file10"));
+	CHECK(NameLess("file02", "file10"));
+	CHECK_FALSE(NameLess("file10", "file2"));
+	CHECK(NameLess("x", "x1"));
+
+	TestRepository repository;
+	repository.Write("b.txt", "b\n");
+	repository.Write("A.txt", "a\n");
+	repository.Write("src/file10.cpp", "\n");
+	repository.Write("src/file2.cpp", "\n");
+	repository.Write("src/deep/only/x.h", "\n");
+	for (const char *path : {"b.txt", "A.txt", "src/file10.cpp", "src/file2.cpp", "src/deep/only/x.h"}) {
+		repository.Add(path);
+	}
+	repository.Commit();
+	const git_oid first = repository.Head();
+	repository.Remove("b.txt");
+	repository.Write("new.txt", "n\n");
+	git_index *index = nullptr;
+	Check(git_repository_index(&index, repository.Get()), "index");
+	IndexPtr indexPtr(index);
+	Check(git_index_read(index, false), "read");
+	Check(git_index_remove_bypath(index, "b.txt"), "remove");
+	Check(git_index_add_bypath(index, "new.txt"), "add");
+	Check(git_index_write(index), "write");
+	repository.Commit();
+	const git_oid second = repository.Head();
+
+	SECTION("trees of commits") {
+		const TreePathSource one(repository.Get(), {second});
+		CHECK(one.List("") == Entries {{"src"}, {"A.txt", "new.txt"}});
+		CHECK(one.List("src") == Entries {{"deep"}, {"file2.cpp", "file10.cpp"}});
+		CHECK(one.List("src/deep") == Entries {{"only"}, {}});
+		CHECK(one.List("src/deep/only") == Entries {{}, {"x.h"}});
+		CHECK(one.List("missing") == Entries {});
+		// A file deleted in the newer commit is still in the union.
+		const TreePathSource both(repository.Get(), {second, first});
+		CHECK(both.List("") == Entries {{"src"}, {"A.txt", "b.txt", "new.txt"}});
+	}
+
+	SECTION("folder on disk") {
+		repository.Write("untracked/u.txt", "u\n");
+		std::filesystem::create_symlink("src", repository.Directory() + "/link");
+		const FolderPathSource folder(repository.Directory());
+		CHECK(folder.List("") == Entries {{"src", "untracked"}, {"A.txt", "link", "new.txt"}});
+		CHECK(folder.List("src") == Entries {{"deep"}, {"file2.cpp", "file10.cpp"}});
+		CHECK(folder.List("missing") == Entries {});
+	}
 }
 
 

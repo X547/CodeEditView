@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 #include <Node.h>
@@ -32,6 +33,8 @@ private:
 	std::unique_ptr<Repository> fRepository;
 	// Documents that were shown, by path; kept while listed or modified.
 	std::map<std::string, BReference<FileDocument>> fDocuments;
+	// Files chosen in the path menu; listed until the window closes.
+	std::set<std::string> fOpened;
 	FileListView *fFileList {};
 	DiffView *fDiffView {};
 	// The document and diff shown in fDiffView.
@@ -52,6 +55,9 @@ private:
 	bool CanEdit() const;
 	void ChangesCopied(int pane);
 	void ShowSelectedFile();
+	// Lists a file in "Other files" unless it has unstaged changes, and
+	// shows it.
+	void ShowPath(const std::string &path);
 	void Refresh();
 	void ScheduleRefresh();
 	void UpdateTitle();

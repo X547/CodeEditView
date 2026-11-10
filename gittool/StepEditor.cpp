@@ -26,6 +26,7 @@
 #include "FindCommands.h"
 #include "MessageEditor.h"
 #include "Messages.h"
+#include "PathMenu.h"
 
 
 namespace GitTool {
@@ -193,6 +194,22 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 				.GetItem(fWordWrapItem)
 		.End();
 	FindKit::AddFindItems(searchMenu);
+	if (input.mode == StepEditMode::Edit) {
+		// Any file of the commit or of its parent, as the "Other file" field.
+		std::vector<git_oid> commits = {input.result};
+		if (input.parent.has_value()) {
+			commits.push_back(*input.parent);
+		}
+		try {
+			BMenu *fileMenu = menuBar->ItemAt(0)->Submenu();
+			fileMenu->AddItem(new BMenuItem(new GitDiff::PathMenu("Add file",
+				std::make_shared<GitDiff::TreePathSource>(fRepository.get(), commits), std::string(),
+				BMessage(kMsgAddFile), BMessenger(this))), 0);
+			fileMenu->AddItem(new BSeparatorItem(), 1);
+		} catch (const std::exception &e) {
+			ShowError(e.what());
+		}
+	}
 	fSyncScrollingItem->SetMarked(true);
 	fHideUnchangedItem->SetMarked(true);
 
@@ -536,8 +553,10 @@ void StepEditor::MessageReceived(BMessage *message)
 			}
 			break;
 		case kMsgAddFile: {
+			// From the path menu, or else the "Other file" field.
 			BTextControl *field = dynamic_cast<BTextControl*>(FindView("addPath"));
-			const std::string path = field != nullptr ? field->Text() : "";
+			const char *chosen = message->GetString("path", nullptr);
+			const std::string path = chosen != nullptr ? chosen : field != nullptr ? field->Text() : "";
 			if (path.empty()) {
 				break;
 			}
@@ -556,7 +575,9 @@ void StepEditor::MessageReceived(BMessage *message)
 				UpdateFileList();
 			}
 			fFileList->Select(static_cast<int32>(index));
-			field->SetText("");
+			if (chosen == nullptr && field != nullptr) {
+				field->SetText("");
+			}
 			break;
 		}
 		case DiffKit::kMsgDiffEdited:

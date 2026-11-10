@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,16 +31,18 @@ public:
 
 
 // Changed files in two sections, "Unstaged changes" and "Staged changes",
-// like Git GUI. Conflicted files are listed in the unstaged section.
+// like Git GUI. Conflicted files are listed in the unstaged section. Files
+// opened without unstaged changes are listed in a third section, "Other
+// files", as unstaged (index against working tree).
 class FileListView: public BOutlineListView {
 private:
-	BListItem *fSections[2] {};
+	BListItem *fSections[3] {};
 
 public:
 	FileListView();
 
 	// Rebuilds the list, keeping the selected file if it is still listed.
-	void SetStatus(const std::vector<StatusEntry> &entries);
+	void SetStatus(const std::vector<StatusEntry> &entries, const std::set<std::string> &others);
 	std::optional<std::pair<std::string, DiffKind>> Selected() const;
 	// Selects a file; returns whether it is listed.
 	bool SelectFile(const std::string &path, DiffKind kind);

@@ -1,5 +1,6 @@
 #include "Network.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -216,18 +217,48 @@ int Callbacks::CertificateCheck(git_cert *certificate, int valid, const char *ho
 }
 
 
+// Server lines worth keeping in the log, not only as progress: links (as
+// Gerrit's to new changes), errors and warnings.
+static bool IsServerMessage(const std::string &line)
+{
+	std::string lower;
+	for (char c : line) {
+		lower += static_cast<char>(tolower(static_cast<unsigned char>(c)));
+	}
+	return lower.find("://") != std::string::npos || lower.starts_with("error") || lower.starts_with("warning")
+		|| lower.starts_with("hint") || lower.starts_with("fatal");
+}
+
+
 int Callbacks::SidebandProgress(const char *text, int length, void *data)
 {
 	Callbacks *self = static_cast<Callbacks*>(data);
-	std::string line(text, length);
-	while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-		line.pop_back();
+	const std::string chunk(text, length);
+	size_t start = 0;
+	while (start < chunk.size()) {
+		size_t end = chunk.find('\n', start);
+		if (end == std::string::npos) {
+			end = chunk.size();
+		}
+		std::string line = chunk.substr(start, end - start);
+		start = end + 1;
+		while (!line.empty() && line.back() == '\r') {
+			line.pop_back();
+		}
+		const size_t carriageReturn = line.rfind('\r');
+		if (carriageReturn != std::string::npos) {
+			line.erase(0, carriageReturn + 1);
+		}
+		const size_t first = line.find_first_not_of(' ');
+		if (first == std::string::npos) {
+			continue;
+		}
+		if (IsServerMessage(line.substr(first))) {
+			self->fHandler.Log("Server: " + line.substr(first));
+		} else {
+			self->fHandler.Progress("Server: " + line);
+		}
 	}
-	const size_t carriageReturn = line.rfind('\r');
-	if (carriageReturn != std::string::npos) {
-		line.erase(0, carriageReturn + 1);
-	}
-	self->fHandler.Progress("Server: " + line);
 	return self->fHandler.IsCancelled() ? -1 : 0;
 }
 
@@ -313,6 +344,24 @@ void Download(git_repository *repository, const std::string &remote, bool prune,
 	callbacks.Check(git_remote_fetch(remotePtr.get(), nullptr, &options, "download"), "Cannot download");
 	const git_indexer_progress *stats = git_remote_stats(remotePtr.get());
 	handler.Log("Downloaded " + std::to_string(stats->received_objects) + " objects from " + remote);
+}
+
+
+void DownloadRefspecs(git_repository *repository, const std::string &remote, const std::vector<std::string> &refspecs,
+	NetworkHandler &handler)
+{
+	RemotePtr remotePtr = LookupRemote(repository, remote);
+	Callbacks callbacks(handler);
+	git_fetch_options options = GIT_FETCH_OPTIONS_INIT;
+	options.callbacks = callbacks.Get();
+	options.download_tags = GIT_REMOTE_DOWNLOAD_TAGS_NONE;
+	std::vector<char*> pointers;
+	for (const std::string &refspec : refspecs) {
+		pointers.push_back(const_cast<char*>(refspec.c_str()));
+		handler.Log("Downloading " + refspec + " from " + remote);
+	}
+	const git_strarray array = {pointers.data(), pointers.size()};
+	callbacks.Check(git_remote_fetch(remotePtr.get(), &array, &options, "download"), "Cannot download");
 }
 
 

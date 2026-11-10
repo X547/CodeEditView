@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -127,6 +128,52 @@ Plan PlanDeleteOnServer(const Snapshot &snapshot, const std::string &remote, con
 // Differences between the server and the local copies, one line each.
 std::vector<std::string> CompareWithServer(git_repository *repository, const Snapshot &snapshot,
 	const std::string &remote, const std::vector<ServerRef> &serverRefs);
+
+
+//#pragma mark - Gerrit
+
+enum class ReviewState {
+	// As the server decides (new changes are ready, updates keep their state).
+	Default,
+	WorkInProgress,
+	Ready,
+};
+
+
+// Options of an upload for review, sent as "%" options of the target.
+struct ReviewOptions {
+	std::string topic;
+	ReviewState state = ReviewState::Default;
+	std::vector<std::string> reviewers;
+	std::vector<std::string> cc;
+};
+
+
+// "refs/heads/<branch>:refs/for/<target>%<options>". Throws for an option
+// value that cannot be sent this way.
+std::string ReviewRefspec(const std::string &branch, const std::string &target, const ReviewOptions &options);
+// Splits a list of names at spaces and commas.
+std::vector<std::string> SplitNames(const std::string &text);
+// Uploads the commits of a branch for review on target: each commit the
+// remote copy of target does not have becomes a change or a new patch set.
+Plan PlanUploadForReview(git_repository *repository, const Snapshot &snapshot, const std::string &branch,
+	const std::string &remote, const std::string &target, const ReviewOptions &options);
+
+// A change number, with a patch set or not: "12345", "12345/3", or a link
+// to the change (".../+/12345", ".../+/12345/3", ".../#/c/12345/3").
+bool ParseChange(const std::string &text, int &change, std::optional<int> &patchset);
+// "refs/changes/45/12345/" for change 12345.
+std::string ChangeRefPrefix(int change);
+// The highest patch set of the change on the server.
+std::optional<int> LatestPatchset(const std::vector<ServerRef> &serverRefs, int change);
+// Where a downloaded patch set is kept: "refs/review/<remote>/<change>/<patchset>".
+std::string LocalChangeRef(const std::string &remote, int change, int patchset);
+// The highest downloaded patch set of the change, as a full reference name.
+std::optional<std::string> LatestLocalChange(git_repository *repository, const std::string &remote, int change);
+// Downloads a patch set of a change (the latest if none), and creates a
+// branch at it unless branch is empty.
+Plan PlanDownloadChange(const Snapshot &snapshot, const std::string &remote, int change,
+	const std::optional<int> &patchset, const std::string &branch);
 
 
 //#pragma mark - Tags

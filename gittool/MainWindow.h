@@ -103,8 +103,12 @@ private:
 	void RunTagAction(Action action);
 	void ObjectInvoked();
 
-	// Previews and runs a plan; network plans run in the background.
+	// Previews and runs a plan; network plans run in the background and send
+	// done (kMsgNetworkDone with its follow-up) when they end.
 	void Execute(const Plan &plan);
+	void Execute(const Plan &plan, const BMessage &done);
+	void UploadForReview(const BranchInfo &branch);
+	void DownloadChange(const RemoteInfo &remote);
 	void StartNetwork(const std::string &status, NetworkTask::Work work, const BMessage &done);
 	void NetworkDone(BMessage *message);
 	void AppendLog(const std::string &text);

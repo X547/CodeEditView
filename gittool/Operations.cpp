@@ -1,5 +1,6 @@
 #include "Operations.h"
 
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -1479,6 +1480,372 @@ Plan PlanUploadTags(git_repository *repository, const Snapshot &snapshot,
 	}
 	plan.run = [remote, refspecs](RunContext &context) {
 		Upload(context.repository, remote, refspecs, *context.network);
+	};
+	return plan;
+}
+
+
+//#pragma mark - Gerrit
+
+// Commits uploaded for review at most; more is most likely a wrong target.
+static const size_t kReviewLimit = 100;
+
+
+// Whether a value can be sent as a "%" option: they are separated by
+// commas and the server does not decode them.
+static void CheckOptionValue(const std::string &what, const std::string &value)
+{
+	for (char c : value) {
+		if (c == ',' || c == '%' || c == ' ' || static_cast<unsigned char>(c) < 0x20) {
+			throw GitError(what + " \"" + value + "\" cannot contain spaces, commas or \"%\"");
+		}
+	}
+}
+
+
+std::string ReviewRefspec(const std::string &branch, const std::string &target, const ReviewOptions &options)
+{
+	std::vector<std::string> parts;
+	if (!options.topic.empty()) {
+		CheckOptionValue("The topic", options.topic);
+		parts.push_back("topic=" + options.topic);
+	}
+	if (options.state == ReviewState::WorkInProgress) {
+		parts.push_back("wip");
+	} else if (options.state == ReviewState::Ready) {
+		parts.push_back("ready");
+	}
+	for (const std::string &reviewer : options.reviewers) {
+		CheckOptionValue("The reviewer", reviewer);
+		parts.push_back("r=" + reviewer);
+	}
+	for (const std::string &cc : options.cc) {
+		CheckOptionValue("The CC", cc);
+		parts.push_back("cc=" + cc);
+	}
+	std::string refspec = "refs/heads/" + branch + ":refs/for/" + target;
+	for (size_t i = 0; i < parts.size(); i++) {
+		refspec += (i == 0 ? "%" : ",") + parts[i];
+	}
+	return refspec;
+}
+
+
+std::vector<std::string> SplitNames(const std::string &text)
+{
+	std::vector<std::string> names;
+	std::string name;
+	for (char c : text) {
+		if (c == ',' || c == ' ' || c == '\t' || c == '\n') {
+			if (!name.empty()) {
+				names.push_back(name);
+				name.clear();
+			}
+		} else {
+			name += c;
+		}
+	}
+	if (!name.empty()) {
+		names.push_back(name);
+	}
+	return names;
+}
+
+
+// Whether the message has a "Change-Id: I<hash>" line, as Gerrit requires.
+static bool HasChangeId(const char *message)
+{
+	const std::string text = message != nullptr ? message : "";
+	size_t start = 0;
+	while (start < text.size()) {
+		size_t end = text.find('\n', start);
+		if (end == std::string::npos) {
+			end = text.size();
+		}
+		if (text.compare(start, 12, "Change-Id: I") == 0 && end - start > 12) {
+			return true;
+		}
+		start = end + 1;
+	}
+	return false;
+}
+
+
+Plan PlanUploadForReview(git_repository *repository, const Snapshot &snapshot, const std::string &branchName,
+	const std::string &remote, const std::string &target, const ReviewOptions &options)
+{
+	const BranchInfo &branch = RequireBranch(snapshot, branchName);
+	RequireRemote(snapshot, remote);
+	if (target.empty() || !IsValidReferenceName("refs/heads/" + target)) {
+		throw GitError("\"" + target + "\" is not a valid branch name");
+	}
+	const std::string refspec = ReviewRefspec(branch.name, target, options);
+
+	Plan plan;
+	plan.network = true;
+	plan.title = "Upload " + branch.name + " for review on " + remote + "/" + target;
+
+	// The commits the server does not have, as far as the remote copy of the
+	// target says.
+	const std::string copyName = remote + "/" + target;
+	const RemoteCopyInfo *copy = snapshot.FindRemoteCopy(copyName);
+	std::vector<std::string> commitLines;
+	std::vector<std::string> withoutChangeId;
+	size_t merges = 0;
+	bool truncated = false;
+	if (copy != nullptr) {
+		git_revwalk *walk = nullptr;
+		Check(git_revwalk_new(&walk, repository), "Cannot read the history");
+		RevwalkPtr walkPtr(walk);
+		git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL | GIT_SORT_REVERSE);
+		Check(git_revwalk_push(walk, &branch.commit), "Cannot read the history");
+		Check(git_revwalk_hide(walk, &copy->commit), "Cannot read the history");
+		git_oid id;
+		while (git_revwalk_next(&id, walk) == 0) {
+			if (commitLines.size() == kReviewLimit) {
+				truncated = true;
+				break;
+			}
+			git_commit *commit = nullptr;
+			Check(git_commit_lookup(&commit, repository, &id), "Cannot read the commit");
+			CommitPtr commitPtr(commit);
+			const char *summary = git_commit_summary(commit);
+			const std::string line = ShortId(id) + " " + (summary != nullptr ? summary : "");
+			commitLines.push_back("  " + line);
+			if (!HasChangeId(git_commit_message(commit))) {
+				withoutChangeId.push_back(line);
+			}
+			if (git_commit_parentcount(commit) > 1) {
+				merges++;
+			}
+		}
+		if (commitLines.empty()) {
+			plan.blocked = branch.name + " has no commits that " + copyName + " does not have";
+		}
+	} else {
+		plan.warnings.push_back("There is no remote copy " + copyName
+			+ ", so the commits to upload cannot be listed; download from " + remote + " first to check them");
+	}
+
+	plan.steps.push_back("Server " + remote + ": " + (copy != nullptr ? std::to_string(commitLines.size())
+		+ (truncated ? "+" : "") + " commits" : std::string("the commits of ") + branch.name)
+		+ " for review on " + target + ", each a new change or a new patch set of its change");
+	plan.steps.insert(plan.steps.end(), commitLines.begin(), commitLines.end());
+	if (!options.topic.empty()) {
+		plan.steps.push_back("Topic: " + options.topic);
+	}
+	if (options.state == ReviewState::WorkInProgress) {
+		plan.steps.push_back("Marked work in progress");
+	} else if (options.state == ReviewState::Ready) {
+		plan.steps.push_back("Marked ready for review");
+	}
+	if (!options.reviewers.empty()) {
+		plan.steps.push_back("Reviewers: " + JoinNames(options.reviewers));
+	}
+	if (!options.cc.empty()) {
+		plan.steps.push_back("CC: " + JoinNames(options.cc));
+	}
+	plan.steps.push_back("Uploads " + refspec);
+
+	if (truncated) {
+		plan.warnings.push_back("More than " + std::to_string(kReviewLimit) + " commits; is " + target
+			+ " the right target branch?");
+	}
+	if (!withoutChangeId.empty()) {
+		std::string text = "Commits without a Change-Id line (the server refuses them unless it does not need one):";
+		for (const std::string &line : withoutChangeId) {
+			text += "\n  " + line;
+		}
+		plan.warnings.push_back(text);
+	}
+	if (merges > 0) {
+		plan.warnings.push_back(std::to_string(merges) + " merge commits; they become changes of their own");
+	}
+	plan.run = [remote, refspec](RunContext &context) {
+		Upload(context.repository, remote, {refspec}, *context.network);
+	};
+	return plan;
+}
+
+
+static std::optional<int> ParseNumber(const std::string &text)
+{
+	if (text.empty() || text.size() > 9) {
+		return std::nullopt;
+	}
+	int value = 0;
+	for (char c : text) {
+		if (c < '0' || c > '9') {
+			return std::nullopt;
+		}
+		value = value * 10 + (c - '0');
+	}
+	if (value <= 0) {
+		return std::nullopt;
+	}
+	return value;
+}
+
+
+bool ParseChange(const std::string &input, int &change, std::optional<int> &patchset)
+{
+	std::string text = input;
+	while (!text.empty() && (text.back() == ' ' || text.back() == '/')) {
+		text.pop_back();
+	}
+	while (!text.empty() && text.front() == ' ') {
+		text.erase(0, 1);
+	}
+	// A link: the numbers after "/+/" (or "/c/" of old links), up to the
+	// next part that is not a number (as "/comment/...").
+	const bool link = text.find("://") != std::string::npos;
+	bool marked = false;
+	for (const char *marker : {"/+/", "/c/"}) {
+		const size_t found = text.rfind(marker);
+		if (found != std::string::npos) {
+			text = text.substr(found + strlen(marker));
+			marked = true;
+			break;
+		}
+	}
+	if (link && !marked) {
+		// A short link: "https://host/12345".
+		text = text.substr(text.rfind('/') + 1);
+	}
+	std::vector<std::string> parts;
+	size_t start = 0;
+	while (start <= text.size()) {
+		size_t end = text.find('/', start);
+		if (end == std::string::npos) {
+			end = text.size();
+		}
+		parts.push_back(text.substr(start, end - start));
+		start = end + 1;
+	}
+	const std::optional<int> number = parts.empty() ? std::nullopt : ParseNumber(parts[0]);
+	if (!number.has_value()) {
+		return false;
+	}
+	change = *number;
+	patchset.reset();
+	if (parts.size() > 1) {
+		patchset = ParseNumber(parts[1]);
+		if (!patchset.has_value() && !link) {
+			return false;
+		}
+	}
+	return true;
+}
+
+
+std::string ChangeRefPrefix(int change)
+{
+	const int shard = change % 100;
+	return "refs/changes/" + std::string(shard < 10 ? "0" : "") + std::to_string(shard) + "/"
+		+ std::to_string(change) + "/";
+}
+
+
+std::optional<int> LatestPatchset(const std::vector<ServerRef> &serverRefs, int change)
+{
+	const std::string prefix = ChangeRefPrefix(change);
+	std::optional<int> latest;
+	for (const ServerRef &ref : serverRefs) {
+		if (!ref.name.starts_with(prefix)) {
+			continue;
+		}
+		// Skips "meta" and anything else that is not a patch set.
+		const std::optional<int> patchset = ParseNumber(ref.name.substr(prefix.size()));
+		if (patchset.has_value() && (!latest.has_value() || *patchset > *latest)) {
+			latest = patchset;
+		}
+	}
+	return latest;
+}
+
+
+std::string LocalChangeRef(const std::string &remote, int change, int patchset)
+{
+	return "refs/review/" + remote + "/" + std::to_string(change) + "/" + std::to_string(patchset);
+}
+
+
+std::optional<std::string> LatestLocalChange(git_repository *repository, const std::string &remote, int change)
+{
+	const std::string prefix = "refs/review/" + remote + "/" + std::to_string(change) + "/";
+	git_reference_iterator *iterator = nullptr;
+	if (git_reference_iterator_glob_new(&iterator, repository, (prefix + "*").c_str()) < 0) {
+		git_error_clear();
+		return std::nullopt;
+	}
+	std::optional<int> latest;
+	const char *name = nullptr;
+	while (git_reference_next_name(&name, iterator) == 0) {
+		const std::optional<int> patchset = ParseNumber(std::string(name).substr(prefix.size()));
+		if (patchset.has_value() && (!latest.has_value() || *patchset > *latest)) {
+			latest = patchset;
+		}
+	}
+	git_reference_iterator_free(iterator);
+	if (!latest.has_value()) {
+		return std::nullopt;
+	}
+	return LocalChangeRef(remote, change, *latest);
+}
+
+
+Plan PlanDownloadChange(const Snapshot &snapshot, const std::string &remote, int change,
+	const std::optional<int> &patchset, const std::string &branch)
+{
+	RequireRemote(snapshot, remote);
+	if (change <= 0 || (patchset.has_value() && *patchset <= 0)) {
+		throw GitError("Change and patch set numbers start at 1");
+	}
+	if (!branch.empty()) {
+		CheckNewBranchName(snapshot, branch);
+	}
+	const std::string changeName = "change " + std::to_string(change);
+	Plan plan;
+	plan.network = true;
+	plan.title = "Download " + changeName + (patchset.has_value() ? ", patch set " + std::to_string(*patchset) : "")
+		+ " from " + remote;
+	if (patchset.has_value()) {
+		plan.steps.push_back("Download " + ChangeRefPrefix(change) + std::to_string(*patchset) + " from " + remote
+			+ " as " + LocalChangeRef(remote, change, *patchset));
+	} else {
+		plan.steps.push_back("Find the latest patch set of " + changeName + " on " + remote);
+		plan.steps.push_back("Download it as refs/review/" + remote + "/" + std::to_string(change) + "/<patch set>");
+	}
+	if (!branch.empty()) {
+		plan.steps.push_back("New branch " + branch + " at the downloaded commit");
+	}
+	plan.run = [remote, change, patchset, branch, changeName](RunContext &context) {
+		int number = 0;
+		if (patchset.has_value()) {
+			number = *patchset;
+		} else {
+			const std::optional<int> latest = LatestPatchset(ListServer(context.repository, remote, *context.network),
+				change);
+			if (!latest.has_value()) {
+				throw GitError("The server does not list " + changeName
+					+ "; check the number, or give the patch set if the server hides its changes");
+			}
+			number = *latest;
+			context.network->Log("The latest patch set of " + changeName + " is " + std::to_string(number));
+		}
+		const std::string local = LocalChangeRef(remote, change, number);
+		DownloadRefspecs(context.repository, remote,
+			{"+" + ChangeRefPrefix(change) + std::to_string(number) + ":" + local}, *context.network);
+		git_oid id;
+		if (git_reference_name_to_id(&id, context.repository, local.c_str()) < 0) {
+			git_error_clear();
+			throw GitError("The server did not send patch set " + std::to_string(number) + " of " + changeName);
+		}
+		context.network->Log("Downloaded " + local + ": " + Describe(context.repository, id));
+		if (!branch.empty()) {
+			CreateBranch(context.repository, branch, id, std::string());
+			context.network->Log("Created branch " + branch);
+		}
 	};
 	return plan;
 }

@@ -36,6 +36,10 @@ struct ServerRef {
 // Downloads from a remote; prune removes remote copies of branches deleted
 // on the server, allTags downloads every tag.
 void Download(git_repository *repository, const std::string &remote, bool prune, bool allTags, NetworkHandler &handler);
+// Downloads refspecs ("+src:dst") instead of those of the remote's
+// configuration; no tags.
+void DownloadRefspecs(git_repository *repository, const std::string &remote, const std::vector<std::string> &refspecs,
+	NetworkHandler &handler);
 // Uploads refspecs ("src:dst", "+src:dst" to overwrite, ":dst" to delete).
 // Throws if the server rejects any of them.
 void Upload(git_repository *repository, const std::string &remote, const std::vector<std::string> &refspecs,

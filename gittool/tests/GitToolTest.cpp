@@ -691,6 +691,131 @@ TEST_CASE("Remotes", "[gittool]")
 }
 
 
+TEST_CASE("Gerrit references and options", "[gittool]")
+{
+	ReviewOptions options;
+	CHECK(ReviewRefspec("feature", "main", options) == "refs/heads/feature:refs/for/main");
+	options.topic = "layout";
+	options.state = ReviewState::WorkInProgress;
+	options.reviewers = SplitNames("ann@example.com, bob");
+	options.cc = {"carol"};
+	CHECK(ReviewRefspec("feature", "main", options)
+		== "refs/heads/feature:refs/for/main%topic=layout,wip,r=ann@example.com,r=bob,cc=carol");
+	options.topic = "two words";
+	CHECK_THROWS_AS(ReviewRefspec("feature", "main", options), GitError);
+	CHECK(SplitNames(" a,,b  c\n") == std::vector<std::string> {"a", "b", "c"});
+
+	CHECK(ChangeRefPrefix(12345) == "refs/changes/45/12345/");
+	CHECK(ChangeRefPrefix(5) == "refs/changes/05/5/");
+	const std::vector<ServerRef> refs = {
+		{"refs/changes/45/12345/1", {}},
+		{"refs/changes/45/12345/10", {}},
+		{"refs/changes/45/12345/meta", {}},
+		{"refs/changes/45/123456/20", {}},
+		{"refs/heads/main", {}},
+	};
+	CHECK(LatestPatchset(refs, 12345) == 10);
+	CHECK_FALSE(LatestPatchset(refs, 999).has_value());
+
+	int change = 0;
+	std::optional<int> patchset;
+	CHECK(ParseChange("12345", change, patchset));
+	CHECK(change == 12345);
+	CHECK_FALSE(patchset.has_value());
+	CHECK(ParseChange(" 12345/3 ", change, patchset));
+	CHECK((change == 12345 && patchset == 3));
+	CHECK(ParseChange("https://review.example.com/c/project/sub/+/12345/3/src/a.cpp", change, patchset));
+	CHECK((change == 12345 && patchset == 3));
+	CHECK(ParseChange("https://review.example.com/c/project/+/12345/", change, patchset));
+	CHECK((change == 12345 && !patchset.has_value()));
+	CHECK(ParseChange("https://review.example.com/c/project/+/12345/comment/abc/", change, patchset));
+	CHECK((change == 12345 && !patchset.has_value()));
+	CHECK(ParseChange("https://review.example.com/#/c/678/2", change, patchset));
+	CHECK((change == 678 && patchset == 2));
+	CHECK(ParseChange("https://review.example.com/678", change, patchset));
+	CHECK((change == 678 && !patchset.has_value()));
+	CHECK_FALSE(ParseChange("", change, patchset));
+	CHECK_FALSE(ParseChange("abc", change, patchset));
+	CHECK_FALSE(ParseChange("12/x", change, patchset));
+	CHECK_FALSE(ParseChange("0", change, patchset));
+}
+
+
+TEST_CASE("Gerrit upload and download", "[gittool]")
+{
+	Fixture fixture;
+	TestHandler handler;
+	const std::string serverPath = fixture.Path("server.git");
+	git_repository *server = nullptr;
+	Check(git_repository_init(&server, serverPath.c_str(), true), "init server");
+	RepositoryPtr serverPtr(server);
+	Run(PlanAddRemote(fixture.Get(), fixture.Load(), "origin", serverPath, ""), fixture.Get());
+	Run(PlanUploadBranch(fixture.Get(), fixture.Load(), "main", "origin", UploadMode::Normal, true), fixture.Get(),
+		Resolution::Cancel, &handler);
+
+	SECTION("Upload for review") {
+		ReviewOptions options;
+		options.topic = "t";
+		const Plan plan = PlanUploadForReview(fixture.Get(), fixture.Load(), "feature", "origin", "main", options);
+		INFO(plan.Describe(fixture.Get()));
+		REQUIRE(plan.steps.size() >= 2);
+		CHECK(plan.steps[1] == "  " + ShortId(fixture.second) + " second");
+		// The commit has no Change-Id.
+		REQUIRE(plan.warnings.size() == 1);
+		CHECK(plan.warnings[0].find(ShortId(fixture.second)) != std::string::npos);
+		Run(plan, fixture.Get(), Resolution::Cancel, &handler);
+		// A plain server keeps the reference as it is named.
+		const git_oid uploaded = RefId(server, "refs/for/main%topic=t");
+		CHECK(git_oid_equal(&uploaded, &fixture.second));
+		CHECK_FALSE(HasRef(server, "refs/heads/feature"));
+
+		// Nothing new for the target.
+		CHECK_FALSE(PlanUploadForReview(fixture.Get(), fixture.Load(), "main", "origin", "main", {}).blocked.empty());
+		// Without a remote copy of the target the commits are not listed.
+		const Plan unknown = PlanUploadForReview(fixture.Get(), fixture.Load(), "feature", "origin", "other", {});
+		CHECK(unknown.blocked.empty());
+		CHECK(unknown.warnings.size() == 1);
+		CHECK_THROWS_AS(PlanUploadForReview(fixture.Get(), fixture.Load(), "feature", "origin", "bad..name", {}),
+			GitError);
+	}
+
+	SECTION("Download a change") {
+		Run(PlanUploadBranch(fixture.Get(), fixture.Load(), "feature", "origin", UploadMode::Normal, false),
+			fixture.Get(), Resolution::Cancel, &handler);
+		MoveRef(server, "refs/changes/45/12345/1", fixture.first);
+		MoveRef(server, "refs/changes/45/12345/2", fixture.second);
+		MoveRef(server, "refs/changes/45/12345/meta", fixture.first);
+
+		Run(PlanDownloadChange(fixture.Load(), "origin", 12345, std::nullopt, "review"), fixture.Get(),
+			Resolution::Cancel, &handler);
+		const git_oid latest = RefId(fixture.Get(), "refs/review/origin/12345/2");
+		CHECK(git_oid_equal(&latest, &fixture.second));
+		const BranchInfo *review = fixture.Load().FindBranch("review");
+		REQUIRE(review != nullptr);
+		CHECK(git_oid_equal(&review->commit, &fixture.second));
+		CHECK(review->upstream.empty());
+
+		Run(PlanDownloadChange(fixture.Load(), "origin", 12345, 1, ""), fixture.Get(), Resolution::Cancel, &handler);
+		const git_oid first = RefId(fixture.Get(), "refs/review/origin/12345/1");
+		CHECK(git_oid_equal(&first, &fixture.first));
+		CHECK(LatestLocalChange(fixture.Get(), "origin", 12345) == "refs/review/origin/12345/2");
+		CHECK_FALSE(LatestLocalChange(fixture.Get(), "origin", 999).has_value());
+		// Downloaded changes are not remote copies.
+		CHECK(fixture.Load().FindRemote("origin")->copies.size() == 2);
+
+		// The branch name is checked before anything is downloaded.
+		CHECK_THROWS_AS(PlanDownloadChange(fixture.Load(), "origin", 12345, std::nullopt, "review"), GitError);
+		const Plan missing = PlanDownloadChange(fixture.Load(), "origin", 999, std::nullopt, "");
+		RunContext context;
+		context.repository = fixture.Get();
+		context.network = &handler;
+		CHECK_THROWS_AS(missing.run(context), GitError);
+		const Plan missingPatchset = PlanDownloadChange(fixture.Load(), "origin", 12345, 7, "");
+		CHECK_THROWS_AS(missingPatchset.run(context), GitError);
+	}
+}
+
+
 TEST_CASE("SSH URLs", "[gittool]")
 {
 	const std::optional<SshUrl> scp = SshUrl::Parse("git@alias:group/repo.git");

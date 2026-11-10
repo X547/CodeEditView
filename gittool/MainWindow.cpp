@@ -68,6 +68,7 @@ enum class Action {
 	BranchReplay,
 	BranchRebaseInteractive,
 	BranchUpload,
+	BranchUploadForReview,
 	BranchSetUpstream,
 	BranchStopTracking,
 	BranchAddTag,
@@ -83,6 +84,7 @@ enum class Action {
 	AddRemote,
 	DownloadAll,
 	RemoteDownload,
+	RemoteDownloadChange,
 	RemoteEdit,
 	RemoteRename,
 	RemoteRemove,
@@ -165,6 +167,7 @@ static const std::vector<ActionItem> kBranchActions = {
 	{Action::BranchRebaseInteractive, "Replay interactively onto" ELLIPSIS},
 	kSeparator,
 	{Action::BranchUpload, "Upload" ELLIPSIS},
+	{Action::BranchUploadForReview, "Upload for review (Gerrit)" ELLIPSIS},
 	{Action::BranchSetUpstream, "Set tracked remote branch" ELLIPSIS},
 	{Action::BranchStopTracking, "Stop tracking" ELLIPSIS},
 	kSeparator,
@@ -182,6 +185,7 @@ static const std::vector<ActionItem> kBranchActions = {
 
 static const std::vector<ActionItem> kRemoteActions = {
 	{Action::RemoteDownload, "Download" ELLIPSIS},
+	{Action::RemoteDownloadChange, "Download review change (Gerrit)" ELLIPSIS},
 	{Action::RemoteCheckServer, "Check what's on the server"},
 	kSeparator,
 	{Action::RemoteEdit, "Edit URLs" ELLIPSIS},
@@ -217,6 +221,9 @@ enum class FollowUp {
 	None,
 	UpdateFromTracked,
 	Report,
+	// Shows the history of a downloaded change: "remote", "change" and
+	// "branch" (empty for none).
+	ShowChange,
 };
 
 
@@ -892,6 +899,12 @@ void MainWindow::ObjectInvoked()
 
 void MainWindow::Execute(const Plan &plan)
 {
+	Execute(plan, BMessage(kMsgNetworkDone));
+}
+
+
+void MainWindow::Execute(const Plan &plan, const BMessage &done)
+{
 	Resolution resolution = Resolution::Cancel;
 	if (!ConfirmPlan(plan, fRepository.get(), resolution)) {
 		return;
@@ -905,7 +918,7 @@ void MainWindow::Execute(const Plan &plan)
 			context.resolution = resolution;
 			context.network = &handler;
 			plan.run(context);
-		}, BMessage(kMsgNetworkDone));
+		}, done);
 		return;
 	}
 	RunContext context;
@@ -983,6 +996,23 @@ void MainWindow::NetworkDone(BMessage *message)
 				text += line + "\n";
 			}
 			ShowText(title, text.empty() ? "The local copies match the server." : text);
+			break;
+		}
+		case FollowUp::ShowChange: {
+			const std::string branch = message->GetString("branch", "");
+			if (!branch.empty()) {
+				ShowHistory(branch, false);
+				break;
+			}
+			const std::string remote = message->GetString("remote", "");
+			const int32 change = message->GetInt32("change", 0);
+			const int32 patchset = message->GetInt32("patchset", 0);
+			const std::optional<std::string> ref = patchset > 0
+				? std::optional<std::string>(LocalChangeRef(remote, change, patchset))
+				: LatestLocalChange(fRepository.get(), remote, change);
+			if (ref.has_value()) {
+				ShowHistory(*ref, false);
+			}
 			break;
 		}
 		case FollowUp::None:
@@ -1110,6 +1140,7 @@ void MainWindow::RunAction(Action action)
 			case Action::AddRemote:
 			case Action::DownloadAll:
 			case Action::RemoteDownload:
+			case Action::RemoteDownloadChange:
 			case Action::RemoteEdit:
 			case Action::RemoteRename:
 			case Action::RemoteRemove:
@@ -1460,6 +1491,9 @@ void MainWindow::RunBranchAction(Action action)
 			}
 			break;
 		}
+		case Action::BranchUploadForReview:
+			UploadForReview(branch);
+			break;
 		case Action::BranchSetUpstream: {
 			std::vector<std::string> copies;
 			for (const RemoteInfo &remote : fSnapshot.remotes) {
@@ -1641,6 +1675,9 @@ void MainWindow::RunRemoteAction(Action action)
 			}
 			break;
 		}
+		case Action::RemoteDownloadChange:
+			DownloadChange(remote);
+			break;
 		case Action::RemoteCheckServer: {
 			BMessage done(kMsgNetworkDone);
 			done.AddInt32("followUp", static_cast<int32>(FollowUp::Report));
@@ -1829,6 +1866,95 @@ void MainWindow::OpenDiff(const WorktreeInfo &worktree)
 	GitDiff::DiffWindow *window = new GitDiff::DiffWindow(std::move(diffRepository), std::string());
 	fDiffWindows[worktree.path] = BMessenger(window);
 	window->Show();
+}
+
+
+//#pragma mark - Gerrit
+
+void MainWindow::UploadForReview(const BranchInfo &branch)
+{
+	const std::vector<std::string> remotes = RemoteNames();
+	if (remotes.empty()) {
+		ShowError("There are no remotes");
+		return;
+	}
+	// The tracked remote branch is the usual target; otherwise main or
+	// master, as the remote has them.
+	const std::string upstreamRemote = UpstreamRemote(fRepository.get(), branch.name);
+	int remoteChoice = 0;
+	for (size_t i = 0; i < remotes.size(); i++) {
+		if (remotes[i] == upstreamRemote) {
+			remoteChoice = static_cast<int>(i);
+		}
+	}
+	const std::string &defaultRemote = remotes[remoteChoice];
+	std::string target;
+	if (!upstreamRemote.empty() && !branch.upstreamGone) {
+		target = branch.upstream.substr(upstreamRemote.size() + 1);
+	} else if (fSnapshot.FindRemoteCopy(defaultRemote + "/main") == nullptr
+		&& fSnapshot.FindRemoteCopy(defaultRemote + "/master") != nullptr) {
+		target = "master";
+	} else {
+		target = "main";
+	}
+
+	Form form("Upload " + branch.name + " for review", "Preview");
+	form.AddChoice("remote", "Remote:", remotes, remoteChoice)
+		.AddText("target", "Target branch:", target)
+		.AddText("topic", "Topic:")
+		.AddChoice("state", "State:", {"As the server decides", "Work in progress", "Ready for review"}, 0)
+		.AddText("reviewers", "Reviewers:")
+		.AddText("cc", "CC:")
+		.AddLabel("Separate names or e-mail addresses with spaces or commas.");
+	if (!form.Go()) {
+		return;
+	}
+	ReviewOptions options;
+	options.topic = form.Text("topic");
+	options.state = static_cast<ReviewState>(form.Choice("state"));
+	options.reviewers = SplitNames(form.Text("reviewers"));
+	options.cc = SplitNames(form.Text("cc"));
+	Execute(PlanUploadForReview(fRepository.get(), fSnapshot, branch.name, remotes[form.Choice("remote")],
+		form.Text("target"), options));
+}
+
+
+void MainWindow::DownloadChange(const RemoteInfo &remote)
+{
+	Form form("Download a review change from " + remote.name, "Preview");
+	form.AddText("change", "Change:")
+		.AddText("patchset", "Patch set:")
+		.AddLabel("A change number, number/patch set, or a link to the change.")
+		.AddLabel("Without a patch set, the latest is downloaded.")
+		.AddText("branch", "New branch:")
+		.AddLabel("Optional; the change is kept as refs/review/" + remote.name + "/<change>/<patch set>.");
+	if (!form.Go()) {
+		return;
+	}
+	int change = 0;
+	std::optional<int> patchset;
+	if (!ParseChange(form.Text("change"), change, patchset)) {
+		ShowError(("\"" + form.Text("change") + "\" is not a change number or a link to a change").c_str());
+		return;
+	}
+	const std::string patchsetText = form.Text("patchset");
+	if (!patchsetText.empty()) {
+		int number = 0;
+		std::optional<int> parsed;
+		if (!ParseChange(patchsetText, number, parsed) || parsed.has_value()) {
+			ShowError(("\"" + patchsetText + "\" is not a patch set number").c_str());
+			return;
+		}
+		patchset = number;
+	}
+	const std::string branch = form.Text("branch");
+	BMessage done(kMsgNetworkDone);
+	done.AddInt32("followUp", static_cast<int32>(FollowUp::ShowChange));
+	done.AddString("remote", remote.name.c_str());
+	done.AddInt32("change", change);
+	done.AddInt32("patchset", patchset.value_or(0));
+	done.AddString("branch", branch.c_str());
+	Execute(PlanDownloadChange(fSnapshot, remote.name, change, patchset, branch), done);
 }
 
 

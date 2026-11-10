@@ -119,6 +119,20 @@ TEST_CASE("documents of local files")
 		CHECK_FALSE(document->IsModified());
 		CHECK_FALSE(document->Status().changedElsewhere);
 	}
+
+	SECTION("revert drops edits of an unchanged file") {
+		Type(*document, "mine\n");
+		registry.Reload(document);
+		registry.WaitIdle();
+		CHECK(Text(*document) == "mine\none\n");
+		CHECK(document->IsModified());
+
+		registry.Reload(document, true);
+		registry.WaitIdle();
+		CHECK(Text(*document) == "one\n");
+		CHECK_FALSE(document->IsModified());
+		CHECK_FALSE(document->Status().changedElsewhere);
+	}
 }
 
 
@@ -267,6 +281,81 @@ TEST_CASE("save as another file")
 	Type(*copy, "edit\n");
 	CHECK_THROWS_AS(registry.SaveAs(source, copy->GetLocator()), ProviderError);
 	CHECK(repository.Read("copy.txt") == "one\n");
+}
+
+
+TEST_CASE("save a copy")
+{
+	TempDirectory directory;
+	directory.Write("a.txt", "one\n");
+	DocumentRegistry registry;
+	CollectorHolder collector;
+	BReference<Document> source = registry.Open(Locator::File(directory / "a.txt"));
+	registry.WaitIdle();
+	Type(*source, "edit\n");
+
+	const Locator copyLocator = Locator::File(directory / "copy.txt");
+	registry.SaveCopy(source, copyLocator, collector.Messenger());
+	registry.WaitIdle();
+	CHECK(directory.Read("copy.txt") == "edit\none\n");
+	CHECK(directory.Read("a.txt") == "one\n");
+	CHECK(source->IsModified());
+	// No document is made for the copy.
+	CHECK(registry.Find(copyLocator).Get() == nullptr);
+	std::optional<BMessage> saved = collector->Take(kNoticeCopySaved);
+	REQUIRE(saved.has_value());
+	CHECK(std::string(saved->GetString("locator", "")) == copyLocator.ToString());
+	CHECK(std::string(saved->GetString("error", "x")).empty());
+
+	// An open document of the copy takes the text.
+	BReference<Document> copy = registry.Open(copyLocator);
+	registry.WaitIdle();
+	Type(*source, "more\n");
+	registry.SaveCopy(source, copyLocator, collector.Messenger());
+	registry.WaitIdle();
+	CHECK(directory.Read("copy.txt") == "more\nedit\none\n");
+	CHECK(Text(*copy) == "more\nedit\none\n");
+	CHECK_FALSE(copy->IsModified());
+	CHECK(collector->Take(kNoticeCopySaved).has_value());
+
+	// Not over unsaved edits.
+	Type(*copy, "mine\n");
+	CHECK_THROWS_AS(registry.SaveCopy(source, copyLocator, collector.Messenger()), ProviderError);
+
+	// Failures are told.
+	registry.SaveCopy(source, Locator::File(directory / "none/copy.txt"), collector.Messenger());
+	saved = collector->Take(kNoticeCopySaved);
+	REQUIRE(saved.has_value());
+	CHECK_FALSE(std::string(saved->GetString("error", "")).empty());
+}
+
+
+TEST_CASE("new files")
+{
+	TempDirectory directory;
+	DocumentRegistry registry;
+	BReference<Document> created = registry.Create(Locator::File(directory / "new.txt"));
+	registry.WaitIdle();
+	CHECK(directory.Read("new.txt").empty());
+	CHECK(std::filesystem::exists(directory / "new.txt"));
+	CHECK(created->Status().state == DocumentState::Ready);
+	CHECK(created->Status().exists);
+	CHECK(Text(*created).empty());
+	CHECK(registry.Open(Locator::File(directory / "new.txt")) == created);
+
+	// An existing file is replaced.
+	directory.Write("old.txt", "old\n");
+	BReference<Document> old = registry.Open(Locator::File(directory / "old.txt"));
+	registry.WaitIdle();
+	CHECK(registry.Create(old->GetLocator()) == old);
+	registry.WaitIdle();
+	CHECK(directory.Read("old.txt").empty());
+	CHECK(Text(*old).empty());
+
+	// Not over unsaved edits.
+	Type(*old, "mine\n");
+	CHECK_THROWS_AS(registry.Create(old->GetLocator()), ProviderError);
+	CHECK_THROWS_AS(registry.Create(Locator::Sftp("", "host", 0, "/a.txt")), ProviderError);
 }
 
 

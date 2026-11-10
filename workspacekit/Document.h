@@ -27,6 +27,9 @@ constexpr uint32 kNoticeDocumentChanged = 'WDch';
 // A save finished: "error" (string, empty when saved), "conflict" (bool:
 // the file was changed elsewhere, nothing was written).
 constexpr uint32 kNoticeDocumentSaved = 'WDsv';
+// To the reply messenger of DocumentRegistry::SaveCopy(): "locator" (string:
+// the copy), "error" (string, empty when saved).
+constexpr uint32 kNoticeCopySaved = 'WDcs';
 
 
 enum class DocumentState {
@@ -97,6 +100,10 @@ private:
 	void Notify(uint32 what, const Document &document, const std::string &error = {}, bool conflict = false);
 	void Load(const BReference<Document> &document, bool force);
 	void Apply(Document &document, const FileData &file, bool force);
+	Locator WritableTarget(const Locator &requested);
+	BReference<Document> Replaced(const Locator &target, bool create);
+	void Replace(const Locator &target, const BReference<Document> &document, std::string data,
+		const BMessenger &reply);
 
 public:
 	explicit DocumentRegistry(Providers &providers = Providers::Default());
@@ -114,7 +121,8 @@ public:
 	std::vector<BReference<Document>> All();
 
 	// Reads the file again. With unsaved edits, the text is kept and the
-	// document marked changed elsewhere, unless force is set.
+	// document marked changed elsewhere, unless force is set (revert: the
+	// edits are dropped even if the file did not change).
 	void Reload(Document *document, bool force = false);
 	// Writes the text as it is now. Unless overwrite is set, nothing is
 	// written if the file changed since it was read or saved (a conflict).
@@ -124,6 +132,14 @@ public:
 	// history starts anew). Throws ProviderError if the location is not
 	// writable or its document has unsaved changes.
 	BReference<Document> SaveAs(Document *document, const Locator &target);
+	// Writes the text as it is now to another file, replacing it; the
+	// document stays as it is. A document of that file takes the text. The
+	// reply gets kNoticeCopySaved. Throws as SaveAs(); the document's own
+	// file is saved as by Save() with overwrite.
+	void SaveCopy(Document *document, const Locator &target, const BMessenger &reply);
+	// Writes an empty file, replacing one that exists, and returns its
+	// document. Throws as SaveAs().
+	BReference<Document> Create(const Locator &target);
 	// Forgets documents referenced by nobody else, without unsaved edits or
 	// shared marks (breakpoints).
 	void CloseUnused();

@@ -49,6 +49,40 @@ TEST_CASE("file provider")
 }
 
 
+TEST_CASE("file provider writes atomically")
+{
+	TempDirectory directory;
+	FileProvider provider;
+	directory.Write("a.txt", "one\n");
+	const std::filesystem::path path = directory / "a.txt";
+	std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write
+		| std::filesystem::perms::group_read);
+	const std::filesystem::perms permissions = std::filesystem::status(path).permissions();
+
+	provider.Write(Locator::File(path.string()), "two\n", {}, true);
+	CHECK(directory.Read("a.txt") == "two\n");
+	CHECK(std::filesystem::status(path).permissions() == permissions);
+	// The temporary file is gone.
+	std::vector<std::string> names;
+	for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(directory.Path())) {
+		names.push_back(entry.path().filename().string());
+	}
+	CHECK(names == std::vector<std::string> {"a.txt"});
+
+	// A link stays a link; its target gets the data.
+	std::filesystem::create_symlink("a.txt", directory / "link.txt");
+	provider.Write(Locator::File(directory / "link.txt"), "three\n", {}, true);
+	CHECK(std::filesystem::is_symlink(directory / "link.txt"));
+	CHECK(directory.Read("a.txt") == "three\n");
+	// Also one whose target does not exist yet.
+	std::filesystem::create_symlink("sub/b.txt", directory / "dangling.txt");
+	std::filesystem::create_directory(directory / "sub");
+	provider.Write(Locator::File(directory / "dangling.txt"), "b\n", {}, true);
+	CHECK(std::filesystem::is_symlink(directory / "dangling.txt"));
+	CHECK(directory.Read("sub/b.txt") == "b\n");
+}
+
+
 TEST_CASE("Git provider")
 {
 	TestRepository repository;

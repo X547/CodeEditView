@@ -49,9 +49,11 @@ private:
 	void UpdateTitle();
 	void UpdateStatus();
 	void Save();
-	void ShowSavePanel();
+	void ShowSavePanel(uint32 chosen, const char *title, const std::string &name);
 	void SaveAs(BMessage *message);
-	void Reload();
+	void SaveCopy(BMessage *message);
+	void CopySavedNotice(BMessage *message);
+	void Revert();
 	void SavedNotice(BMessage *message);
 	void ShowOpenPanel();
 	void OpenRefs(BMessage *message);

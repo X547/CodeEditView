@@ -22,9 +22,11 @@ std::string ErrnoMessage(const std::string &what, const std::string &path);
 // FileError.
 std::optional<std::string> ReadFile(const std::string &path);
 
-// Replaces or creates a file through a temporary file in the same directory
-// and a rename, so a failure leaves the old file. An existing file's
-// permissions and attributes are kept. Throws FileError.
+// Replaces or creates a file atomically: the data goes to a temporary file
+// "<name>.save-XXXXXX" beside it, is synced and renamed over the file, so a
+// failure or crash leaves the old file. An existing file's permissions,
+// owner (where allowed) and attributes are kept. A symbolic link is kept and
+// its target written. Throws FileError.
 void WriteFile(const std::string &path, std::string_view data);
 
 // Copies all attributes of one open node to another; returns false if one

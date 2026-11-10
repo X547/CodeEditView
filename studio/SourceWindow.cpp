@@ -47,9 +47,15 @@ using Workspace::Locator;
 using Workspace::LocatorKind;
 
 
+static constexpr uint32 kMsgNewFile = 'SWnf';
 static constexpr uint32 kMsgSave = 'SWsv';
 static constexpr uint32 kMsgSaveAs = 'SWsa';
-static constexpr uint32 kMsgReload = 'SWrl';
+static constexpr uint32 kMsgSaveCopy = 'SWsc';
+static constexpr uint32 kMsgRevert = 'SWrv';
+// From the save panel: "directory" (entry_ref), "name" (string).
+static constexpr uint32 kMsgNewFileChosen = 'SWnc';
+static constexpr uint32 kMsgSaveAsChosen = 'SWac';
+static constexpr uint32 kMsgSaveCopyChosen = 'SWcc';
 static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
@@ -108,13 +114,16 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	BMenu *searchMenu = nullptr;
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
+			// Cmd+N is Debug > Step over.
+			.AddItem("New file" B_UTF8_ELLIPSIS, kMsgNewFile)
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
 			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit)
 			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
 			.AddSeparator()
 			.AddItem("Save", kMsgSave, 'S')
 			.AddItem("Save as" B_UTF8_ELLIPSIS, kMsgSaveAs, 'S', B_SHIFT_KEY)
-			.AddItem("Reload", kMsgReload)
+			.AddItem("Save copy as" B_UTF8_ELLIPSIS, kMsgSaveCopy)
+			.AddItem("Revert", kMsgRevert)
 			.AddSeparator()
 			.AddItem("Close", B_QUIT_REQUESTED, 'W')
 			.AddItem("Quit", B_QUIT_REQUESTED, 'Q')
@@ -500,7 +509,7 @@ void SourceWindow::UpdateStatus()
 	} else if (status.changedElsewhere && !status.exists) {
 		text = "Deleted by another program; Save writes it again";
 	} else if (status.changedElsewhere) {
-		text = "Changed by another program; Reload discards your changes";
+		text = "Changed by another program; Revert discards your changes";
 	} else if (!status.problem.empty()) {
 		text = "Read-only: the file " + status.problem;
 	} else if (locator.Kind() == LocatorKind::GitCommit) {
@@ -576,34 +585,38 @@ std::string SourceWindow::StartDirectory() const
 }
 
 
-void SourceWindow::ShowSavePanel()
+// One panel for all; chosen is the message it sends.
+void SourceWindow::ShowSavePanel(uint32 chosen, const char *title, const std::string &name)
 {
 	if (fSavePanel == nullptr) {
 		fSavePanel = new BFilePanel(B_SAVE_PANEL, new BMessenger(this));
+	}
+	BMessage message(chosen);
+	fSavePanel->SetMessage(&message);
+	if (fSavePanel->Window()->Lock()) {
+		fSavePanel->Window()->SetTitle((std::string("CodeEdit: ") + title).c_str());
+		fSavePanel->Window()->Unlock();
 	}
 	const std::string directory = StartDirectory();
 	if (!directory.empty()) {
 		fSavePanel->SetPanelDirectory(directory.c_str());
 	}
-	fSavePanel->SetSaveText(fDocument->GetLocator().Leaf().c_str());
+	fSavePanel->SetSaveText(name.c_str());
 	fSavePanel->Show();
 }
 
 
 void SourceWindow::SaveAs(BMessage *message)
 {
-	entry_ref directory;
-	const char *name = nullptr;
-	if (message->FindRef("directory", &directory) != B_OK || message->FindString("name", &name) != B_OK) {
+	const std::optional<Locator> target = StudioApp::ChosenLocator(*message);
+	if (!target.has_value()) {
 		return;
 	}
-	BPath path(&directory);
-	path.Append(name);
 	BReference<Document> document;
 	try {
-		document = StudioApp::Get().Registry().SaveAs(fDocument, Locator::File(path.Path()));
+		document = StudioApp::Get().Registry().SaveAs(fDocument, *target);
 	} catch (const Workspace::ProviderError &error) {
-		ShowError(std::string("Cannot save as ") + path.Path() + ":\n" + error.what());
+		ShowError("Cannot save as " + target->Path() + ":\n" + error.what());
 		return;
 	}
 	if (document.Get() == fDocument.Get()) {
@@ -618,7 +631,33 @@ void SourceWindow::SaveAs(BMessage *message)
 }
 
 
-void SourceWindow::Reload()
+void SourceWindow::SaveCopy(BMessage *message)
+{
+	const std::optional<Locator> target = StudioApp::ChosenLocator(*message);
+	if (!target.has_value()) {
+		return;
+	}
+	try {
+		StudioApp::Get().Registry().SaveCopy(fDocument, *target, BMessenger(this));
+	} catch (const Workspace::ProviderError &error) {
+		ShowError("Cannot save a copy as " + target->Path() + ":\n" + error.what());
+	}
+}
+
+
+void SourceWindow::CopySavedNotice(BMessage *message)
+{
+	const std::string error = message->GetString("error", "");
+	if (error.empty()) {
+		return;
+	}
+	const std::optional<Locator> target = Locator::Parse(message->GetString("locator", ""));
+	const std::string name = target.has_value() ? target->DisplayName() : std::string("the copy");
+	ShowError("Cannot save " + name + ":\n" + error);
+}
+
+
+void SourceWindow::Revert()
 {
 	if (fDocument->IsModified()) {
 		const std::string question = "Discard your changes to " + fDocument->GetLocator().DisplayName() + "?";
@@ -691,17 +730,36 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgOutlineInvoked:
 			JumpToOutlineItem(true);
 			break;
+		case Workspace::kNoticeCopySaved:
+			CopySavedNotice(message);
+			break;
+		case kMsgNewFile:
+			ShowSavePanel(kMsgNewFileChosen, "New file", "Untitled");
+			break;
+		case kMsgNewFileChosen: {
+			const std::optional<Locator> target = StudioApp::ChosenLocator(*message);
+			if (target.has_value()) {
+				StudioApp::Get().NewFile(*target, this);
+			}
+			break;
+		}
 		case kMsgSave:
 			Save();
 			break;
 		case kMsgSaveAs:
-			ShowSavePanel();
+			ShowSavePanel(kMsgSaveAsChosen, "Save as", fDocument->GetLocator().Leaf());
 			break;
-		case B_SAVE_REQUESTED:
+		case kMsgSaveAsChosen:
 			SaveAs(message);
 			break;
-		case kMsgReload:
-			Reload();
+		case kMsgSaveCopy:
+			ShowSavePanel(kMsgSaveCopyChosen, "Save copy as", fDocument->GetLocator().Leaf());
+			break;
+		case kMsgSaveCopyChosen:
+			SaveCopy(message);
+			break;
+		case kMsgRevert:
+			Revert();
 			break;
 		case kMsgNewView: {
 			ShowOptions options;
@@ -839,7 +897,8 @@ void SourceWindow::MenusBeginning()
 	const bool ready = status.state == DocumentState::Ready && !status.saving;
 	menuBar->FindItem(kMsgSave)->SetEnabled(ready && !fDocument->IsReadOnly());
 	menuBar->FindItem(kMsgSaveAs)->SetEnabled(ready);
-	menuBar->FindItem(kMsgReload)->SetEnabled(!status.saving && status.state != DocumentState::Loading);
+	menuBar->FindItem(kMsgSaveCopy)->SetEnabled(ready);
+	menuBar->FindItem(kMsgRevert)->SetEnabled(!status.saving && status.state != DocumentState::Loading);
 	menuBar->FindItem(kMsgToggleStacking)->SetMarked(StudioApp::Get().Stacking());
 	UpdateDebugMenu();
 	UpdateCoverageMenu();

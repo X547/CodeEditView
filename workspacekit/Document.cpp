@@ -26,6 +26,14 @@ static std::string SavedData(TextModel &model)
 }
 
 
+static std::string SourceData(Document &document)
+{
+	TextModel &model = *document.Model();
+	ModelLock lock(model);
+	return SavedData(model);
+}
+
+
 //#pragma mark - Document
 
 Document::Document(const Locator &locator, bool writable):
@@ -215,6 +223,7 @@ void DocumentRegistry::Load(const BReference<Document> &document, bool force)
 void DocumentRegistry::Apply(Document &document, const FileData &file, bool force)
 {
 	const std::string bytes = file.data.value_or(std::string());
+	bool unchanged;
 	{
 		BAutolock lock(document.fLock);
 		if (!file.data.has_value() && document.fStatus.exists) {
@@ -226,12 +235,13 @@ void DocumentRegistry::Apply(Document &document, const FileData &file, bool forc
 			document.fVersion.clear();
 			return;
 		}
-		if (document.fLoaded == bytes) {
+		unchanged = document.fLoaded == bytes;
+		if (unchanged) {
 			document.fStatus.state = DocumentState::Ready;
 			document.fStatus.exists = file.data.has_value();
 			document.fStatus.error.clear();
+			document.fStatus.changedElsewhere = false;
 			document.fVersion = file.version;
-			return;
 		}
 	}
 
@@ -239,6 +249,10 @@ void DocumentRegistry::Apply(Document &document, const FileData &file, bool forc
 	std::string problem;
 	{
 		ModelLock lock(model);
+		// The same data again: the text stays unless forced to drop edits.
+		if (unchanged && (!force || !model.IsModified())) {
+			return;
+		}
 		if (!force && document.Status().state == DocumentState::Ready && model.IsModified()) {
 			BAutolock documentLock(document.fLock);
 			document.fStatus.changedElsewhere = true;
@@ -350,70 +364,121 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 }
 
 
-BReference<Document> DocumentRegistry::SaveAs(Document *source, const Locator &requested)
+Locator DocumentRegistry::WritableTarget(const Locator &requested)
 {
 	Provider &provider = fProviders.Get(requested);
 	const Locator target = provider.Resolve(requested);
 	if (!provider.IsWritable(target)) {
 		throw ProviderError("Files of this location are read-only");
 	}
-	if (target == source->GetLocator()) {
-		Save(source, true);
-		return BReference<Document>(source);
-	}
+	return target;
+}
 
-	std::string data;
-	{
-		TextModel &model = *source->Model();
-		ModelLock lock(model);
-		data = SavedData(model);
-	}
 
+// The document of a file about to be replaced, made if create is set; none
+// if it is not open and create is not set.
+BReference<Document> DocumentRegistry::Replaced(const Locator &target, bool create)
+{
 	BReference<Document> document;
 	{
 		BAutolock lock(fLock);
 		const auto it = fDocuments.find(target);
 		if (it != fDocuments.end()) {
 			document = it->second;
-		} else {
+		} else if (create) {
 			document.SetTo(new Document(target, true), true);
 			fDocuments.emplace(target, document);
 		}
 	}
+	if (document.Get() == nullptr) {
+		return document;
+	}
 	if (document->Status().saving || (document->Status().state == DocumentState::Ready && document->IsModified())) {
 		throw ProviderError(target.DisplayName() + " is open with unsaved changes");
 	}
-	{
-		BAutolock lock(document->fLock);
-		document->fStatus.saving = true;
-		if (document->fStatus.state == DocumentState::Failed) {
-			document->fStatus.state = DocumentState::Loading;
-		}
-	}
-	Notify(kNoticeDocumentChanged, *document);
+	return document;
+}
 
-	fQueue.Post([this, document, data = std::move(data)] {
-		const Locator &locator = document->GetLocator();
-		std::string error;
-		try {
-			FileData file;
-			file.version = fProviders.Get(locator).Write(locator, data, {}, true);
-			file.data = data;
-			Apply(*document, file, true);
-		} catch (const ProviderError &providerError) {
-			error = providerError.what();
-		}
+
+// Writes the file in the background; its document (if any) then holds the
+// data. The reply (if valid) gets kNoticeCopySaved.
+void DocumentRegistry::Replace(const Locator &target, const BReference<Document> &document, std::string data,
+	const BMessenger &reply)
+{
+	if (document.Get() != nullptr) {
 		{
 			BAutolock lock(document->fLock);
-			document->fStatus.saving = false;
-			document->fStatus.error = error;
-			if (!error.empty() && document->fStatus.state == DocumentState::Loading) {
-				document->fStatus.state = DocumentState::Failed;
+			document->fStatus.saving = true;
+			if (document->fStatus.state == DocumentState::Failed) {
+				document->fStatus.state = DocumentState::Loading;
 			}
 		}
 		Notify(kNoticeDocumentChanged, *document);
-		Notify(kNoticeDocumentSaved, *document, error);
+	}
+
+	fQueue.Post([this, target, document, data = std::move(data), reply] {
+		std::string error;
+		FileData file;
+		try {
+			file.version = fProviders.Get(target).Write(target, data, {}, true);
+			file.data = data;
+		} catch (const ProviderError &providerError) {
+			error = providerError.what();
+		}
+		if (document.Get() != nullptr) {
+			if (error.empty()) {
+				Apply(*document, file, true);
+			}
+			{
+				BAutolock lock(document->fLock);
+				document->fStatus.saving = false;
+				document->fStatus.error = error;
+				if (!error.empty() && document->fStatus.state == DocumentState::Loading) {
+					document->fStatus.state = DocumentState::Failed;
+				}
+			}
+			Notify(kNoticeDocumentChanged, *document);
+			Notify(kNoticeDocumentSaved, *document, error);
+		}
+		if (reply.IsValid()) {
+			BMessage message(kNoticeCopySaved);
+			message.AddString("locator", target.ToString().c_str());
+			message.AddString("error", error.c_str());
+			reply.SendMessage(&message);
+		}
 	});
+}
+
+
+BReference<Document> DocumentRegistry::SaveAs(Document *source, const Locator &requested)
+{
+	const Locator target = WritableTarget(requested);
+	if (target == source->GetLocator()) {
+		Save(source, true);
+		return BReference<Document>(source);
+	}
+	BReference<Document> document = Replaced(target, true);
+	Replace(target, document, SourceData(*source), BMessenger());
+	return document;
+}
+
+
+void DocumentRegistry::SaveCopy(Document *source, const Locator &requested, const BMessenger &reply)
+{
+	const Locator target = WritableTarget(requested);
+	if (target == source->GetLocator()) {
+		Save(source, true);
+		return;
+	}
+	Replace(target, Replaced(target, false), SourceData(*source), reply);
+}
+
+
+BReference<Document> DocumentRegistry::Create(const Locator &requested)
+{
+	const Locator target = WritableTarget(requested);
+	BReference<Document> document = Replaced(target, true);
+	Replace(target, document, std::string(), BMessenger());
 	return document;
 }
 

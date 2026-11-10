@@ -29,6 +29,7 @@ namespace Studio {
 
 
 static constexpr const char *kAppSignature = "application/x-vnd.CodeEdit";
+static constexpr uint32 kMsgNewFileChosen = 'SAnc';
 
 
 static BRect NextWindowFrame()
@@ -54,6 +55,7 @@ StudioApp::~StudioApp()
 	fWatcher->Lock();
 	fWatcher->Quit();
 	delete fOpenPanel;
+	delete fNewPanel;
 }
 
 
@@ -89,6 +91,35 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 	if (stack) {
 		BWindowStack(origin).AddWindow(BMessenger(window));
 	}
+}
+
+
+void StudioApp::NewFile(const Workspace::Locator &locator, BWindow *origin)
+{
+	BReference<Workspace::Document> document;
+	try {
+		document = fRegistry.Create(locator);
+	} catch (const Workspace::ProviderError &error) {
+		const std::string text = "Cannot create " + locator.DisplayName() + ":\n" + error.what();
+		(new BAlert("CodeEdit", text.c_str(), "OK", nullptr, nullptr, B_WIDTH_AS_USUAL, B_STOP_ALERT))->Go(nullptr);
+		return;
+	}
+	ShowDocument(document->GetLocator(), origin);
+}
+
+
+std::optional<Workspace::Locator> StudioApp::ChosenLocator(const BMessage &message)
+{
+	entry_ref directory;
+	const char *name = nullptr;
+	if (message.FindRef("directory", &directory) != B_OK || message.FindString("name", &name) != B_OK) {
+		return std::nullopt;
+	}
+	BPath path(&directory);
+	if (path.InitCheck() != B_OK || path.Append(name) != B_OK) {
+		return std::nullopt;
+	}
+	return Workspace::Locator::File(path.Path());
 }
 
 
@@ -466,6 +497,20 @@ void StudioApp::ShowOpenFilePanel()
 }
 
 
+void StudioApp::ShowNewFilePanel()
+{
+	if (fNewPanel == nullptr) {
+		BMessage chosen(kMsgNewFileChosen);
+		fNewPanel = new BFilePanel(B_SAVE_PANEL, nullptr, nullptr, 0, false, &chosen);
+		if (fNewPanel->Window()->Lock()) {
+			fNewPanel->Window()->SetTitle("CodeEdit: New file");
+			fNewPanel->Window()->Unlock();
+		}
+	}
+	fNewPanel->Show();
+}
+
+
 // A locator string, or a path (relative to cwd).
 void StudioApp::OpenArgument(const std::string &argument, const char *cwd)
 {
@@ -604,6 +649,16 @@ void StudioApp::MessageReceived(BMessage *message)
 		case kMsgShowOpenFile:
 			ShowOpenFilePanel();
 			break;
+		case kMsgShowNewFile:
+			ShowNewFilePanel();
+			break;
+		case kMsgNewFileChosen: {
+			const std::optional<Workspace::Locator> locator = ChosenLocator(*message);
+			if (locator.has_value()) {
+				NewFile(*locator, nullptr);
+			}
+			break;
+		}
 		case kMsgShowOpenGit:
 			(new OpenGitWindow(BMessenger(this), message->GetString("directory", "")))->Show();
 			break;

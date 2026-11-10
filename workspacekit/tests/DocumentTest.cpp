@@ -330,32 +330,58 @@ TEST_CASE("save a copy")
 }
 
 
-TEST_CASE("new files")
+TEST_CASE("untitled documents")
 {
 	TempDirectory directory;
 	DocumentRegistry registry;
-	BReference<Document> created = registry.Create(Locator::File(directory / "new.txt"));
-	registry.WaitIdle();
-	CHECK(directory.Read("new.txt").empty());
-	CHECK(std::filesystem::exists(directory / "new.txt"));
-	CHECK(created->Status().state == DocumentState::Ready);
-	CHECK(created->Status().exists);
-	CHECK(Text(*created).empty());
-	CHECK(registry.Open(Locator::File(directory / "new.txt")) == created);
+	CollectorHolder collector;
+	registry.AddListener(collector.Messenger());
 
-	// An existing file is replaced.
-	directory.Write("old.txt", "old\n");
-	BReference<Document> old = registry.Open(Locator::File(directory / "old.txt"));
-	registry.WaitIdle();
-	CHECK(registry.Create(old->GetLocator()) == old);
-	registry.WaitIdle();
-	CHECK(directory.Read("old.txt").empty());
-	CHECK(Text(*old).empty());
+	BReference<Document> first = registry.NewUntitled();
+	BReference<Document> second = registry.NewUntitled();
+	CHECK(first->GetLocator() == Locator::Untitled(1));
+	CHECK(second->GetLocator() == Locator::Untitled(2));
+	CHECK(first->Status().state == DocumentState::Ready);
+	CHECK_FALSE(first->Status().exists);
+	CHECK_FALSE(first->IsReadOnly());
+	CHECK(Text(*first).empty());
+	CHECK(registry.Open(Locator::Untitled(1)) == first);
 
-	// Not over unsaved edits.
-	Type(*old, "mine\n");
-	CHECK_THROWS_AS(registry.Create(old->GetLocator()), ProviderError);
-	CHECK_THROWS_AS(registry.Create(Locator::Sftp("", "host", 0, "/a.txt")), ProviderError);
+	// No file to save to.
+	Type(*first, "text\n");
+	registry.Save(first);
+	std::optional<BMessage> saved = TakeSaved(collector, *first);
+	REQUIRE(saved.has_value());
+	CHECK_FALSE(std::string(saved->GetString("error", "")).empty());
+	CHECK(first->IsModified());
+
+	SECTION("revert empties the text") {
+		registry.Reload(first, true);
+		registry.WaitIdle();
+		CHECK(Text(*first).empty());
+		CHECK_FALSE(first->IsModified());
+	}
+
+	SECTION("save as gives a file") {
+		const Locator target = Locator::File(directory / "a.txt");
+		BReference<Document> document = registry.SaveAs(first, target);
+		registry.WaitIdle();
+		CHECK(document->GetLocator() == target);
+		CHECK(directory.Read("a.txt") == "text\n");
+		CHECK(Text(*document) == "text\n");
+		// The untitled document counts as saved and goes when unused.
+		CHECK_FALSE(first->IsModified());
+		const std::optional<BMessage> moved = collector->Take(kNoticeDocumentMoved);
+		REQUIRE(moved.has_value());
+		CHECK(std::string(moved->GetString("locator", "")) == Locator::Untitled(1).ToString());
+		CHECK(std::string(moved->GetString("to", "")) == target.ToString());
+		first.Unset();
+		registry.CloseUnused();
+		CHECK(registry.Find(Locator::Untitled(1)).Get() == nullptr);
+
+		// The smallest free number is taken again.
+		CHECK(registry.NewUntitled()->GetLocator() == Locator::Untitled(1));
+	}
 }
 
 

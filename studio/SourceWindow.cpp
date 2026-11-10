@@ -47,13 +47,11 @@ using Workspace::Locator;
 using Workspace::LocatorKind;
 
 
-static constexpr uint32 kMsgNewFile = 'SWnf';
 static constexpr uint32 kMsgSave = 'SWsv';
 static constexpr uint32 kMsgSaveAs = 'SWsa';
 static constexpr uint32 kMsgSaveCopy = 'SWsc';
 static constexpr uint32 kMsgRevert = 'SWrv';
 // From the save panel: "directory" (entry_ref), "name" (string).
-static constexpr uint32 kMsgNewFileChosen = 'SWnc';
 static constexpr uint32 kMsgSaveAsChosen = 'SWac';
 static constexpr uint32 kMsgSaveCopyChosen = 'SWcc';
 static constexpr uint32 kMsgNewView = 'SWnv';
@@ -115,7 +113,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
 			// Cmd+N is Debug > Step over.
-			.AddItem("New file" B_UTF8_ELLIPSIS, kMsgNewFile)
+			.AddItem("New", kMsgNewDocument)
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
 			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit)
 			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
@@ -514,6 +512,8 @@ void SourceWindow::UpdateStatus()
 		text = "Read-only: the file " + status.problem;
 	} else if (locator.Kind() == LocatorKind::GitCommit) {
 		text = "Read-only: " + locator.ToString();
+	} else if (locator.Kind() == LocatorKind::Untitled) {
+		text = "New document; Save asks where to write it";
 	} else {
 		text = locator.ToString();
 	}
@@ -535,9 +535,38 @@ void SourceWindow::UpdateStatus()
 }
 
 
+// An untitled document is saved as a file.
 void SourceWindow::Save()
 {
+	if (fDocument->GetLocator().Kind() == LocatorKind::Untitled) {
+		ShowSavePanel(kMsgSaveAsChosen, "Save as", fDocument->GetLocator().Leaf());
+		return;
+	}
 	StudioApp::Get().Registry().Save(fDocument);
+}
+
+
+// The save panel closed (also after a choice, which comes first).
+void SourceWindow::SavePanelClosed(BMessage *message)
+{
+	if (message->GetInt32("old_what", 0) == static_cast<int32>(kMsgSaveAsChosen) && !fSaveAsChosen) {
+		// Closing waited for a save that was cancelled.
+		fCloseAfterSave = false;
+	}
+}
+
+
+void SourceWindow::SetDocument(Document *document)
+{
+	if (document == fDocument.Get()) {
+		return;
+	}
+	fDocument.SetTo(document);
+	fEditView->SetModel(fDocument->Model());
+	Follow(fSession, fCoverage);
+	UpdateTitle();
+	UpdateStatus();
+	ScheduleOutlineRefresh();
 }
 
 
@@ -593,6 +622,7 @@ void SourceWindow::ShowSavePanel(uint32 chosen, const char *title, const std::st
 	}
 	BMessage message(chosen);
 	fSavePanel->SetMessage(&message);
+	fSaveAsChosen = false;
 	if (fSavePanel->Window()->Lock()) {
 		fSavePanel->Window()->SetTitle((std::string("CodeEdit: ") + title).c_str());
 		fSavePanel->Window()->Unlock();
@@ -612,22 +642,26 @@ void SourceWindow::SaveAs(BMessage *message)
 	if (!target.has_value()) {
 		return;
 	}
+	fSaveAsChosen = true;
 	BReference<Document> document;
 	try {
 		document = StudioApp::Get().Registry().SaveAs(fDocument, *target);
 	} catch (const Workspace::ProviderError &error) {
+		fCloseAfterSave = false;
 		ShowError("Cannot save as " + target->Path() + ":\n" + error.what());
 		return;
 	}
-	if (document.Get() == fDocument.Get()) {
-		return;
+	SetDocument(document);
+}
+
+
+// Another window saved the untitled document shown as a file.
+void SourceWindow::DocumentMoved(BMessage *message)
+{
+	const std::optional<Locator> target = Locator::Parse(message->GetString("to", ""));
+	if (target.has_value()) {
+		SetDocument(StudioApp::Get().Registry().Open(*target));
 	}
-	fDocument = document;
-	fEditView->SetModel(fDocument->Model());
-	Follow(fSession, fCoverage);
-	UpdateTitle();
-	UpdateStatus();
-	ScheduleOutlineRefresh();
 }
 
 
@@ -733,16 +767,17 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case Workspace::kNoticeCopySaved:
 			CopySavedNotice(message);
 			break;
-		case kMsgNewFile:
-			ShowSavePanel(kMsgNewFileChosen, "New file", "Untitled");
-			break;
-		case kMsgNewFileChosen: {
-			const std::optional<Locator> target = StudioApp::ChosenLocator(*message);
-			if (target.has_value()) {
-				StudioApp::Get().NewFile(*target, this);
+		case Workspace::kNoticeDocumentMoved:
+			if (IsDocumentNotice(message)) {
+				DocumentMoved(message);
 			}
 			break;
-		}
+		case B_CANCEL:
+			SavePanelClosed(message);
+			break;
+		case kMsgNewDocument:
+			StudioApp::Get().NewDocument(this);
+			break;
 		case kMsgSave:
 			Save();
 			break;

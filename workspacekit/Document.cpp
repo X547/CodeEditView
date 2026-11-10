@@ -99,16 +99,22 @@ void DocumentRegistry::RemoveListener(const BMessenger &listener)
 
 void DocumentRegistry::Notify(uint32 what, const Document &document, const std::string &error, bool conflict)
 {
-	std::vector<BMessenger> listeners;
-	{
-		BAutolock lock(fLock);
-		listeners = fListeners;
-	}
 	BMessage message(what);
 	message.AddString("locator", document.GetLocator().ToString().c_str());
 	if (what == kNoticeDocumentSaved) {
 		message.AddString("error", error.c_str());
 		message.AddBool("conflict", conflict);
+	}
+	NotifyMessage(message);
+}
+
+
+void DocumentRegistry::NotifyMessage(BMessage &message)
+{
+	std::vector<BMessenger> listeners;
+	{
+		BAutolock lock(fLock);
+		listeners = fListeners;
 	}
 	for (const BMessenger &listener : listeners) {
 		listener.SendMessage(&message);
@@ -120,8 +126,11 @@ BReference<Document> DocumentRegistry::Open(const Locator &requested)
 {
 	Locator locator = requested;
 	std::string error;
+	const bool untitled = locator.Kind() == LocatorKind::Untitled;
 	Provider *provider = fProviders.Find(locator.Kind());
-	if (provider == nullptr) {
+	if (untitled) {
+		// No file: empty text, ready at once.
+	} else if (provider == nullptr) {
 		try {
 			fProviders.Get(locator);
 		} catch (const ProviderError &providerError) {
@@ -143,9 +152,15 @@ BReference<Document> DocumentRegistry::Open(const Locator &requested)
 		if (it != fDocuments.end()) {
 			document = it->second;
 		} else {
-			document.SetTo(new Document(locator, provider != nullptr && provider->IsWritable(locator)), true);
+			const bool writable = untitled || (provider != nullptr && provider->IsWritable(locator));
+			document.SetTo(new Document(locator, writable), true);
 			fDocuments.emplace(locator, document);
-			load = error.empty();
+			if (untitled) {
+				document->fStatus.state = DocumentState::Ready;
+				document->fLoaded = std::string();
+			} else {
+				load = error.empty();
+			}
 		}
 	}
 	if (!error.empty()) {
@@ -169,6 +184,25 @@ BReference<Document> DocumentRegistry::Open(const Locator &requested)
 	if (load) {
 		Load(document, false);
 	}
+	return document;
+}
+
+
+BReference<Document> DocumentRegistry::NewUntitled()
+{
+	BReference<Document> document;
+	{
+		BAutolock lock(fLock);
+		int number = 1;
+		while (fDocuments.contains(Locator::Untitled(number))) {
+			number++;
+		}
+		document.SetTo(new Document(Locator::Untitled(number), true), true);
+		document->fStatus.state = DocumentState::Ready;
+		document->fLoaded = std::string();
+		fDocuments.emplace(document->GetLocator(), document);
+	}
+	Notify(kNoticeDocumentChanged, *document);
 	return document;
 }
 
@@ -198,7 +232,10 @@ void DocumentRegistry::Load(const BReference<Document> &document, bool force)
 		const Locator &locator = document->GetLocator();
 		FileData file;
 		try {
-			file = fProviders.Get(locator).Read(locator);
+			// Untitled: nothing to read, reverting empties the text.
+			if (locator.Kind() != LocatorKind::Untitled) {
+				file = fProviders.Get(locator).Read(locator);
+			}
 			if (!file.data.has_value() && !document->fWritable) {
 				throw ProviderError(locator.DisplayName() + " does not exist");
 			}
@@ -295,7 +332,9 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 	{
 		BAutolock lock(document->fLock);
 		std::string error;
-		if (!document->fWritable) {
+		if (document->GetLocator().Kind() == LocatorKind::Untitled) {
+			error = "The document has no file yet";
+		} else if (!document->fWritable) {
 			error = "Files of this location are read-only";
 		} else if (!document->fStatus.problem.empty()) {
 			error = "The file " + document->fStatus.problem;
@@ -401,10 +440,17 @@ BReference<Document> DocumentRegistry::Replaced(const Locator &target, bool crea
 
 
 // Writes the file in the background; its document (if any) then holds the
-// data. The reply (if valid) gets kNoticeCopySaved.
+// data. The reply (if valid) gets kNoticeCopySaved. An untitled source
+// (if any) of the data counts as saved unless edited meanwhile, and its
+// listeners get kNoticeDocumentMoved.
 void DocumentRegistry::Replace(const Locator &target, const BReference<Document> &document, std::string data,
-	const BMessenger &reply)
+	const BMessenger &reply, const BReference<Document> &untitled)
 {
+	uint64_t untitledRevision = 0;
+	if (untitled.Get() != nullptr) {
+		ModelLock lock(*untitled->Model());
+		untitledRevision = untitled->Model()->Revision();
+	}
 	if (document.Get() != nullptr) {
 		{
 			BAutolock lock(document->fLock);
@@ -416,7 +462,7 @@ void DocumentRegistry::Replace(const Locator &target, const BReference<Document>
 		Notify(kNoticeDocumentChanged, *document);
 	}
 
-	fQueue.Post([this, target, document, data = std::move(data), reply] {
+	fQueue.Post([this, target, document, data = std::move(data), reply, untitled, untitledRevision] {
 		std::string error;
 		FileData file;
 		try {
@@ -440,6 +486,19 @@ void DocumentRegistry::Replace(const Locator &target, const BReference<Document>
 			Notify(kNoticeDocumentChanged, *document);
 			Notify(kNoticeDocumentSaved, *document, error);
 		}
+		if (untitled.Get() != nullptr && error.empty()) {
+			{
+				TextModel &model = *untitled->Model();
+				ModelLock lock(model);
+				if (model.Revision() == untitledRevision) {
+					model.SetSavePoint();
+				}
+			}
+			BMessage moved(kNoticeDocumentMoved);
+			moved.AddString("locator", untitled->GetLocator().ToString().c_str());
+			moved.AddString("to", target.ToString().c_str());
+			NotifyMessage(moved);
+		}
 		if (reply.IsValid()) {
 			BMessage message(kNoticeCopySaved);
 			message.AddString("locator", target.ToString().c_str());
@@ -458,7 +517,11 @@ BReference<Document> DocumentRegistry::SaveAs(Document *source, const Locator &r
 		return BReference<Document>(source);
 	}
 	BReference<Document> document = Replaced(target, true);
-	Replace(target, document, SourceData(*source), BMessenger());
+	BReference<Document> untitled;
+	if (source->GetLocator().Kind() == LocatorKind::Untitled) {
+		untitled.SetTo(source);
+	}
+	Replace(target, document, SourceData(*source), BMessenger(), untitled);
 	return document;
 }
 
@@ -470,16 +533,7 @@ void DocumentRegistry::SaveCopy(Document *source, const Locator &requested, cons
 		Save(source, true);
 		return;
 	}
-	Replace(target, Replaced(target, false), SourceData(*source), reply);
-}
-
-
-BReference<Document> DocumentRegistry::Create(const Locator &requested)
-{
-	const Locator target = WritableTarget(requested);
-	BReference<Document> document = Replaced(target, true);
-	Replace(target, document, std::string(), BMessenger());
-	return document;
+	Replace(target, Replaced(target, false), SourceData(*source), reply, BReference<Document>());
 }
 
 

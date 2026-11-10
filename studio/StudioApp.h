@@ -86,7 +86,6 @@ private:
 	BMessenger fDocumentsWindow;
 	bool fStacking = true;
 	BFilePanel *fOpenPanel {};
-	BFilePanel *fNewPanel {};
 	std::map<int32, SessionEntry> fSessions;
 	int32 fNextSessionId = 1;
 	std::map<int32, CoverageEntry> fCoverages;
@@ -94,7 +93,6 @@ private:
 
 	void ShowDocumentsWindow();
 	void ShowOpenFilePanel();
-	void ShowNewFilePanel();
 	void OpenArgument(const std::string &argument, const char *cwd);
 	void ShowFollowing(const Workspace::Locator &locator, const ShowOptions &options);
 	void ShowToolWindow(int32 session, Debugger::ToolWindowKind kind);
@@ -115,9 +113,8 @@ public:
 	// (see ShowOptions). A new window joins the stack of origin (if stacking
 	// is on), which must be locked by the calling thread.
 	void ShowDocument(const Workspace::Locator &locator, BWindow *origin, const ShowOptions &options = {});
-	// Writes an empty file there (replacing one that exists) and shows it as
-	// ShowDocument() does; reports failures in an alert.
-	void NewFile(const Workspace::Locator &locator, BWindow *origin);
+	// Shows a new untitled document in a new window (see ShowDocument()).
+	void NewDocument(BWindow *origin);
 	// The file chosen in a save panel ("directory", "name"); none if the
 	// message has none.
 	static std::optional<Workspace::Locator> ChosenLocator(const BMessage &message);

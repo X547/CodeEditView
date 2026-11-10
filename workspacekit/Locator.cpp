@@ -177,6 +177,15 @@ Locator Locator::Sftp(std::string_view user, std::string_view host, int port, st
 }
 
 
+Locator Locator::Untitled(int number)
+{
+	Locator locator;
+	locator.fKind = LocatorKind::Untitled;
+	locator.fNumber = number;
+	return locator;
+}
+
+
 static std::optional<Locator> ParseGit(std::string_view rest)
 {
 	const size_t question = rest.find('?');
@@ -274,6 +283,14 @@ std::optional<Locator> Locator::Parse(std::string_view text)
 	if (scheme == "sftp") {
 		return ParseSftp(rest);
 	}
+	if (scheme == "untitled") {
+		int number = 0;
+		const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), number);
+		if (error != std::errc() || end != rest.data() + rest.size() || number < 1) {
+			return std::nullopt;
+		}
+		return Untitled(number);
+	}
 	return std::nullopt;
 }
 
@@ -298,6 +315,8 @@ std::string Locator::ToString() const
 			}
 			return result + PercentEncode(fPath);
 		}
+		case LocatorKind::Untitled:
+			return "untitled://" + std::to_string(fNumber);
 	}
 	return {};
 }
@@ -318,6 +337,8 @@ Locator Locator::WithPath(std::string_view path) const
 			return GitCommit(fRepository, fRevision, path);
 		case LocatorKind::Sftp:
 			return Sftp(fUser, fHost, fPort, path);
+		case LocatorKind::Untitled:
+			break;
 	}
 	return *this;
 }
@@ -325,6 +346,9 @@ Locator Locator::WithPath(std::string_view path) const
 
 std::string Locator::Leaf() const
 {
+	if (fKind == LocatorKind::Untitled) {
+		return "Untitled " + std::to_string(fNumber);
+	}
 	const size_t slash = fPath.rfind('/');
 	return slash == std::string::npos ? fPath : fPath.substr(slash + 1);
 }
@@ -360,6 +384,8 @@ std::string Locator::DisplayName() const
 			const std::string server = (fUser.empty() ? "" : fUser + "@") + fHost;
 			return Leaf() + std::string(kDash) + server + ":" + Parent().fPath;
 		}
+		case LocatorKind::Untitled:
+			return Leaf();
 	}
 	return {};
 }

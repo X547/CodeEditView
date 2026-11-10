@@ -44,13 +44,18 @@ private:
 	// Closing asks about unsaved changes without blocking.
 	bool fAskingClose {};
 	bool fCloseAfterSave {};
+	// A file was chosen in the save panel since it was shown for save as.
+	bool fSaveAsChosen {};
 
 	bool IsDocumentNotice(BMessage *message) const;
 	void UpdateTitle();
 	void UpdateStatus();
 	void Save();
 	void ShowSavePanel(uint32 chosen, const char *title, const std::string &name);
+	void SavePanelClosed(BMessage *message);
+	void SetDocument(Workspace::Document *document);
 	void SaveAs(BMessage *message);
+	void DocumentMoved(BMessage *message);
 	void SaveCopy(BMessage *message);
 	void CopySavedNotice(BMessage *message);
 	void Revert();

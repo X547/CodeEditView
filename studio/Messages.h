@@ -32,8 +32,8 @@ constexpr uint32 kMsgShowCoverageSummary = 'CSCs';
 constexpr uint32 kMsgShowOpenCoverage = 'CSoc';
 // "directory" (string, optional): where the dialog starts.
 constexpr uint32 kMsgShowOpenFile = 'CSof';
-// Asks where to create a new empty file and opens it.
-constexpr uint32 kMsgShowNewFile = 'CSnf';
+// Opens a new untitled document.
+constexpr uint32 kMsgNewDocument = 'CSnd';
 constexpr uint32 kMsgShowOpenGit = 'CSog';
 constexpr uint32 kMsgShowOpenLocation = 'CSoL';
 constexpr uint32 kMsgShowDocuments = 'CSsd';

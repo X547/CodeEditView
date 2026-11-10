@@ -26,7 +26,7 @@ DocumentsWindow::DocumentsWindow():
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
-			.AddItem("New file" B_UTF8_ELLIPSIS, kMsgShowNewFile)
+			.AddItem("New", kMsgNewDocument)
 			.AddItem("Open" B_UTF8_ELLIPSIS, kMsgShowOpenFile, 'O')
 			.AddItem("Open from Git" B_UTF8_ELLIPSIS, kMsgShowOpenGit)
 			.AddItem("Open location" B_UTF8_ELLIPSIS, kMsgShowOpenLocation, 'O', B_SHIFT_KEY)
@@ -35,7 +35,7 @@ DocumentsWindow::DocumentsWindow():
 			.AddItem("Quit", B_QUIT_REQUESTED, 'Q')
 		.End();
 	// All but Close go to the application.
-	for (const uint32 command : {kMsgShowNewFile, kMsgShowOpenFile, kMsgShowOpenGit, kMsgShowOpenLocation}) {
+	for (const uint32 command : {kMsgNewDocument, kMsgShowOpenFile, kMsgShowOpenGit, kMsgShowOpenLocation}) {
 		menuBar->FindItem(command)->SetTarget(be_app);
 	}
 	menuBar->FindItem("Quit")->SetTarget(be_app);

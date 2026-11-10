@@ -97,6 +97,21 @@ TEST_CASE("SFTP locators")
 }
 
 
+TEST_CASE("untitled locators")
+{
+	const Locator locator = Locator::Untitled(3);
+	CHECK(locator.Kind() == LocatorKind::Untitled);
+	CHECK(locator.Number() == 3);
+	CHECK(locator.ToString() == "untitled://3");
+	CHECK(Locator::Parse("untitled://3") == locator);
+	CHECK(locator.Leaf() == "Untitled 3");
+	CHECK(locator.DisplayName() == "Untitled 3");
+	CHECK(locator.IsResolved());
+	CHECK(locator.Parent() == locator);
+	CHECK(locator != Locator::Untitled(4));
+}
+
+
 TEST_CASE("malformed locators")
 {
 	for (const char *text : {
@@ -115,6 +130,10 @@ TEST_CASE("malformed locators")
 		"sftp://server:x/a",
 		"sftp://@server/a",
 		"sftp:///a",
+		"untitled://",
+		"untitled://0",
+		"untitled://x",
+		"untitled://1/a",
 	}) {
 		INFO(text);
 		CHECK_FALSE(Locator::Parse(text).has_value());

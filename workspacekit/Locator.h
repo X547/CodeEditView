@@ -16,6 +16,8 @@ enum class LocatorKind {
 	GitCommit,
 	// A file on an SFTP server.
 	Sftp,
+	// A new document not saved to a file yet, by number.
+	Untitled,
 };
 
 
@@ -29,6 +31,7 @@ enum class LocatorKind {
 //   file:///boot/home/src/a.cpp
 //   git:///boot/home/src/repo?commit=<40 hex>&path=src/a.cpp
 //   sftp://user@host:22/home/user/a.cpp
+//   untitled://3
 class Locator {
 private:
 	LocatorKind fKind = LocatorKind::File;
@@ -44,6 +47,8 @@ private:
 	std::string fHost;
 	// 0: the default (from the SSH configuration, else 22).
 	int fPort {};
+	// Untitled: from 1.
+	int fNumber {};
 
 public:
 	Locator() = default;
@@ -51,6 +56,7 @@ public:
 	static Locator File(std::string_view path);
 	static Locator GitCommit(std::string_view repository, std::string_view revision, std::string_view path);
 	static Locator Sftp(std::string_view user, std::string_view host, int port, std::string_view path);
+	static Locator Untitled(int number);
 	// None for a string that is not a locator of a known kind.
 	static std::optional<Locator> Parse(std::string_view text);
 
@@ -63,20 +69,22 @@ public:
 	const std::string &User() const {return fUser;}
 	const std::string &Host() const {return fHost;}
 	int Port() const {return fPort;}
+	int Number() const {return fNumber;}
 
 	// A Git revision is a full commit id; always true for other kinds.
 	bool IsResolved() const;
 	// The same file at another path of the same place (repository, commit,
-	// server).
+	// server); an untitled locator stays as it is.
 	Locator WithPath(std::string_view path) const;
-	// The last path component; empty for a root.
+	// The last path component; empty for a root. "Untitled 3" for an
+	// untitled locator.
 	std::string Leaf() const;
 	// The directory containing the file; the locator itself for a root.
 	Locator Parent() const;
 	// A file in the same directory.
 	Locator Sibling(std::string_view name) const;
 	// "a.cpp — /boot/home", "a.cpp — repo @ 1a2b3c4",
-	// "a.cpp — user@host:/home/user".
+	// "a.cpp — user@host:/home/user", "Untitled 3".
 	std::string DisplayName() const;
 
 	bool operator==(const Locator &other) const = default;

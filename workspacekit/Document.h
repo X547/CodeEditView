@@ -30,6 +30,8 @@ constexpr uint32 kNoticeDocumentSaved = 'WDsv';
 // To the reply messenger of DocumentRegistry::SaveCopy(): "locator" (string:
 // the copy), "error" (string, empty when saved).
 constexpr uint32 kNoticeCopySaved = 'WDcs';
+// An untitled document was saved as a file: "to" (string) is its locator.
+constexpr uint32 kNoticeDocumentMoved = 'WDmv';
 
 
 enum class DocumentState {
@@ -98,12 +100,13 @@ private:
 	JobQueue fQueue;
 
 	void Notify(uint32 what, const Document &document, const std::string &error = {}, bool conflict = false);
+	void NotifyMessage(BMessage &message);
 	void Load(const BReference<Document> &document, bool force);
 	void Apply(Document &document, const FileData &file, bool force);
 	Locator WritableTarget(const Locator &requested);
 	BReference<Document> Replaced(const Locator &target, bool create);
 	void Replace(const Locator &target, const BReference<Document> &document, std::string data,
-		const BMessenger &reply);
+		const BMessenger &reply, const BReference<Document> &untitled);
 
 public:
 	explicit DocumentRegistry(Providers &providers = Providers::Default());
@@ -118,6 +121,11 @@ public:
 	// Failed; opening it again retries.
 	BReference<Document> Open(const Locator &locator);
 	BReference<Document> Find(const Locator &locator);
+	// A new empty document without a file, "Untitled N" with the smallest
+	// number not in use; ready at once. Save() fails for it; SaveAs() gives
+	// it a file: when written, it counts as saved (and is closed when unused)
+	// and listeners get kNoticeDocumentMoved.
+	BReference<Document> NewUntitled();
 	std::vector<BReference<Document>> All();
 
 	// Reads the file again. With unsaved edits, the text is kept and the
@@ -137,9 +145,6 @@ public:
 	// reply gets kNoticeCopySaved. Throws as SaveAs(); the document's own
 	// file is saved as by Save() with overwrite.
 	void SaveCopy(Document *document, const Locator &target, const BMessenger &reply);
-	// Writes an empty file, replacing one that exists, and returns its
-	// document. Throws as SaveAs().
-	BReference<Document> Create(const Locator &target);
 	// Forgets documents referenced by nobody else, without unsaved edits or
 	// shared marks (breakpoints).
 	void CloseUnused();

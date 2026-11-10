@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,11 +46,15 @@ private:
 	void ShowHeader();
 	void LoadChanges();
 	void ShowSelectedFile();
+	const FileChange *SelectedChange() const;
+	std::optional<std::pair<git_oid, std::string>> SelectedVersion(bool parent) const;
+	void OpenInCodeEdit(bool parent);
 
 public:
 	// Throws GitError if the commit cannot be read.
 	CommitWindow(const std::string &repositoryPath, const git_oid &id, window_feel feel);
 
+	void MenusBeginning() override;
 	void MessageReceived(BMessage *message) override;
 };
 

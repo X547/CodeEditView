@@ -2,6 +2,7 @@
 
 #include <exception>
 
+#include <Beep.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
@@ -9,6 +10,7 @@
 #include <CodeEditView/CodeEditView.h>
 
 #include "ChangeView.h"
+#include "CodeEditLink.h"
 #include "CommitMessage.h"
 #include "DiffView.h"
 #include "Dialogs.h"
@@ -20,6 +22,10 @@ namespace GitTool {
 
 using DiffKit::DiffView;
 using DiffKit::TextSide;
+
+
+static constexpr uint32 kMsgOpenInCodeEdit = 'CWoc';
+static constexpr uint32 kMsgOpenParentInCodeEdit = 'CWop';
 
 
 static std::string SignatureText(const Signature &signature)
@@ -59,6 +65,9 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
+			.AddItem("Open in CodeEdit", kMsgOpenInCodeEdit)
+			.AddItem("Open parent version in CodeEdit", kMsgOpenParentInCodeEdit)
+			.AddSeparator()
 			.AddItem("Close", B_QUIT_REQUESTED, 'W')
 		.End()
 		.AddMenu("Edit")
@@ -206,12 +215,78 @@ void CommitWindow::ShowSelectedFile()
 }
 
 
+const FileChange *CommitWindow::SelectedChange() const
+{
+	const std::optional<std::string> key = fChangeView->SelectedKey();
+	if (!key.has_value()) {
+		return nullptr;
+	}
+	const size_t index = std::stoul(*key);
+	return index < fChanges.size() ? &fChanges[index] : nullptr;
+}
+
+
+// The commit and path of the selected file's version in the commit, or in
+// the parent compared with; none if the file is not there.
+std::optional<std::pair<git_oid, std::string>> CommitWindow::SelectedVersion(bool parent) const
+{
+	const FileChange *change = SelectedChange();
+	if (change == nullptr) {
+		return std::nullopt;
+	}
+	if (parent) {
+		if (fParent >= fDetails.parents.size() || change->oldPath.empty()) {
+			return std::nullopt;
+		}
+		return std::make_pair(fDetails.parents[fParent], change->oldPath);
+	}
+	if (change->newPath.empty()) {
+		return std::nullopt;
+	}
+	return std::make_pair(fDetails.id, change->newPath);
+}
+
+
+// Shows the version in CodeEdit at the line of the caret in its pane.
+void CommitWindow::OpenInCodeEdit(bool parent)
+{
+	const std::optional<std::pair<git_oid, std::string>> version = SelectedVersion(parent);
+	if (!version.has_value()) {
+		beep();
+		return;
+	}
+	const char *workdir = git_repository_workdir(fRepository.get());
+	BMessage message(DiffKit::kMsgCodeEditOpenGitFile);
+	message.AddString("repository", workdir != nullptr ? workdir : git_repository_path(fRepository.get()));
+	message.AddString("commit", OidString(version->first).c_str());
+	message.AddString("path", version->second.c_str());
+	CodeEditView *pane = fDiffView->View(parent ? 0 : 1);
+	if (pane != nullptr) {
+		message.AddInt32("line", static_cast<int32>(pane->CaretLocation().line + 1));
+	}
+	DiffKit::SendToCodeEdit(message);
+}
+
+
+void CommitWindow::MenusBeginning()
+{
+	BMenuBar *menuBar = KeyMenuBar();
+	menuBar->FindItem(kMsgOpenInCodeEdit)->SetEnabled(SelectedVersion(false).has_value());
+	menuBar->FindItem(kMsgOpenParentInCodeEdit)->SetEnabled(SelectedVersion(true).has_value());
+	BWindow::MenusBeginning();
+}
+
+
 void CommitWindow::MessageReceived(BMessage *message)
 {
 	if (fChangeView->HandleCommand(message)) {
 		return;
 	}
 	switch (message->what) {
+		case kMsgOpenInCodeEdit:
+		case kMsgOpenParentInCodeEdit:
+			OpenInCodeEdit(message->what == kMsgOpenParentInCodeEdit);
+			break;
 		case GitDiff::kMsgChangeViewFileSelected:
 			ShowSelectedFile();
 			break;

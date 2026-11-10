@@ -17,3 +17,28 @@ executable(
 	dependencies: [debugKitDep, coverageUiDep, findKitDep],
 	install: true
 )
+
+# Signature, single launch and file types; the installed executable gets
+# them, and installing into the system registers the file types.
+rc = find_program('rc', required: false)
+xres = find_program('xres', required: false)
+mimeset = find_program('mimeset', required: false)
+if rc.found() and xres.found() and mimeset.found()
+	codeEditResources = custom_target(
+		'CodeEdit.rsrc',
+		input: 'CodeEdit.rdef',
+		output: 'CodeEdit.rsrc',
+		command: [rc, '-o', '@OUTPUT@', '@INPUT@'],
+		build_by_default: true
+	)
+	meson.add_install_script(
+		python,
+		files('../tools/install_resources.py'),
+		xres.full_path(),
+		mimeset.full_path(),
+		codeEditResources,
+		get_option('bindir') / 'CodeEdit'
+	)
+else
+	warning('rc, xres or mimeset not found: CodeEdit is installed without file types')
+endif

@@ -1,0 +1,39 @@
+// Resources of the CodeEdit application: its signature, launch behavior and
+// the file types it opens (Tracker's "Open with" and preferred
+// application). Added to the installed executable by the install script.
+
+resource app_signature "application/x-vnd.CodeEdit";
+
+resource app_version {
+	major  = 0,
+	middle = 1,
+	minor  = 0,
+
+	variety = B_APPV_DEVELOPMENT,
+	internal = 0,
+
+	short_info = "CodeEdit",
+	long_info = "CodeEdit: source code editor, debugger and coverage viewer"
+};
+
+// Opening files again while running sends them to the running instance
+// (B_REFS_RECEIVED, B_ARGV_RECEIVED).
+resource app_flags B_SINGLE_LAUNCH;
+
+resource file_types message {
+	"types" = "text/plain",
+	"types" = "text/x-source-code",
+	"types" = "text/x-makefile",
+	"types" = "text/x-jamfile",
+	"types" = "text/x-patch",
+	"types" = "text/x-vnd.be.resourcedef",
+	"types" = "text/markdown",
+	"types" = "text/css",
+	"types" = "text/csv",
+	"types" = "text/xml",
+	"types" = "text/html",
+	"types" = "application/json",
+	"types" = "application/x-shellscript",
+	// Any other text.
+	"types" = "text"
+};

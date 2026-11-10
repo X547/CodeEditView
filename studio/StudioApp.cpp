@@ -11,6 +11,7 @@
 #include <Path.h>
 #include <WindowStack.h>
 
+#include "CodeEditLink.h"
 #include "Common.h"
 #include "ControlWindow.h"
 #include "CoverageMessages.h"
@@ -28,7 +29,7 @@
 namespace Studio {
 
 
-static constexpr const char *kAppSignature = "application/x-vnd.CodeEdit";
+static constexpr const char *kAppSignature = DiffKit::kCodeEditSignature;
 
 
 static BRect NextWindowFrame()
@@ -527,14 +528,21 @@ void StudioApp::ArgvReceived(int32 argc, char **argv)
 }
 
 
+// Files opened with the application (Tracker, BRoster::Launch()). Optional
+// "be:line" (int32, 1-based) is revealed, as for other editors.
 void StudioApp::RefsReceived(BMessage *message)
 {
+	ShowOptions options;
+	options.line = message->GetInt32("be:line", 0);
 	entry_ref ref;
 	for (int32 i = 0; message->FindRef("refs", i, &ref) == B_OK; i++) {
-		BPath path(&ref);
-		if (path.InitCheck() == B_OK) {
-			ShowDocument(Workspace::Locator::File(path.Path()), nullptr);
+		// Symbolic links are opened as their targets' files.
+		BEntry entry(&ref, true);
+		BPath path(&entry);
+		if (path.InitCheck() != B_OK || entry.IsDirectory()) {
+			continue;
 		}
+		ShowDocument(Workspace::Locator::File(path.Path()), nullptr, options);
 	}
 }
 
@@ -630,6 +638,13 @@ void StudioApp::MessageReceived(BMessage *message)
 		case kMsgNewDocument:
 			NewDocument(nullptr);
 			break;
+		case DiffKit::kMsgCodeEditOpenGitFile: {
+			ShowOptions options;
+			options.line = message->GetInt32("line", 0);
+			ShowDocument(Workspace::Locator::GitCommit(message->GetString("repository", ""),
+				message->GetString("commit", ""), message->GetString("path", "")), nullptr, options);
+			break;
+		}
 		case kMsgShowOpenGit:
 			(new OpenGitWindow(BMessenger(this), message->GetString("directory", "")))->Show();
 			break;

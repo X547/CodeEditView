@@ -823,12 +823,18 @@ void HistoryWindow::Reword()
 	if (steps.size() != 1) {
 		return;
 	}
-	Form form("Reword " + ShortId(fEdit->Steps()[steps[0]].commit), "OK");
-	form.AddMessage("message", "Message:", fEdit->Message(steps[0]));
-	if (form.Go()) {
-		fEdit->SetMessage(steps[0], form.Text("message"));
+	const size_t step = steps[0];
+	const HistoryEdit *edit = fEdit.get();
+	Form form("Reword " + ShortId(fEdit->Steps()[step].commit), "OK");
+	form.AddMessage("message", "Message:", fEdit->Message(step));
+	form.Open(this, [this, step, edit](const Form &result) {
+		// The edits may have been replaced meanwhile.
+		if (fEdit.get() != edit || step >= fEdit->Steps().size()) {
+			return;
+		}
+		fEdit->SetMessage(step, result.Text("message"));
 		FillList();
-	}
+	});
 }
 
 
@@ -923,9 +929,9 @@ void HistoryWindow::ChooseRebase()
 	if (const BranchInfo *branch = fSnapshot.FindBranch(fSpec); branch != nullptr && !branch->upstreamGone) {
 		spec = branch->upstream;
 	}
-	if (PickCommit(fRepository.get(), fSnapshot, spec)) {
-		StartRebase(spec);
-	}
+	PickCommit(this, fRepository.get(), fSnapshot, spec, [this](const std::string &onto) {
+		StartRebase(onto);
+	});
 }
 
 
@@ -933,23 +939,21 @@ void HistoryWindow::Apply()
 {
 	Reload();
 	const Plan plan = fEdit->PlanApply(fSnapshot);
-	Resolution resolution = Resolution::Cancel;
-	if (!ConfirmPlan(plan, fRepository.get(), resolution)) {
-		return;
-	}
-	RunContext context;
-	context.repository = fRepository.get();
-	context.resolution = resolution;
-	try {
-		plan.run(context);
-	} catch (const std::exception &e) {
-		ShowError(e.what());
-		return;
-	}
-	Reload();
-	fEdit.reset();
-	fPendingEdit = true;
-	ShowHistoryOf(fSpec);
+	ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
+		RunContext context;
+		context.repository = fRepository.get();
+		context.resolution = resolution;
+		try {
+			plan.run(context);
+		} catch (const std::exception &e) {
+			ShowError(e.what());
+			return;
+		}
+		Reload();
+		fEdit.reset();
+		fPendingEdit = true;
+		ShowHistoryOf(fSpec);
+	});
 }
 
 
@@ -1012,27 +1016,29 @@ void HistoryWindow::CreateReferenceAt(bool tag)
 		form.AddMultiLine("message", "Message:")
 			.AddLabel("Without a message, the tag is a simple tag.");
 	}
-	if (!form.Go()) {
-		return;
-	}
-	Reload();
-	try {
-		const Plan plan = tag
-			? PlanCreateTag(fRepository.get(), fSnapshot, form.Text("name"), OidString(*commit), form.Text("message"))
-			: PlanCreateBranch(fRepository.get(), fSnapshot, form.Text("name"), OidString(*commit), std::string());
-		Resolution resolution = Resolution::Cancel;
-		if (!ConfirmPlan(plan, fRepository.get(), resolution)) {
-			return;
+	const std::string id = OidString(*commit);
+	form.Open(this, [this, tag, id](const Form &result) {
+		Reload();
+		try {
+			const Plan plan = tag
+				? PlanCreateTag(fRepository.get(), fSnapshot, result.Text("name"), id, result.Text("message"))
+				: PlanCreateBranch(fRepository.get(), fSnapshot, result.Text("name"), id, std::string());
+			ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
+				RunContext context;
+				context.repository = fRepository.get();
+				context.resolution = resolution;
+				try {
+					plan.run(context);
+				} catch (const std::exception &e) {
+					ShowError(e.what());
+				}
+				Reload();
+				FillList();
+			});
+		} catch (const std::exception &e) {
+			ShowError(e.what());
 		}
-		RunContext context;
-		context.repository = fRepository.get();
-		context.resolution = resolution;
-		plan.run(context);
-	} catch (const std::exception &e) {
-		ShowError(e.what());
-	}
-	Reload();
-	FillList();
+	});
 }
 
 

@@ -12,6 +12,8 @@
 #include <Window.h>
 
 #include "BackgroundLoader.h"
+#include "Dialogs.h"
+#include "Operations.h"
 #include "NetworkTask.h"
 #include "Plan.h"
 #include "Snapshot.h"
@@ -124,26 +126,45 @@ private:
 	void RunTagAction(Action action);
 	void ObjectInvoked();
 
-	// Previews and runs a plan; network plans run in the background and send
-	// done (kMsgNetworkDone with its follow-up) when they end.
-	void Execute(const Plan &plan);
+	// Previews a plan in a dialog and runs it if the user agrees; network
+	// plans run in the background and send done (kMsgNetworkDone with its
+	// follow-up) when they end. then runs once the snapshot after a local
+	// plan is shown.
+	void Execute(const Plan &plan, std::function<void()> then = nullptr);
 	void Execute(const Plan &plan, const BMessage &done);
+	void RunPlan(const Plan &plan, Resolution resolution, const BMessage &done, std::function<void()> then);
+	// Runs work, showing what it throws (dialog answers run outside
+	// RunAction()).
+	void Guarded(const std::function<void()> &work);
+	// Opens a form modal to this window; accepted runs with its values. With
+	// commitPicker, its commit fields get the picker.
+	void AskForm(const Form &form, std::function<void(const Form &form)> accepted, bool commitPicker = false);
+	void PickCommitThen(const std::string &spec, std::function<void(const std::string &spec)> chosen);
+	void ChooseRowsThen(const std::string &title, const std::string &okLabel, const std::vector<ListColumn> &columns,
+		const std::vector<std::vector<std::string>> &rows, bool multiple,
+		std::function<void(const std::vector<int> &selected)> chosen);
 	void UploadForReview(const BranchInfo &branch);
 	void DownloadChange(const RemoteInfo &remote);
+	void DownloadChange(const RemoteInfo &remote, const Form &form);
 	void StartNetwork(const std::string &status, NetworkTask::Work work, const BMessage &done);
 	void NetworkDone(BMessage *message);
+	void NetworkFollowUp(const BMessage *message, const std::vector<std::string> &report, const std::string &title);
 	void AppendLog(const std::string &text);
 
 	// Choices for forms.
 	std::vector<std::string> BranchNames() const;
 	std::vector<std::string> RemoteNames() const;
-	bool ChooseWorktree(const std::string &title, const std::string &okLabel, const std::string &exceptPath,
-		WorktreeInfo &worktree);
-	bool ChooseRemote(const std::string &title, const std::string &okLabel, std::string &remote);
+	// These ask in a dialog unless there is no choice; chosen runs with the
+	// choice.
+	void ChooseWorktree(const std::string &title, const std::string &okLabel, const std::string &exceptPath,
+		std::function<void(const WorktreeInfo &worktree)> chosen);
+	void ChooseRemote(const std::string &title, const std::string &okLabel,
+		std::function<void(const std::string &remote)> chosen);
 	std::string DefaultCommit() const;
 
 	void CreateWorktree(const std::string &branch);
 	void UpdateFromTracked(const BranchInfo &branch);
+	void UpdateFromTracked(const BranchInfo &branch, UpdateMode mode);
 	void CleanUpBranches();
 	void ShowPreviousPositions(const BranchInfo &branch);
 	void UploadTags();

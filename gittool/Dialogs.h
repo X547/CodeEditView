@@ -132,8 +132,11 @@ public:
 
 
 // Lets the user pick a commit from the history of a branch, remote copy,
-// tag or worktree, or enter it. spec is the initial and the chosen value.
-bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec);
+// tag or worktree, or enter it, in a dialog modal to owner; chosen runs on
+// the owner's thread with the commit in revision syntax. The picker uses its
+// own repository handle and snapshot copy.
+void PickCommit(BWindow *owner, git_repository *repository, const Snapshot &snapshot, const std::string &spec,
+	std::function<void(const std::string &spec)> chosen);
 // The branches, remote copies, worktree positions and recent tags; items
 // send kMsgHistoryOf with "spec", the one equal to current is marked.
 BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current);
@@ -141,9 +144,11 @@ BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current);
 void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &current);
 
 
-// Shows the preview of a plan; true if the user chose to run it, with the
-// resolution for overlapping worktree changes.
-bool ConfirmPlan(const Plan &plan, git_repository *repository, Resolution &resolution);
+// Shows the preview of a plan modal to owner; run runs on the owner's thread
+// if the user chose to run it, with the resolution for overlapping worktree
+// changes.
+void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
+	std::function<void(Resolution resolution)> run);
 
 
 struct ListColumn {
@@ -152,19 +157,21 @@ struct ListColumn {
 };
 
 
-// Rows to choose from; selected receives the chosen row indices. With
-// okLabel empty, the list is only shown.
-bool ChooseFromList(
+// Rows to choose from, modal to owner; chosen runs on the owner's thread
+// with the chosen row indices. With okLabel empty, the list is only shown.
+void ChooseFromList(
+	BWindow *owner,
 	const std::string &title,
 	const std::string &okLabel,
 	const std::vector<ListColumn> &columns,
 	const std::vector<std::vector<std::string>> &rows,
 	bool multiple,
-	std::vector<int> &selected
+	std::function<void(const std::vector<int> &selected)> chosen
 );
 
 
-void ShowText(const std::string &title, const std::string &text);
+// A text to read, modal to owner.
+void ShowText(BWindow *owner, const std::string &title, const std::string &text);
 
 // Local date and time; empty for 0.
 std::string FormatTime(int64_t time);

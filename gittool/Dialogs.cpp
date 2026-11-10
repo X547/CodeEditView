@@ -12,6 +12,7 @@
 #include <ColumnTypes.h>
 #include <GridLayout.h>
 #include <GridView.h>
+#include <GroupView.h>
 #include <MessageFilter.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
@@ -28,6 +29,7 @@
 #include "CommitWindow.h"
 #include "DiffView.h"
 #include "Ask.h"
+#include "BackgroundLoader.h"
 #include "MessageEditor.h"
 #include "Messages.h"
 
@@ -77,36 +79,18 @@ void ModalDialog::SendAnswer(bool accepted)
 
 bool ModalDialog::Go()
 {
+	// A looper waiting here would freeze its windows; loopers use Open().
+	if (BLooper::LooperForThread(find_thread(nullptr)) != nullptr) {
+		debugger("ModalDialog::Go() called on a looper thread; use Open()");
+	}
 	bool accepted = false;
 	fAccepted = &accepted;
 	const sem_id semaphore = create_sem(0, "modal dialog");
 	fSemaphore = semaphore;
-	BWindow *parent = dynamic_cast<BWindow*>(BLooper::LooperForThread(find_thread(nullptr)));
 	ResizeToPreferred();
-	if (parent != nullptr) {
-		// Modal to the window that opened it only, so other windows (such
-		// as history windows to drag commits from) stay usable.
-		if (Feel() == B_MODAL_APP_WINDOW_FEEL) {
-			SetFeel(B_MODAL_SUBSET_WINDOW_FEEL);
-			AddToSubset(parent);
-		}
-		CenterIn(parent->Frame());
-	} else {
-		CenterOnScreen();
-	}
+	CenterOnScreen();
 	Show();
-	if (parent != nullptr) {
-		// Keeps the calling window drawn while it waits.
-		while (true) {
-			const status_t result = acquire_sem_etc(semaphore, 1, B_RELATIVE_TIMEOUT, 50000);
-			if (result == B_OK || result == B_BAD_SEM_ID) {
-				break;
-			}
-			parent->UpdateIfNeeded();
-		}
-	} else {
-		while (acquire_sem(semaphore) == B_INTERRUPTED) {
-		}
+	while (acquire_sem(semaphore) == B_INTERRUPTED) {
 	}
 	delete_sem(semaphore);
 	return accepted;
@@ -182,6 +166,20 @@ static BStringView *TopLabel(const char *text)
 	BStringView *label = new BStringView("label", text);
 	label->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
 	return label;
+}
+
+
+// The column list view of the system ignores explicit sizes, so they are
+// set on a group around it. The height is a minimum too: with height for
+// width items in the layout (as a menu field's menu bar) the preferred
+// height is lost.
+static BGroupView *WithSize(BView *view, BSize size)
+{
+	BGroupView *group = new BGroupView(B_HORIZONTAL, 0);
+	group->GroupLayout()->AddView(view);
+	group->SetExplicitPreferredSize(size);
+	group->SetExplicitMinSize(BSize(B_SIZE_UNSET, size.height));
+	return group;
 }
 
 
@@ -508,10 +506,9 @@ void FormDialog::MessageReceived(BMessage *message)
 	if (fRepository == nullptr || !fSnapshot.has_value()) {
 		return;
 	}
-	std::string spec = text->Text();
-	if (PickCommit(fRepository.get(), *fSnapshot, spec)) {
+	PickCommit(this, fRepository.get(), *fSnapshot, text->Text(), [text](const std::string &spec) {
 		text->SetText(spec.c_str());
-	}
+	});
 }
 
 
@@ -623,32 +620,42 @@ void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &curre
 }
 
 
+static constexpr uint32 kMsgPickerHistoryLoaded = 'GTph';
+
+
 class CommitPicker: public ModalDialog {
 private:
-	git_repository *fRepository;
+	// Its own handle: the owner goes on using its own meanwhile.
+	RepositoryPtr fRepository;
 	std::string fRepositoryPath;
-	std::string *fResult;
+	// Shared with the owner's callback, which reads it after the answer.
+	std::shared_ptr<std::string> fResult;
 	BTextControl *fSpec {};
 	BColumnListView *fList {};
 	std::vector<CommitInfo> fCommits;
+	std::unique_ptr<DiffKit::BackgroundLoader<std::vector<CommitInfo>>> fLoader;
 
 	void ShowHistoryOf(const std::string &spec);
+	void HistoryLoaded();
 	void ShowCommit();
 	bool Accept() final;
 
 public:
-	CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec, std::string *result);
+	CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec,
+		std::shared_ptr<std::string> result);
 
 	void MessageReceived(BMessage *message) final;
 };
 
 
 CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec,
-	std::string *result):
+	std::shared_ptr<std::string> result):
 	ModalDialog("Choose a commit", B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
-	fRepository(repository),
+	fRepository(OpenRepository(git_repository_commondir(repository))),
 	fRepositoryPath(git_repository_commondir(repository)),
-	fResult(result)
+	fResult(std::move(result)),
+	fLoader(std::make_unique<DiffKit::BackgroundLoader<std::vector<CommitInfo>>>(BMessenger(this),
+		kMsgPickerHistoryLoaded))
 {
 	BMenuField *refField = new BMenuField("refs", "History of:", RefMenu(snapshot, spec));
 
@@ -661,7 +668,6 @@ CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot,
 	fList->SetSortingEnabled(false);
 	fList->SetSelectionMessage(new BMessage(kMsgCommitSelected));
 	fList->SetInvocationMessage(new BMessage(kMsgCommitInvoked));
-	fList->SetExplicitPreferredSize(BSize(700, 360));
 
 	fSpec = new BTextControl("spec", "Commit:", spec.c_str(), nullptr);
 	BButton *showHistory = new BButton("Show history", new BMessage(kMsgHistoryOf));
@@ -673,7 +679,7 @@ CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot,
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(refField)
-		.Add(fList)
+		.Add(WithSize(fList, BSize(700, 360)))
 		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 			.Add(fSpec)
 			.Add(showHistory)
@@ -691,15 +697,31 @@ CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot,
 }
 
 
+// The history is read on a thread.
 void CommitPicker::ShowHistoryOf(const std::string &spec)
 {
 	fList->Clear();
 	fCommits.clear();
-	try {
-		fCommits = History(fRepository, ResolveCommit(fRepository, spec), 1000);
-	} catch (const GitError &e) {
+	const std::string path = fRepositoryPath;
+	fLoader->Load([path, spec]() {
+		RepositoryPtr repository = OpenRepository(path);
+		return History(repository.get(), ResolveCommit(repository.get(), spec), 1000);
+	});
+}
+
+
+void CommitPicker::HistoryLoaded()
+{
+	std::string error;
+	std::optional<std::vector<CommitInfo>> loaded = fLoader->Take(error);
+	if (!loaded.has_value()) {
 		return;
 	}
+	fList->Clear();
+	fCommits = std::move(*loaded);
+	// Added together: one by one, each addition takes time in proportion to
+	// the rows before it.
+	BList rows;
 	for (size_t i = 0; i < fCommits.size(); i++) {
 		const CommitInfo &commit = fCommits[i];
 		IndexRow *row = new IndexRow(static_cast<int>(i));
@@ -707,8 +729,9 @@ void CommitPicker::ShowHistoryOf(const std::string &spec)
 		row->SetField(new BStringField(commit.summary.c_str()), 1);
 		row->SetField(new BStringField(commit.author.c_str()), 2);
 		row->SetField(new BStringField(FormatTime(commit.time).c_str()), 3);
-		fList->AddRow(row);
+		rows.AddItem(row);
 	}
+	fList->AddRows(&rows, -1, nullptr);
 }
 
 
@@ -717,8 +740,11 @@ void CommitPicker::ShowCommit()
 {
 	try {
 		const IndexRow *row = dynamic_cast<IndexRow*>(fList->CurrentSelection());
-		const git_oid id = row != nullptr ? fCommits[row->index].id : ResolveCommit(fRepository, fSpec->Text());
-		(new CommitWindow(fRepositoryPath, id, Feel()))->Show();
+		const git_oid id = row != nullptr ? fCommits[row->index].id
+			: ResolveCommit(fRepository.get(), fSpec->Text());
+		CommitWindow *window = new CommitWindow(fRepositoryPath, id, B_NORMAL_WINDOW_FEEL);
+		DiffKit::AttachDialog(this, window);
+		window->Show();
 	} catch (const std::exception &e) {
 		DiffKit::ShowError(e.what());
 	}
@@ -729,7 +755,7 @@ bool CommitPicker::Accept()
 {
 	const std::string spec = fSpec->Text();
 	try {
-		ResolveCommit(fRepository, spec);
+		ResolveCommit(fRepository.get(), spec);
 	} catch (const GitError &e) {
 		fSpec->MakeFocus(true);
 		return false;
@@ -766,6 +792,9 @@ void CommitPicker::MessageReceived(BMessage *message)
 		case kMsgShowCommit:
 			ShowCommit();
 			break;
+		case kMsgPickerHistoryLoaded:
+			HistoryLoaded();
+			break;
 		default:
 			ModalDialog::MessageReceived(message);
 			break;
@@ -773,14 +802,22 @@ void CommitPicker::MessageReceived(BMessage *message)
 }
 
 
-bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::string &spec)
+void PickCommit(BWindow *owner, git_repository *repository, const Snapshot &snapshot, const std::string &spec,
+	std::function<void(const std::string &spec)> chosen)
 {
-	std::string result;
-	if (!(new CommitPicker(repository, snapshot, spec, &result))->Go()) {
-		return false;
+	std::shared_ptr<std::string> result = std::make_shared<std::string>();
+	CommitPicker *picker = nullptr;
+	try {
+		picker = new CommitPicker(repository, snapshot, spec, result);
+	} catch (const std::exception &e) {
+		DiffKit::ShowError(e.what());
+		return;
 	}
-	spec = result;
-	return true;
+	picker->Open(owner, [result, chosen = std::move(chosen)](bool accepted) {
+		if (accepted) {
+			chosen(*result);
+		}
+	});
 }
 
 
@@ -788,8 +825,9 @@ bool PickCommit(git_repository *repository, const Snapshot &snapshot, std::strin
 
 class PlanDialog: public ModalDialog {
 private:
-	const Plan &fPlan;
-	Resolution *fResolution;
+	const Plan fPlan;
+	// Shared with the owner's callback, which reads it after the answer.
+	std::shared_ptr<Resolution> fResolution;
 	Resolution fChoice = Resolution::Cancel;
 	BButton *fRun {};
 	BCheckBox *fConfirm {};
@@ -798,7 +836,7 @@ private:
 	bool Accept() final;
 
 public:
-	PlanDialog(const Plan &plan, git_repository *repository, Resolution *resolution);
+	PlanDialog(const Plan &plan, git_repository *repository, std::shared_ptr<Resolution> resolution);
 
 	void MessageReceived(BMessage *message) final;
 };
@@ -812,10 +850,10 @@ static BRadioButton *ResolutionButton(const char *label, Resolution resolution)
 }
 
 
-PlanDialog::PlanDialog(const Plan &plan, git_repository *repository, Resolution *resolution):
+PlanDialog::PlanDialog(const Plan &plan, git_repository *repository, std::shared_ptr<Resolution> resolution):
 	ModalDialog(plan.title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fPlan(plan),
-	fResolution(resolution)
+	fResolution(std::move(resolution))
 {
 	BTextView *textView = nullptr;
 	BScrollView *text = ReadOnlyText(textView, plan.Describe(repository), 600, 280);
@@ -898,10 +936,15 @@ void PlanDialog::MessageReceived(BMessage *message)
 }
 
 
-bool ConfirmPlan(const Plan &plan, git_repository *repository, Resolution &resolution)
+void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
+	std::function<void(Resolution resolution)> run)
 {
-	resolution = Resolution::Cancel;
-	return (new PlanDialog(plan, repository, &resolution))->Go();
+	std::shared_ptr<Resolution> resolution = std::make_shared<Resolution>(Resolution::Cancel);
+	(new PlanDialog(plan, repository, resolution))->Open(owner, [resolution, run = std::move(run)](bool accepted) {
+		if (accepted) {
+			run(*resolution);
+		}
+	});
 }
 
 
@@ -910,7 +953,8 @@ bool ConfirmPlan(const Plan &plan, git_repository *repository, Resolution &resol
 class ListDialog: public ModalDialog {
 private:
 	BColumnListView *fList {};
-	std::vector<int> *fSelected;
+	// Shared with the owner's callback, which reads it after the answer.
+	std::shared_ptr<std::vector<int>> fSelected;
 	bool fChoosing;
 
 	bool Accept() final;
@@ -922,7 +966,7 @@ public:
 		const std::vector<ListColumn> &columns,
 		const std::vector<std::vector<std::string>> &rows,
 		bool multiple,
-		std::vector<int> *selected
+		std::shared_ptr<std::vector<int>> selected
 	);
 
 	void MessageReceived(BMessage *message) final;
@@ -935,10 +979,10 @@ ListDialog::ListDialog(
 	const std::vector<ListColumn> &columns,
 	const std::vector<std::vector<std::string>> &rows,
 	bool multiple,
-	std::vector<int> *selected
+	std::shared_ptr<std::vector<int>> selected
 ):
 	ModalDialog(title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
-	fSelected(selected),
+	fSelected(std::move(selected)),
 	fChoosing(!okLabel.empty())
 {
 	fList = new BColumnListView("list", B_NAVIGABLE, B_PLAIN_BORDER, true);
@@ -951,7 +995,6 @@ ListDialog::ListDialog(
 	}
 	fList->SetSortingEnabled(false);
 	fList->SetInvocationMessage(new BMessage(kMsgCommitInvoked));
-	fList->SetExplicitPreferredSize(BSize(std::min(std::max(width + 20, 400.0f), 900.0f), 320));
 	for (size_t i = 0; i < rows.size(); i++) {
 		IndexRow *row = new IndexRow(static_cast<int>(i));
 		for (size_t column = 0; column < rows[i].size() && column < columns.size(); column++) {
@@ -964,7 +1007,7 @@ ListDialog::ListDialog(
 	BButton *ok = fChoosing ? new BButton(okLabel.c_str(), new BMessage(kMsgDialogOk)) : nullptr;
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
-		.Add(fList)
+		.Add(WithSize(fList, BSize(std::min(std::max(width + 20, 400.0f), 900.0f), 320)))
 		.Add(ButtonRow(cancel, ok));
 	if (ok != nullptr) {
 		SetDefaultButton(ok);
@@ -998,16 +1041,23 @@ void ListDialog::MessageReceived(BMessage *message)
 }
 
 
-bool ChooseFromList(
+void ChooseFromList(
+	BWindow *owner,
 	const std::string &title,
 	const std::string &okLabel,
 	const std::vector<ListColumn> &columns,
 	const std::vector<std::vector<std::string>> &rows,
 	bool multiple,
-	std::vector<int> &selected
+	std::function<void(const std::vector<int> &selected)> chosen
 )
 {
-	return (new ListDialog(title, okLabel, columns, rows, multiple, &selected))->Go();
+	std::shared_ptr<std::vector<int>> selected = std::make_shared<std::vector<int>>();
+	(new ListDialog(title, okLabel, columns, rows, multiple, selected))->Open(owner,
+		[selected, chosen = std::move(chosen)](bool accepted) {
+			if (accepted && chosen) {
+				chosen(*selected);
+			}
+		});
 }
 
 
@@ -1028,9 +1078,11 @@ public:
 };
 
 
-void ShowText(const std::string &title, const std::string &text)
+void ShowText(BWindow *owner, const std::string &title, const std::string &text)
 {
-	(new TextDialog(title, text))->Go();
+	(new TextDialog(title, text))->Open(owner, [](bool accepted) {
+		(void)accepted;
+	});
 }
 
 

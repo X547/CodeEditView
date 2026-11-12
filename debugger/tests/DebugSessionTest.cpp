@@ -308,4 +308,82 @@ TEST_CASE("breakpoints set before attaching")
 }
 
 
+TEST_CASE("two debug sessions at once")
+{
+	const char *program = getenv("DEBUGGER_SAMPLE");
+	const char *source = getenv("DEBUGGER_SAMPLE_SOURCE");
+	if (program == nullptr || source == nullptr || system("gdb --version > /dev/null 2>&1") != 0) {
+		SKIP("GDB or the sample program is not available");
+	}
+
+	Workspace::DocumentRegistry registry;
+	const BReference<Workspace::Document> document = registry.Open(Workspace::Locator::File(source));
+	registry.WaitIdle();
+	REQUIRE(document->Status().state == Workspace::DocumentState::Ready);
+	const std::string path = document->GetLocator().Path();
+	CodeEdit::TextModel &model = *document->Model();
+	int32 breakLine = 0;
+	{
+		CodeEdit::ModelLock lock(model);
+		const size_t offset = model.Text().ToString().find("const int area = Area(square);");
+		REQUIRE(offset != std::string::npos);
+		const size_t line = model.Text().LineOfOffset(offset);
+		model.SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line);
+		breakLine = static_cast<int32>(line + 1);
+	}
+
+	// Both stop at the shared breakpoint, each in its own program.
+	DebugSession *sessions[2] {};
+	NoticeCollector *collectors[2] {};
+	for (int i = 0; i < 2; i++) {
+		sessions[i] = new DebugSession(registry, i + 1);
+		sessions[i]->Run();
+		collectors[i] = new NoticeCollector();
+		collectors[i]->Run();
+		BMessage watch(kMsgWatch);
+		watch.AddMessenger("target", BMessenger(collectors[i]));
+		BMessenger(sessions[i]).SendMessage(&watch);
+		BMessage launch(kMsgLaunch);
+		launch.AddString("program", program);
+		BMessenger(sessions[i]).SendMessage(&launch);
+	}
+	for (int i = 0; i < 2; i++) {
+		const std::optional<size_t> stopped = collectors[i]->WaitFor(0, [&](const BMessage &message) {
+			return IsStackAt(message, path, breakLine);
+		});
+		INFO(Outputs(*collectors[i]));
+		CHECK(stopped.has_value());
+	}
+
+	// Stopping one leaves the other stopped at its breakpoint.
+	const size_t mark = collectors[0]->notices.size();
+	BMessenger(sessions[0]).SendMessage(kMsgStop);
+	CHECK(collectors[0]->WaitFor(mark, [](const BMessage &message) {
+		return IsState(message, SessionState::Idle);
+	}).has_value());
+	{
+		BAutolock lock(collectors[1]);
+		bool stillStopped = false;
+		for (const BMessage &message : collectors[1]->notices) {
+			if (message.what == kNoticeState) {
+				stillStopped = message.GetInt32("state", -1) == static_cast<int32>(SessionState::Stopped);
+			}
+		}
+		CHECK(stillStopped);
+	}
+	const size_t otherMark = collectors[1]->notices.size();
+	BMessenger(sessions[1]).SendMessage(kMsgStop);
+	CHECK(collectors[1]->WaitFor(otherMark, [](const BMessage &message) {
+		return IsState(message, SessionState::Idle);
+	}).has_value());
+
+	for (int i = 0; i < 2; i++) {
+		sessions[i]->Lock();
+		sessions[i]->Quit();
+		collectors[i]->Lock();
+		collectors[i]->Quit();
+	}
+}
+
+
 } // Debugger

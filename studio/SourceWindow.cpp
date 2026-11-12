@@ -34,6 +34,7 @@
 #include "OpenGitWindow.h"
 #include "OpenLocationWindow.h"
 #include "OutlineView.h"
+#include "StartSessionWindow.h"
 #include "StudioApp.h"
 #include "WindowHelpers.h"
 
@@ -58,7 +59,6 @@ static constexpr uint32 kMsgSaveCopyChosen = 'SWcc';
 static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
-static constexpr uint32 kMsgFollowSession = 'SWfs';
 static constexpr uint32 kMsgFollowCoverage = 'SWfc';
 static constexpr uint32 kMsgNextUncovered = 'SWnu';
 static constexpr uint32 kMsgPreviousUncovered = 'SWpu';
@@ -74,6 +74,7 @@ static constexpr uint32 kSessionCommands[] = {
 	Debugger::kMsgStepInto,
 	Debugger::kMsgStepOut,
 	Debugger::kMsgStop,
+	Debugger::kMsgRestart,
 };
 
 
@@ -196,12 +197,14 @@ BMenu *SourceWindow::CreateDebugMenu()
 	fDebugMenu->AddItem(new BMenuItem("Step into", new BMessage(Debugger::kMsgStepInto), 'I'));
 	fDebugMenu->AddItem(new BMenuItem("Step out", new BMessage(Debugger::kMsgStepOut), 'I', B_SHIFT_KEY));
 	fDebugMenu->AddItem(new BMenuItem("Stop", new BMessage(Debugger::kMsgStop)));
+	fDebugMenu->AddItem(new BMenuItem("Restart", new BMessage(Debugger::kMsgRestart)));
 	fDebugMenu->AddSeparatorItem();
 	fDebugMenu->AddItem(new BMenuItem("Toggle breakpoint", new BMessage(kMsgToggleBreakpoint), 'K'));
 	fDebugMenu->AddItem(new BMenuItem("Enable/disable breakpoint", new BMessage(kMsgToggleBreakpointEnabled), 'K',
 		B_SHIFT_KEY));
 	fDebugMenu->AddSeparatorItem();
-	fDebugMenu->AddItem(new BMenuItem("Session control", new BMessage(kMsgShowSessionControl)));
+	fDebugMenu->AddItem(new BMenuItem("Close session", new BMessage(kMsgCloseSession)));
+	fDebugMenu->AddSeparatorItem();
 	struct Entry {
 		const char *label;
 		Debugger::ToolWindowKind window;
@@ -243,13 +246,13 @@ void SourceWindow::UpdateDebugMenu()
 		fSessionMenu->AddItem(item);
 	}
 	fSessionMenu->AddSeparatorItem();
-	fSessionMenu->AddItem(new BMenuItem("New session", new BMessage(kMsgNewSession)));
+	fSessionMenu->AddItem(new BMenuItem("New session" B_UTF8_ELLIPSIS, new BMessage(kMsgNewSession)));
 	fSessionMenu->SetTargetForItems(this);
 
 	const bool following = fSession != 0;
 	for (int32 i = 0; BMenuItem *item = fDebugMenu->ItemAt(i); i++) {
 		const uint32 command = item->Command();
-		const bool sessionCommand = command == Debugger::kMsgShowToolWindow || command == kMsgShowSessionControl
+		const bool sessionCommand = command == Debugger::kMsgShowToolWindow || command == kMsgCloseSession
 			|| std::find(std::begin(kSessionCommands), std::end(kSessionCommands), command)
 				!= std::end(kSessionCommands);
 		if (sessionCommand) {
@@ -839,8 +842,18 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgFollowSession:
 			Follow(message->GetInt32("session", 0), fCoverage);
 			break;
-		case kMsgNewSession:
-			Follow(StudioApp::Get().NewSession(Frame()), fCoverage);
+		case kMsgNewSession: {
+			BWindow *window = new StartSessionWindow(BMessenger(this));
+			DiffKit::PlaceOver(window, Frame());
+			window->Show();
+			break;
+		}
+		case kMsgCloseSession:
+			if (fSession != 0) {
+				BMessage close(kMsgCloseSession);
+				close.AddInt32("session", fSession);
+				be_app->PostMessage(&close);
+			}
 			break;
 		case kMsgSessionClosed:
 			if (message->GetInt32("session", 0) == fSession) {
@@ -874,7 +887,6 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgPreviousUncovered:
 			GoToUncovered(message->what == kMsgNextUncovered);
 			break;
-		case kMsgShowSessionControl:
 		case Debugger::kMsgShowToolWindow: {
 			BMessage forward(*message);
 			forward.AddInt32("session", fSession);
@@ -888,6 +900,7 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case Debugger::kMsgStepInto:
 		case Debugger::kMsgStepOut:
 		case Debugger::kMsgStop:
+		case Debugger::kMsgRestart:
 			SessionMessenger().SendMessage(message);
 			break;
 		case kMsgToggleBreakpoint:

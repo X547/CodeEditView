@@ -13,7 +13,6 @@
 
 #include "CodeEditLink.h"
 #include "Common.h"
-#include "ControlWindow.h"
 #include "CoverageMessages.h"
 #include "CoverageRun.h"
 #include "CoverageSummaryWindow.h"
@@ -211,30 +210,41 @@ static std::optional<BRect> OpenerFrame(const BMessage &message)
 
 //#pragma mark - Debug sessions
 
-int32 StudioApp::NewSession(BRect openerFrame)
+// Titles of tool windows; the name of the session may change.
+static std::string SessionTitle(int32 id)
+{
+	return "Session " + std::to_string(id);
+}
+
+
+int32 StudioApp::NewSession()
 {
 	BAutolock lock(fWindowLock);
 	const int32 id = fNextSessionId++;
 	SessionEntry &entry = fSessions[id];
-	entry.name = "Session " + std::to_string(id);
+	entry.name = SessionTitle(id);
 	entry.session = new Debugger::DebugSession(fRegistry, id);
 	entry.session->Run();
 
 	Debugger::SessionContext context;
 	context.session = BMessenger(entry.session);
 	context.id = id;
-	context.titleSuffix = " \xe2\x80\x94 " + entry.name;
+	context.titleSuffix = " \xe2\x80\x94 " + SessionTitle(id);
 	context.registry = &fRegistry;
 	// The console collects all output from the start.
 	entry.tools[Debugger::ToolWindowKind::Console] = Debugger::CreateToolWindow(Debugger::ToolWindowKind::Console,
 		context);
-	BMessage closeRequest(kMsgCloseSession);
-	closeRequest.AddInt32("session", id);
-	entry.control = new Debugger::ControlWindow(context, ("Debug" + context.titleSuffix).c_str(), "", "",
-		closeRequest);
-	DiffKit::PlaceOver(entry.control, openerFrame);
-	entry.control->Show();
 	return id;
+}
+
+
+void StudioApp::SetSessionName(int32 id, const std::string &description)
+{
+	BAutolock lock(fWindowLock);
+	const auto it = fSessions.find(id);
+	if (it != fSessions.end()) {
+		it->second.name = SessionTitle(id) + " \xe2\x80\x94 " + description;
+	}
 }
 
 
@@ -275,7 +285,7 @@ void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind, std
 			Debugger::SessionContext context;
 			context.session = BMessenger(entry.session);
 			context.id = session;
-			context.titleSuffix = " \xe2\x80\x94 " + entry.name;
+			context.titleSuffix = " \xe2\x80\x94 " + SessionTitle(session);
 			context.registry = &fRegistry;
 			tool = Debugger::CreateToolWindow(kind, context);
 		}
@@ -375,9 +385,6 @@ void StudioApp::CloseSession(int32 id)
 		if (tool != nullptr && tool->Lock()) {
 			tool->Quit();
 		}
-	}
-	if (entry.control->Lock()) {
-		entry.control->Quit();
 	}
 	// Ends the program (QuitRequested() disconnects).
 	BMessenger(entry.session).SendMessage(B_QUIT_REQUESTED);
@@ -660,21 +667,6 @@ void StudioApp::MessageReceived(BMessage *message)
 		case kMsgCloseSession:
 			CloseSession(message->GetInt32("session", 0));
 			break;
-		case kMsgShowSessionControl: {
-			BWindow *control = nullptr;
-			{
-				BAutolock lock(fWindowLock);
-				const auto it = fSessions.find(message->GetInt32("session", 0));
-				if (it != fSessions.end()) {
-					control = it->second.control;
-				}
-			}
-			if (control != nullptr && control->Lock()) {
-				control->Activate();
-				control->Unlock();
-			}
-			break;
-		}
 		case kMsgShowOpenFile:
 			ShowOpenFilePanel();
 			break;

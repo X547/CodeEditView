@@ -8,8 +8,11 @@ namespace Debugger {
 
 // Commands to the DebugSession.
 // "program" (string), "arguments" (string, split at blanks), "stopAtMain"
-// (bool).
+// (bool), "directory" (string: the working directory; empty or missing for
+// the program's folder).
 constexpr uint32 kMsgLaunch = 'DSla';
+// Launches the last launched program again, as it was launched.
+constexpr uint32 kMsgRestart = 'DSrs';
 // "team" (int32).
 constexpr uint32 kMsgAttach = 'DSat';
 constexpr uint32 kMsgContinue = 'DScn';

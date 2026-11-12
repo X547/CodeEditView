@@ -80,7 +80,6 @@ private:
 	struct SessionEntry {
 		Debugger::DebugSession *session {};
 		std::string name;
-		BWindow *control {};
 		std::map<Debugger::ToolWindowKind, BWindow*> tools;
 	};
 
@@ -134,9 +133,11 @@ public:
 	void WindowShows(const BMessenger &window, const Workspace::Locator &locator, int32 session, int32 coverage);
 	void WindowClosing(const BMessenger &window);
 
-	// Debug sessions. NewSession() shows the session's control window over
-	// the window that asks for it and returns its id.
-	int32 NewSession(BRect openerFrame);
+	// Debug sessions, started from a start window (StartSessionWindow); they
+	// live until closed. NewSession() returns the id of a new one.
+	int32 NewSession();
+	// What the session runs, for menus: "Session <id> - <description>".
+	void SetSessionName(int32 id, const std::string &description);
 	std::vector<SessionInfo> Sessions();
 	// The marks of a session in a model; none if the session is gone. Must
 	// not be called with the model locked.

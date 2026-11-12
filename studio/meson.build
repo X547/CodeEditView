@@ -8,6 +8,7 @@ executable(
 		'OpenGitWindow.cpp',
 		'OpenLocationWindow.cpp',
 		'SourceWindow.cpp',
+		'StartSessionWindow.cpp',
 		'StudioApp.cpp',
 		# The outline panel is the demo's.
 		'../demo/OutlineView.cpp',

@@ -797,10 +797,14 @@ void DebugSession::MessageReceived(BMessage *message)
 				args.Append(argument);
 			}
 			arguments.Set("args", std::move(args));
+			const std::string chosenDirectory = message->GetString("directory", "");
 			BPath directory(program.c_str());
-			if (directory.GetParent(&directory) == B_OK) {
+			if (!chosenDirectory.empty()) {
+				arguments.Set("cwd", chosenDirectory);
+			} else if (directory.GetParent(&directory) == B_OK) {
 				arguments.Set("cwd", directory.Path());
 			}
+			fLastLaunch = *message;
 			if (message->GetBool("stopAtMain", false)) {
 				arguments.Set("stopAtBeginningOfMainSubprogram", true);
 			}
@@ -809,6 +813,12 @@ void DebugSession::MessageReceived(BMessage *message)
 			Start("launch", arguments, {program}, "Starting " + program);
 			break;
 		}
+		case kMsgRestart:
+			if (fLastLaunch.has_value()) {
+				BMessage launch(*fLastLaunch);
+				PostMessage(&launch);
+			}
+			break;
 		case kMsgAttach: {
 			const int32 team = message->GetInt32("team", -1);
 			if (team < 0) {

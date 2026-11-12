@@ -11,6 +11,7 @@
 
 #include <Locker.h>
 #include <Looper.h>
+#include <Message.h>
 #include <Messenger.h>
 
 #include <CodeEditView/TextModel.h>
@@ -90,6 +91,8 @@ private:
 	bool fConfigured {};
 	// Breakpoints wait until attaching finished (see Start()).
 	bool fBreakpointsHeld {};
+	// For kMsgRestart.
+	std::optional<BMessage> fLastLaunch;
 	std::map<int64_t, std::pair<std::string, ResponseHandler>> fPending;
 	std::vector<BMessenger> fWatchers;
 

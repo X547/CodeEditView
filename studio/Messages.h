@@ -14,12 +14,12 @@ constexpr uint32 kMsgOpenLocator = 'CSol';
 // To a source window: activates it; "line" (int32, 1-based) to reveal, or
 // with "goTo" (bool) to move the caret to, with "column" (int32, 1-based).
 constexpr uint32 kMsgReveal = 'CSrv';
-// "session" (int32): to the application, from a session's control window;
-// to the source windows after the session closed.
+// "session" (int32): to the application, from the Debug menu or a start
+// window; to the source windows after the session closed.
 constexpr uint32 kMsgCloseSession = 'CScs';
 constexpr uint32 kMsgSessionClosed = 'CSsc';
-// "session" (int32): shows the session's control window.
-constexpr uint32 kMsgShowSessionControl = 'CSsC';
+// To a source window: "session" (int32; 0 for none) to follow.
+constexpr uint32 kMsgFollowSession = 'SWfs';
 // "coverage" (int32), "locator" (string): shows the document in a window
 // following the coverage run.
 constexpr uint32 kMsgShowCoverageSource = 'CScS';

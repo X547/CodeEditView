@@ -1846,11 +1846,20 @@ void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t first
 		}
 		const size_t endLine = text.LineOfOffset(end - 1);
 		size_t last = endLine;
-		const uint32_t childCount = ts_node_child_count(node);
-		if (childCount > 0) {
-			const TSNode closing = ts_node_child(node, childCount - 1);
-			if (!ts_node_is_named(closing) && ts_node_start_byte(closing) == FirstNonBlank(endLine)) {
-				last = endLine - 1;
+		// A closing keyword or bracket starting the last line stays visible:
+		// "}", "fi", also "END Name".
+		const size_t lineStart = FirstNonBlank(endLine);
+		for (uint32_t i = ts_node_child_count(node); i > 0; i--) {
+			const TSNode child = ts_node_child(node, i - 1);
+			const size_t childStart = ts_node_start_byte(child);
+			if (childStart < lineStart) {
+				break;
+			}
+			if (childStart == lineStart) {
+				if (!ts_node_is_named(child)) {
+					last = endLine - 1;
+				}
+				break;
 			}
 		}
 		if (last > header) {

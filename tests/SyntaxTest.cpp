@@ -100,6 +100,7 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::find(languages.begin(), languages.end(), "shell") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "meson") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "jam") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "componentpascal") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -123,6 +124,8 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::string_view(LanguageForPath("build/jam/packages/Haiku")) == "jam");
 	CHECK(std::string_view(LanguageForPath("build/jam/tool.sh")) == "shell");
 	CHECK(LanguageForPath("mybuild/jam/Rules") == nullptr);
+	CHECK(std::string_view(LanguageForPath("Obx/Mod/Hello0.cp")) == "componentpascal");
+	CHECK(LanguageForPath("Obx/Mod/Hello0.Mod") == nullptr);
 	CHECK(LanguageForPath("Makefile") == nullptr);
 	CHECK(LanguageForPath("x.build") == nullptr);
 	CHECK(LanguageForPath("notes.txt") == nullptr);
@@ -294,6 +297,76 @@ TEST_CASE("jam highlighting")
 	CHECK(StyleAt(core, 9, 1) == HighlightStyle::Default);
 	CHECK(StyleAt(core, 9, 6) == HighlightStyle::Default);
 	CHECK(StyleAt(core, 9, 11) == HighlightStyle::Default);
+}
+
+
+TEST_CASE("component pascal highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"MODULE Test;\n"
+		"(* c (* n *) *)\n"
+		"\tIMPORT Views;\n"
+		"\tCONST s = {0..9}; r = 1.5E3;\n"
+		"\tTYPE V* = POINTER TO RECORD [untagged] (Views.View) n: INTEGER END;\n"
+		"\tPROCEDURE (v: V) Do*;\n"
+		"\tBEGIN v.n := 0FFH + ORD(0DX); Log(\"s\"); IF TRUE THEN END\n"
+		"\tEND Do;\n"
+		"END Test.\n"
+		"Commands\n",
+		"componentpascal"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 7) == HighlightStyle::Default);
+	// Nested comments.
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 1, 13) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 1) == HighlightStyle::Keyword);
+	// A range is not a real number.
+	CHECK(StyleAt(core, 3, 12) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 3, 13) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 15) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 3, 23) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 3, 27) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 6) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 7) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 4, 11) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 22) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 29) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 4, 30) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 4, 38) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 4, 41) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 47) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 53) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 56) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 4, 64) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 12) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 15) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 5, 18) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 20) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 6, 7) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 6, 8) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 6, 11) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 14) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 6, 19) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 21) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 6, 25) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 6, 31) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 6, 35) == HighlightStyle::String);
+	CHECK(StyleAt(core, 6, 41) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 6, 44) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 6, 54) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 5) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 8, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 8, 4) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 8, 8) == HighlightStyle::Punctuation);
+	// Text after the module.
+	CHECK(StyleAt(core, 9, 0) == HighlightStyle::Comment);
 }
 
 

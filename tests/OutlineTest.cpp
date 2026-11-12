@@ -259,6 +259,43 @@ TEST_CASE("outline of jam rules and actions")
 }
 
 
+TEST_CASE("outline of a component pascal module")
+{
+	const std::string_view text =
+		"MODULE M;\n"
+		"\tTYPE\n"
+		"\t\tView* = POINTER TO ABSTRACT RECORD END;\n"
+		"\t\tDesc = RECORD x: INTEGER END;\n"
+		"\t\tInt = INTEGER;\n"
+		"\tPROCEDURE (v: View) Restore*, NEW, ABSTRACT;\n"
+		"\tPROCEDURE Do*;\n"
+		"\t\tPROCEDURE Local; END Local;\n"
+		"\tEND Do;\n"
+		"END M.\n";
+	EditorCore core(MakeModel(text, "componentpascal"));
+	const std::vector<OutlineItem> outline = core.Outline();
+	REQUIRE(outline.size() == 1);
+	const OutlineItem &module = outline[0];
+	CHECK(module.kind == OutlineKind::Namespace);
+	CHECK(module.label == "M");
+	// Types other than records are not listed.
+	REQUIRE(module.children.size() == 4);
+	CHECK(module.children[0].kind == OutlineKind::Class);
+	CHECK(module.children[0].label == "View");
+	CHECK(module.children[0].nameStart == text.find("View*"));
+	CHECK(module.children[1].kind == OutlineKind::Struct);
+	CHECK(module.children[1].label == "Desc");
+	CHECK(module.children[2].kind == OutlineKind::Function);
+	CHECK(module.children[2].label == "View.Restore");
+	CHECK(module.children[2].nameStart == text.find("Restore"));
+	const OutlineItem &procedure = module.children[3];
+	CHECK(procedure.kind == OutlineKind::Function);
+	CHECK(procedure.label == "Do");
+	REQUIRE(procedure.children.size() == 1);
+	CHECK(procedure.children[0].label == "Local");
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

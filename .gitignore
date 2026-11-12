@@ -4,3 +4,4 @@
 !/subprojects/*.wrap
 !/subprojects/packagefiles/
 !/subprojects/tree-sitter-jam/
+!/subprojects/tree-sitter-componentpascal/

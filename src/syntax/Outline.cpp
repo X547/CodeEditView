@@ -113,6 +113,32 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 		const TSNode parameters = ChildByField(*declarator, "parameters");
 		item.label = Compact(NodeText(name, text)
 			+ (ts_node_is_null(parameters) ? std::string() : NodeText(parameters, text)));
+	} else if (type == "module") {
+		// Component Pascal
+		item.kind = OutlineKind::Namespace;
+	} else if (type == "procedure_declaration") {
+		// Component Pascal; methods are labelled with their receiver type.
+		item.kind = OutlineKind::Function;
+		const TSNode receiver = ChildByField(node, "receiver");
+		if (!ts_node_is_null(name) && !ts_node_is_null(receiver)) {
+			const TSNode receiverType = ChildByField(receiver, "type");
+			if (!ts_node_is_null(receiverType)) {
+				item.label = NodeText(receiverType, text) + "." + NodeText(name, text);
+			}
+		}
+	} else if (type == "type_declaration") {
+		// Component Pascal: record types and pointers to records.
+		TSNode record = ChildByField(node, "type");
+		if (!ts_node_is_null(record) && NodeType(record) == "pointer_type") {
+			record = ChildByField(record, "target");
+		}
+		if (ts_node_is_null(record) || NodeType(record) != "record_type") {
+			return std::nullopt;
+		}
+		const TSNode attribute = ChildByField(record, "attribute");
+		const bool extensible = !ts_node_is_null(attribute)
+			&& (NodeType(attribute) == "ABSTRACT" || NodeType(attribute) == "EXTENSIBLE");
+		item.kind = extensible ? OutlineKind::Class : OutlineKind::Struct;
 	} else if (type == "rule_definition") {
 		// Jam
 		item.kind = OutlineKind::Function;
@@ -142,6 +168,10 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 	}
 
 	if (ts_node_is_null(name)) {
+		if (anonymous == nullptr) {
+			// Incomplete code.
+			return std::nullopt;
+		}
 		item.label = anonymous;
 		item.nameStart = item.nameEnd = item.start;
 		return item;

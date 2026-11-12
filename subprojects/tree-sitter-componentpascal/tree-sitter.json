@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "componentpascal",
+      "camelcase": "ComponentPascal",
+      "scope": "source.componentpascal",
+      "path": ".",
+      "file-types": ["cp"]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Component Pascal grammar"
+  }
+}

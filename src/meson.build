@@ -32,6 +32,12 @@ highlightQueries = [
 		output: 'JamHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kJamHighlights', '@INPUT@']
 	),
+	custom_target(
+		'componentpascal-highlights',
+		input: files('syntax/queries/componentpascal-highlights.scm'),
+		output: 'ComponentPascalHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kComponentPascalHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -68,7 +74,8 @@ codeEditViewLib = shared_library(
 	codeEditViewSources,
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
-	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep],
+	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep,
+		treeSitterComponentPascalDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

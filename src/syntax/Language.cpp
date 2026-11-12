@@ -12,6 +12,7 @@
 #include "support/Assert.h"
 
 #include "CHighlights.inc"
+#include "ComponentPascalHighlights.inc"
 #include "CppHighlights.inc"
 #include "JamHighlights.inc"
 #include "MesonHighlights.inc"
@@ -23,6 +24,7 @@ extern "C" const TSLanguage *tree_sitter_cpp();
 extern "C" const TSLanguage *tree_sitter_bash();
 extern "C" const TSLanguage *tree_sitter_meson();
 extern "C" const TSLanguage *tree_sitter_jam();
+extern "C" const TSLanguage *tree_sitter_componentpascal();
 
 
 namespace CodeEdit {
@@ -54,6 +56,12 @@ static constexpr const char *kMesonNavigation = "";
 static constexpr const char *kJamNavigation = R"scm(
 (rule_definition) @definition
 (actions_definition) @definition
+)scm";
+
+static constexpr const char *kComponentPascalNavigation = R"scm(
+(module) @definition
+(procedure_declaration) @definition
+(type_declaration) @definition
 )scm";
 
 
@@ -117,6 +125,24 @@ static constexpr const char *kJamFolds = R"scm(
 (local_statement) @fold
 )scm";
 
+// Constructs closed by END keep the line of END visible.
+static constexpr const char *kComponentPascalFolds = R"scm(
+(procedure_declaration) @fold
+(record_type) @fold
+(if_statement) @fold
+(case_statement) @fold
+(while_statement) @fold
+(repeat_statement) @fold
+(for_statement) @fold
+(loop_statement) @fold
+(with_statement) @fold
+(import_list) @fold
+(const_section) @fold
+(type_section) @fold
+(var_section) @fold
+(comment) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
@@ -145,6 +171,7 @@ static constexpr FileExtension kFileExtensions[] = {
 	{"ksh",  "shell"},
 	{"zsh",  "shell"},
 	{"jam",  "jam"},
+	{"cp",   "componentpascal"},
 };
 
 // Files known by their whole name, compared case-sensitively.
@@ -281,7 +308,9 @@ const std::vector<const Language*> &Language::All()
 	static const Language sShell("shell", tree_sitter_bash(), kShellHighlights, kShellNavigation, kShellFolds);
 	static const Language sMeson("meson", tree_sitter_meson(), kMesonHighlights, kMesonNavigation, kMesonFolds);
 	static const Language sJam("jam", tree_sitter_jam(), kJamHighlights, kJamNavigation, kJamFolds);
-	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson, &sJam};
+	static const Language sComponentPascal("componentpascal", tree_sitter_componentpascal(),
+		kComponentPascalHighlights, kComponentPascalNavigation, kComponentPascalFolds);
+	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal};
 	return sAll;
 }
 

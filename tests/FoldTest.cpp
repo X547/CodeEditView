@@ -118,7 +118,7 @@ TEST_CASE("fold candidates from the syntax tree")
 }
 
 
-TEST_CASE("fold candidates of shell, meson and jam")
+TEST_CASE("fold candidates of other languages")
 {
 	// Closing keywords on their own line stay visible.
 	BReference<TextModel> shell = MakeModel(
@@ -155,6 +155,21 @@ TEST_CASE("fold candidates of shell, meson and jam")
 	);
 	EditorCore jamCore(jam);
 	CHECK(jamCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{1, 4}, {2, 3}});
+
+	// "END Name" stays visible.
+	BReference<TextModel> componentPascal = MakeModel(
+		"MODULE M;\n"
+		"\tPROCEDURE P;\n"
+		"\tBEGIN\n"
+		"\t\tIF x THEN\n"
+		"\t\t\ty := 1\n"
+		"\t\tEND\n"
+		"\tEND P;\n"
+		"END M.\n",
+		"componentpascal"
+	);
+	EditorCore componentPascalCore(componentPascal);
+	CHECK(componentPascalCore.FoldCandidates(0, 8) == std::vector<FoldRange> {{1, 5}, {3, 4}});
 }
 
 

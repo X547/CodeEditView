@@ -26,6 +26,7 @@
 #include "Dialogs.h"
 #include "Messages.h"
 #include "Operations.h"
+#include "Progress.h"
 #include "WindowHelpers.h"
 
 
@@ -742,14 +743,85 @@ void HistoryWindow::SetEditMode(bool edit)
 		});
 		return;
 	}
-	try {
-		fEdit = std::make_unique<HistoryEdit>(fRepository.get(), fSpec, kHistoryLimit);
-	} catch (const std::exception &e) {
-		fEditMode->SetValue(B_CONTROL_OFF);
-		ShowError(e.what());
+	const std::string spec = fSpec;
+	StartEditing("Reading the commits to edit", [spec](git_repository *repository) {
+		return std::make_unique<HistoryEdit>(repository, spec, kHistoryLimit, true);
+	}, [this](bool started) {
+		if (!started) {
+			fEditMode->SetValue(B_CONTROL_OFF);
+		}
+	});
+}
+
+
+static std::string ReplayProgressText(size_t done, size_t count)
+{
+	return "Replaying commit " + std::to_string(done + 1) + " of " + std::to_string(count);
+}
+
+
+void HistoryWindow::StartEditing(
+	const std::string &title,
+	std::function<std::unique_ptr<HistoryEdit>(git_repository *repository)> create,
+	std::function<void(bool started)> done
+)
+{
+	const std::string path = fRepositoryPath;
+	std::shared_ptr<std::unique_ptr<HistoryEdit>> created = std::make_shared<std::unique_ptr<HistoryEdit>>();
+	DiffKit::RunWithProgress(this, title, [path, create = std::move(create), created](DiffKit::Progress &progress) {
+		RepositoryPtr repository = OpenRepository(path);
+		std::unique_ptr<HistoryEdit> edit = create(repository.get());
+		if (!edit->IsReplayed()) {
+			edit->SetReplay(edit->Revision(), edit->ComputeReplay(repository.get(), [&progress](size_t done,
+				size_t count) {
+				progress.SetText(ReplayProgressText(done, count));
+			}));
+		}
+		// The handle closes with this thread; the window gives its own.
+		edit->SetRepository(nullptr);
+		*created = std::move(edit);
+	}, [this, created, done = std::move(done)](const std::string &error) {
+		if (!error.empty()) {
+			ShowError(error.c_str());
+			done(false);
+			return;
+		}
+		fEdit = std::move(*created);
+		fEdit->SetRepository(fRepository.get());
+		FillList();
+		done(true);
+	});
+}
+
+
+void HistoryWindow::ReplayEdits()
+{
+	FillList();
+	if (fEdit == nullptr || fEdit->IsReplayed()) {
 		return;
 	}
-	FillList();
+	// A copy: the window keeps its edits meanwhile.
+	std::shared_ptr<const HistoryEdit> copy = std::make_shared<const HistoryEdit>(*fEdit);
+	const HistoryEdit *edit = fEdit.get();
+	const uint64_t revision = fEdit->Revision();
+	const std::string path = fRepositoryPath;
+	std::shared_ptr<ReplayOutcome> outcome = std::make_shared<ReplayOutcome>();
+	DiffKit::RunWithProgress(this, "Replaying the commits", [copy, path, outcome](DiffKit::Progress &progress) {
+		RepositoryPtr repository = OpenRepository(path);
+		*outcome = copy->ComputeReplay(repository.get(), [&progress](size_t done, size_t count) {
+			progress.SetText(ReplayProgressText(done, count));
+		});
+	}, [this, edit, revision, outcome](const std::string &error) {
+		if (!error.empty()) {
+			ShowError(error.c_str());
+			return;
+		}
+		if (fEdit.get() != edit) {
+			return;
+		}
+		fEdit->SetReplay(revision, std::move(*outcome));
+		FillList();
+	});
 }
 
 
@@ -792,7 +864,7 @@ void HistoryWindow::Dropped(BMessage *message)
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 	}
-	FillList();
+	ReplayEdits();
 }
 
 
@@ -803,7 +875,7 @@ void HistoryWindow::Remove()
 		return;
 	}
 	fEdit->Remove(steps);
-	FillList();
+	ReplayEdits();
 }
 
 
@@ -814,7 +886,7 @@ void HistoryWindow::Combine()
 		return;
 	}
 	fEdit->SetSquash(steps[0], !fEdit->Steps()[steps[0]].squash);
-	FillList();
+	ReplayEdits();
 }
 
 
@@ -834,7 +906,7 @@ void HistoryWindow::Reword()
 			return;
 		}
 		fEdit->SetMessage(step, result.Text("message"));
-		FillList();
+		ReplayEdits();
 	});
 }
 
@@ -896,7 +968,7 @@ void HistoryWindow::StepEdited(BMessage *message)
 	} else {
 		fEdit->SetFiles(step, files);
 	}
-	FillList();
+	ReplayEdits();
 }
 
 
@@ -910,16 +982,22 @@ void HistoryWindow::StartRebase(const std::string &onto)
 
 void HistoryWindow::StartRebaseNow(const std::string &onto)
 {
+	git_oid commit;
 	try {
-		const git_oid commit = ResolveCommit(fRepository.get(), onto);
-		fEdit = std::make_unique<HistoryEdit>(fRepository.get(), fSpec, commit, kHistoryLimit);
+		commit = ResolveCommit(fRepository.get(), onto);
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 		return;
 	}
-	fEditMode->SetValue(B_CONTROL_ON);
-	SetTitle(("Rebase " + fSpec + " onto " + onto).c_str());
-	FillList();
+	const std::string spec = fSpec;
+	StartEditing("Replaying " + spec + " onto " + onto, [spec, commit](git_repository *repository) {
+		return std::make_unique<HistoryEdit>(repository, spec, commit, kHistoryLimit, true);
+	}, [this, spec, onto](bool started) {
+		if (started) {
+			fEditMode->SetValue(B_CONTROL_ON);
+			SetTitle(("Rebase " + spec + " onto " + onto).c_str());
+		}
+	});
 }
 
 
@@ -1126,7 +1204,7 @@ void HistoryWindow::MessageReceived(BMessage *message)
 			ConfirmDiscard([this]() {
 				if (fEdit != nullptr) {
 					fEdit->Reset();
-					FillList();
+					ReplayEdits();
 				}
 			});
 			break;

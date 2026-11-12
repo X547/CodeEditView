@@ -33,9 +33,10 @@ static std::string TrimEnd(std::string text)
 }
 
 
-HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, size_t limit):
+HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, size_t limit, bool deferReplays):
 	fRepository(repository),
-	fBranch(branch)
+	fBranch(branch),
+	fDeferReplays(deferReplays)
 {
 	Check(git_reference_name_to_id(&fTip, repository, ("refs/heads/" + branch).c_str()), "Cannot read the branch");
 	git_oid id = fTip;
@@ -61,10 +62,12 @@ HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, 
 }
 
 
-HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, const git_oid &onto, size_t limit):
+HistoryEdit::HistoryEdit(git_repository *repository, const std::string &branch, const git_oid &onto, size_t limit,
+	bool deferReplays):
 	fRepository(repository),
 	fBranch(branch),
-	fOnto(onto)
+	fOnto(onto),
+	fDeferReplays(deferReplays)
 {
 	Check(git_reference_name_to_id(&fTip, repository, ("refs/heads/" + branch).c_str()), "Cannot read the branch");
 
@@ -121,7 +124,7 @@ void HistoryEdit::Reset()
 		step.commit = id;
 		fSteps.push_back(step);
 	}
-	Replay();
+	Changed();
 }
 
 
@@ -141,7 +144,7 @@ void HistoryEdit::Move(const std::vector<size_t> &indexes, size_t position)
 	}
 	position = std::min(position - before, fSteps.size());
 	fSteps.insert(fSteps.begin() + position, moved.begin(), moved.end());
-	Replay();
+	Changed();
 }
 
 
@@ -160,7 +163,7 @@ void HistoryEdit::Insert(const std::vector<git_oid> &commits, size_t position)
 	}
 	position = std::min(position, fSteps.size());
 	fSteps.insert(fSteps.begin() + position, inserted.begin(), inserted.end());
-	Replay();
+	Changed();
 }
 
 
@@ -172,14 +175,14 @@ void HistoryEdit::Remove(const std::vector<size_t> &indexes)
 	for (auto it = sorted.rbegin(); it != sorted.rend(); it++) {
 		fSteps.erase(fSteps.begin() + *it);
 	}
-	Replay();
+	Changed();
 }
 
 
 void HistoryEdit::SetSquash(size_t index, bool squash)
 {
 	fSteps.at(index).squash = squash && index > 0;
-	Replay();
+	Changed();
 }
 
 
@@ -196,7 +199,7 @@ void HistoryEdit::SetFiles(size_t index, const std::map<std::string, FileOverrid
 	for (const auto &[path, file] : files) {
 		step.files[path] = file;
 	}
-	Replay();
+	Changed();
 }
 
 
@@ -213,7 +216,7 @@ void HistoryEdit::Split(size_t index, const std::map<std::string, FileOverride> 
 	second.completesPrevious = true;
 	fSteps[index] = first;
 	fSteps.insert(fSteps.begin() + index + 1, second);
-	Replay();
+	Changed();
 }
 
 
@@ -228,7 +231,7 @@ void HistoryEdit::SetMessage(size_t index, const std::string &message)
 	} else {
 		step.message = message;
 	}
-	Replay();
+	Changed();
 }
 
 
@@ -346,31 +349,84 @@ static std::vector<ConflictFile> ApplyOverrides(git_index *index, const EditStep
 }
 
 
-void HistoryEdit::Replay()
+void HistoryEdit::Changed()
+{
+	fRevision++;
+	if (fDeferReplays) {
+		MarkUnreplayed();
+	} else {
+		Replay();
+	}
+}
+
+
+void HistoryEdit::MarkUnreplayed()
 {
 	fResults.assign(fSteps.size(), StepResult());
 	fNewTip.reset();
 	fError.clear();
 	const std::optional<size_t> first = FirstChanged();
 	const size_t replayStart = first.value_or(fSteps.size());
+	for (size_t i = 0; i < fSteps.size(); i++) {
+		if (i < replayStart) {
+			fResults[i].commit = fSteps[i].commit;
+			fResults[i].parent = i == 0 ? fBase : std::optional<git_oid>(fSteps[i - 1].commit);
+		} else {
+			fResults[i].state = StepState::Pending;
+		}
+	}
+	fReplayed = !first.has_value();
+	if (fReplayed) {
+		fNewTip = fTip;
+	}
+}
+
+
+void HistoryEdit::Replay()
+{
+	SetReplay(fRevision, ComputeReplay(fRepository));
+}
+
+
+void HistoryEdit::SetReplay(uint64_t revision, ReplayOutcome outcome)
+{
+	if (revision != fRevision) {
+		return;
+	}
+	fResults = std::move(outcome.results);
+	fNewTip = outcome.newTip;
+	fError = std::move(outcome.error);
+	fPatchIds = std::move(outcome.patchIds);
+	fReplayed = true;
+}
+
+
+ReplayOutcome HistoryEdit::ComputeReplay(git_repository *repository,
+	const std::function<void(size_t done, size_t count)> &progress) const
+{
+	ReplayOutcome out;
+	out.results.assign(fSteps.size(), StepResult());
+	out.patchIds = fPatchIds;
+	const std::optional<size_t> first = FirstChanged();
+	const size_t replayStart = first.value_or(fSteps.size());
 	for (size_t i = 0; i < replayStart && i < fSteps.size(); i++) {
-		fResults[i].commit = fSteps[i].commit;
-		fResults[i].parent = i == 0 ? fBase : std::optional<git_oid>(fSteps[i - 1].commit);
+		out.results[i].commit = fSteps[i].commit;
+		out.results[i].parent = i == 0 ? fBase : std::optional<git_oid>(fSteps[i - 1].commit);
 	}
 	if (!first.has_value()) {
-		fNewTip = fTip;
-		return;
+		out.newTip = fTip;
+		return out;
 	}
 
 	std::optional<git_oid> current = replayStart == 0 ? Start() : std::optional<git_oid>(fOriginal[replayStart - 1]);
 	git_signature *committerSignature = nullptr;
-	if (git_signature_default(&committerSignature, fRepository) < 0) {
+	if (git_signature_default(&committerSignature, repository) < 0) {
 		git_error_clear();
-		fError = "Set user.name and user.email in the Git configuration to rewrite commits";
+		out.error = "Set user.name and user.email in the Git configuration to rewrite commits";
 		for (size_t i = replayStart; i < fSteps.size(); i++) {
-			fResults[i].state = StepState::Pending;
+			out.results[i].state = StepState::Pending;
 		}
-		return;
+		return out;
 	}
 	SignaturePtr committer(committerSignature);
 
@@ -384,17 +440,20 @@ void HistoryEdit::Replay()
 	SignaturePtr groupAuthor;
 
 	for (size_t i = replayStart; i < fSteps.size(); i++) {
+		if (progress) {
+			progress(i - replayStart, fSteps.size() - replayStart);
+		}
 		const EditStep &step = fSteps[i];
-		StepResult &result = fResults[i];
+		StepResult &result = out.results[i];
 		try {
 			// A commit taken as it is whose change the new base already has.
 			const bool unedited = !step.copied && !step.squash && !step.message.has_value() && step.files.empty()
 				&& !step.completesPrevious;
 			if (unedited && !fBasePatches.empty()) {
 				const std::string key = OidString(step.commit);
-				auto cached = fPatchIds.find(key);
-				if (cached == fPatchIds.end()) {
-					cached = fPatchIds.emplace(key, PatchId(fRepository, step.commit)).first;
+				auto cached = out.patchIds.find(key);
+				if (cached == out.patchIds.end()) {
+					cached = out.patchIds.emplace(key, PatchId(repository, step.commit)).first;
 				}
 				if (cached->second.has_value() && fBasePatches.count(*cached->second) > 0) {
 					result.state = StepState::AlreadyInBase;
@@ -403,13 +462,13 @@ void HistoryEdit::Replay()
 					continue;
 				}
 			}
-			CommitPtr commit = LookupCommit(fRepository, step.commit);
+			CommitPtr commit = LookupCommit(repository, step.commit);
 			if (git_commit_parentcount(commit.get()) > 1) {
 				throw GitError("merge commits cannot be replayed");
 			}
 			TreePtr ancestor;
 			if (git_commit_parentcount(commit.get()) == 1) {
-				CommitPtr parent = LookupCommit(fRepository, *git_commit_parent_id(commit.get(), 0));
+				CommitPtr parent = LookupCommit(repository, *git_commit_parent_id(commit.get(), 0));
 				ancestor = CommitTree(parent.get());
 			}
 			// The second part of a split applies the whole change onto what the
@@ -420,36 +479,45 @@ void HistoryEdit::Replay()
 			previousBase = current;
 			TreePtr ours;
 			if (onto.has_value()) {
-				CommitPtr ontoCommit = LookupCommit(fRepository, *onto);
+				CommitPtr ontoCommit = LookupCommit(repository, *onto);
 				ours = CommitTree(ontoCommit.get());
 			}
 			TreePtr currentTree;
 			if (current.has_value()) {
-				CommitPtr currentCommit = LookupCommit(fRepository, *current);
+				CommitPtr currentCommit = LookupCommit(repository, *current);
 				currentTree = CommitTree(currentCommit.get());
 			}
 			TreePtr theirs = CommitTree(commit.get());
 
-			git_merge_options options = GIT_MERGE_OPTIONS_INIT;
-			git_index *index = nullptr;
-			Check(git_merge_trees(&index, fRepository, ancestor.get(), ours.get(), theirs.get(), &options),
-				"Cannot apply the commit");
-			IndexPtr indexPtr(index);
-			const std::vector<ConflictFile> conflicts = ApplyOverrides(index, step);
-			if (!conflicts.empty()) {
-				result.state = StepState::Conflict;
-				result.parent = current;
-				result.conflictFiles = conflicts;
-				for (const ConflictFile &conflict : conflicts) {
-					result.conflicts.push_back(conflict.path);
-				}
-				for (size_t j = i + 1; j < fSteps.size(); j++) {
-					fResults[j].state = StepState::Pending;
-				}
-				return;
-			}
+			// Merging walks the whole trees; a commit applied onto the tree
+			// it was made on gives its own tree.
+			const bool sameBase = ancestor == nullptr || ours == nullptr
+				? ancestor == nullptr && ours == nullptr
+				: git_oid_equal(git_tree_id(ancestor.get()), git_tree_id(ours.get()));
 			git_oid treeId;
-			Check(git_index_write_tree_to(&treeId, index, fRepository), "Cannot write the tree");
+			if (sameBase && step.files.empty()) {
+				treeId = *git_tree_id(theirs.get());
+			} else {
+				git_merge_options options = GIT_MERGE_OPTIONS_INIT;
+				git_index *index = nullptr;
+				Check(git_merge_trees(&index, repository, ancestor.get(), ours.get(), theirs.get(), &options),
+					"Cannot apply the commit");
+				IndexPtr indexPtr(index);
+				const std::vector<ConflictFile> conflicts = ApplyOverrides(index, step);
+				if (!conflicts.empty()) {
+					result.state = StepState::Conflict;
+					result.parent = current;
+					result.conflictFiles = conflicts;
+					for (const ConflictFile &conflict : conflicts) {
+						result.conflicts.push_back(conflict.path);
+					}
+					for (size_t j = i + 1; j < fSteps.size(); j++) {
+						out.results[j].state = StepState::Pending;
+					}
+					return out;
+				}
+				Check(git_index_write_tree_to(&treeId, index, repository), "Cannot write the tree");
+			}
 
 			const bool squash = step.squash && !group.empty();
 			if (currentTree != nullptr && git_oid_equal(&treeId, git_tree_id(currentTree.get()))
@@ -472,21 +540,21 @@ void HistoryEdit::Replay()
 			const std::optional<git_oid> parentId = squash ? groupParent : current;
 			CommitPtr parentCommit;
 			if (parentId.has_value()) {
-				parentCommit = LookupCommit(fRepository, *parentId);
+				parentCommit = LookupCommit(repository, *parentId);
 			}
 			const git_commit *parents[] = {parentCommit.get()};
 			git_tree *tree = nullptr;
-			Check(git_tree_lookup(&tree, fRepository, &treeId), "Cannot read the tree");
+			Check(git_tree_lookup(&tree, repository, &treeId), "Cannot read the tree");
 			TreePtr treePtr(tree);
 			const git_signature *author = squash ? groupAuthor.get() : git_commit_author(commit.get());
 			git_oid newId;
-			Check(git_commit_create(&newId, fRepository, nullptr, author, committer.get(), nullptr, message.c_str(),
+			Check(git_commit_create(&newId, repository, nullptr, author, committer.get(), nullptr, message.c_str(),
 				tree, parentId.has_value() ? 1 : 0, parents), "Cannot create the commit");
 
 			if (squash) {
 				for (size_t member : group) {
-					fResults[member].commit = newId;
-					fResults[member].parent = parentId;
+					out.results[member].commit = newId;
+					out.results[member].parent = parentId;
 				}
 				group.push_back(i);
 			} else {
@@ -506,12 +574,13 @@ void HistoryEdit::Replay()
 			result.parent = current;
 			result.conflicts = {e.what()};
 			for (size_t j = i + 1; j < fSteps.size(); j++) {
-				fResults[j].state = StepState::Pending;
+				out.results[j].state = StepState::Pending;
 			}
-			return;
+			return out;
 		}
 	}
-	fNewTip = current;
+	out.newTip = current;
+	return out;
 }
 
 
@@ -522,6 +591,9 @@ std::string HistoryEdit::Problem() const
 	}
 	if (!HasChanges()) {
 		return "There are no changes";
+	}
+	if (!fReplayed) {
+		return "The commits are not replayed yet";
 	}
 	for (size_t i = 0; i < fResults.size(); i++) {
 		if (fResults[i].state == StepState::Conflict) {

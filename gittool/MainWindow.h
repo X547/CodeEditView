@@ -175,6 +175,7 @@ private:
 	// Replays a branch onto a commit: with the usual preview, or in the
 	// history editor if it has conflicts.
 	void RebaseBranch(const std::string &branch, const std::string &onto);
+	void AskToResolveRebase(const std::string &branch, const std::string &onto);
 
 public:
 	explicit MainWindow(RepositoryPtr repository);

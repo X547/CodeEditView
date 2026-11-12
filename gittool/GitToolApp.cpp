@@ -65,6 +65,10 @@ GitToolApp::GitToolApp():
 	BApplication(kAppSignature)
 {
 	DiffKit::StartFreezeWatchdog("CodeEditGitTool");
+	// Writing a tree would otherwise read the header of every object it
+	// names; the trees written here come from merges and edits of objects
+	// that are in the repository.
+	git_libgit2_opts(GIT_OPT_ENABLE_STRICT_OBJECT_CREATION, 0);
 }
 
 

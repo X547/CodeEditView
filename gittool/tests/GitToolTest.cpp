@@ -1017,6 +1017,55 @@ TEST_CASE("History edits", "[gittool]")
 		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1", "m3", "m2"});
 	}
 
+	SECTION("Deferred replays") {
+		HistoryEdit deferred(repository, "main", 100, true);
+		CHECK(deferred.IsReplayed());
+		deferred.Move({2}, 4);
+		CHECK_FALSE(deferred.IsReplayed());
+		CHECK(deferred.Results()[1].state == StepState::Kept);
+		CHECK(deferred.Results()[2].state == StepState::Pending);
+		CHECK_FALSE(deferred.NewTip().has_value());
+		CHECK_FALSE(deferred.Problem().empty());
+
+		const HistoryEdit copy = deferred;
+		const uint64_t revision = deferred.Revision();
+		size_t count = 0;
+		ReplayOutcome outcome = copy.ComputeReplay(repository, [&count](size_t done, size_t total) {
+			(void)done;
+			count = total;
+		});
+		CHECK(count == 2);
+
+		// A replay of older steps is not taken: moving the commit back needs
+		// no replay, and keeps the original tip.
+		deferred.Move({3}, 2);
+		deferred.SetReplay(revision, outcome);
+		CHECK_FALSE(deferred.HasChanges());
+		CHECK(git_oid_equal(&*deferred.NewTip(), &m3));
+		deferred.Move({2}, 4);
+		CHECK_FALSE(deferred.IsReplayed());
+		deferred.SetReplay(deferred.Revision(), deferred.ComputeReplay(repository));
+		CHECK(deferred.IsReplayed());
+		CHECK(deferred.Problem().empty());
+		CHECK(Summaries(repository, *deferred.NewTip()) == std::vector<std::string> {"first", "m1", "m3", "m2"});
+	}
+
+	SECTION("Commits after a reworded one keep their trees") {
+		edit.SetMessage(1, "m1 reworded\n");
+		REQUIRE(edit.Problem().empty());
+		CHECK(Summaries(repository, *edit.NewTip()) == std::vector<std::string> {"first", "m1 reworded", "m2", "m3"});
+		const auto treeOf = [repository](const git_oid &id) {
+			git_commit *commit = nullptr;
+			REQUIRE(git_commit_lookup(&commit, repository, &id) == 0);
+			const git_oid tree = *git_commit_tree_id(commit);
+			git_commit_free(commit);
+			return tree;
+		};
+		const git_oid newTree = treeOf(*edit.NewTip());
+		const git_oid oldTree = treeOf(m3);
+		CHECK(git_oid_equal(&newTree, &oldTree));
+	}
+
 	SECTION("Squash") {
 		edit.SetSquash(2, true);
 		CHECK(edit.FirstChanged() == 1);

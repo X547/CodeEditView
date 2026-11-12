@@ -2143,23 +2143,51 @@ void MainWindow::ShowHistory(const std::string &spec, bool edit, const std::stri
 
 void MainWindow::RebaseBranch(const std::string &branch, const std::string &onto)
 {
-	git_repository *repository = fRepository.get();
-	const git_oid commit = ResolveCommit(repository, onto);
-	const HistoryEdit edit(repository, branch, commit, 1000);
-	if (!edit.HasChanges()) {
-		ShowError(("Branch " + branch + " is already based on " + onto).c_str());
-		return;
-	}
-	bool conflicts = false;
-	for (const StepResult &result : edit.Results()) {
-		conflicts = conflicts || result.state == StepState::Conflict;
-	}
-	if (!conflicts) {
-		Plan plan = edit.PlanApply(fSnapshot);
-		plan.title = "Replay branch " + branch + " onto " + onto;
-		Execute(plan);
-		return;
-	}
+	const git_oid commit = ResolveCommit(fRepository.get(), onto);
+	// Replayed on a thread: it takes seconds in large repositories.
+	struct Outcome {
+		bool changes {};
+		std::optional<Plan> plan;
+	};
+	std::shared_ptr<Outcome> outcome = std::make_shared<Outcome>();
+	const std::string path = fRepositoryPath;
+	const Snapshot snapshot = fSnapshot;
+	DiffKit::RunWithProgress(this, "Replaying " + branch + " onto " + onto,
+		[path, branch, commit, snapshot, outcome](DiffKit::Progress &progress) {
+			RepositoryPtr repository = OpenRepository(path);
+			HistoryEdit edit(repository.get(), branch, commit, 1000, true);
+			outcome->changes = edit.HasChanges();
+			if (!outcome->changes) {
+				return;
+			}
+			edit.SetReplay(edit.Revision(), edit.ComputeReplay(repository.get(), [&progress](size_t done,
+				size_t count) {
+				progress.SetText("Replaying commit " + std::to_string(done + 1) + " of " + std::to_string(count));
+			}));
+			for (const StepResult &result : edit.Results()) {
+				if (result.state == StepState::Conflict) {
+					return;
+				}
+			}
+			outcome->plan = edit.PlanApply(snapshot);
+		}, [this, outcome, branch, onto](const std::string &error) {
+			if (!error.empty()) {
+				ShowError(error.c_str());
+			} else if (!outcome->changes) {
+				ShowError(("Branch " + branch + " is already based on " + onto).c_str());
+			} else if (outcome->plan.has_value()) {
+				Plan plan = *outcome->plan;
+				plan.title = "Replay branch " + branch + " onto " + onto;
+				Execute(plan);
+			} else {
+				AskToResolveRebase(branch, onto);
+			}
+		});
+}
+
+
+void MainWindow::AskToResolveRebase(const std::string &branch, const std::string &onto)
+{
 	BAlert *alert = new BAlert("Git", ("Replaying " + branch + " onto " + onto
 		+ " has conflicts. Resolve them in the history editor?").c_str(), "Cancel", "Open the editor", nullptr,
 		B_WIDTH_AS_USUAL, B_WARNING_ALERT);

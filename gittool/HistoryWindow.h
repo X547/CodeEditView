@@ -96,6 +96,17 @@ private:
 	// to discard them; keep runs if the user does not.
 	void ConfirmDiscard(std::function<void()> discard, std::function<void()> keep = nullptr);
 	void SetEditMode(bool edit);
+	// Builds the edits with create on a thread, with a repository handle of
+	// its own, and replays them there, under a progress dialog; then done
+	// runs with whether they replaced the current edits.
+	void StartEditing(
+		const std::string &title,
+		std::function<std::unique_ptr<HistoryEdit>(git_repository *repository)> create,
+		std::function<void(bool started)> done
+	);
+	// Shows the edits after a change, replaying them first under a progress
+	// dialog.
+	void ReplayEdits();
 	void Dropped(BMessage *message);
 	void Remove();
 	void Combine();

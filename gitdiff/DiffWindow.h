@@ -65,6 +65,9 @@ private:
 	void UpdateDiffState();
 	bool CanEdit() const;
 	void ChangesCopied(int pane);
+	// The version of the shown file in a pane, at its caret: the working
+	// tree's file, or HEAD's as a Git file (the index has none).
+	void OpenInCodeEdit(int pane);
 	void ShowSelectedFile();
 	// Lists a file in "Other files" unless it has unstaged changes, and
 	// shows it.

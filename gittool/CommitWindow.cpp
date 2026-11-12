@@ -153,6 +153,8 @@ void CommitWindow::ShowHeader()
 void CommitWindow::LoadChanges()
 {
 	fDiffView->SetModels(nullptr, nullptr, std::string());
+	fDiffView->SetLabelLink(0, false);
+	fDiffView->SetLabelLink(1, false);
 	fSides.clear();
 	fChanges.clear();
 	fChangeView->SetSections({});
@@ -230,6 +232,9 @@ void CommitWindow::ShowSelectedFile()
 	fDiffView->SetLabel(0, (parentName + " — " + (change.oldPath.empty() ? "not present" : change.oldPath)).c_str());
 	fDiffView->SetLabel(1, ("Commit " + ShortId(fDetails.id) + " — "
 		+ (change.newPath.empty() ? "deleted" : change.newPath)).c_str());
+	// The versions of commits open in CodeEdit.
+	fDiffView->SetLabelLink(0, SelectedVersion(true).has_value());
+	fDiffView->SetLabelLink(1, SelectedVersion(false).has_value());
 	fDiffView->SetReadOnly(0, true);
 	fDiffView->SetReadOnly(1, true);
 	fDiffView->SetCopyTargets(false, false);
@@ -285,7 +290,9 @@ void CommitWindow::OpenInCodeEdit(bool parent)
 	message.AddString("path", version->second.c_str());
 	CodeEditView *pane = fDiffView->View(parent ? 0 : 1);
 	if (pane != nullptr) {
-		message.AddInt32("line", static_cast<int32>(pane->CaretLocation().line + 1));
+		const CodeEdit::TextPoint caret = pane->CaretLocation();
+		message.AddInt32("line", static_cast<int32>(caret.line + 1));
+		message.AddInt32("column", static_cast<int32>(caret.column + 1));
 	}
 	DiffKit::SendToCodeEdit(message);
 }
@@ -323,6 +330,9 @@ void CommitWindow::MessageReceived(BMessage *message)
 		}
 		case kMsgLoadChanges:
 			LoadChanges();
+			break;
+		case DiffKit::kMsgPaneLabelClicked:
+			OpenInCodeEdit(message->GetInt32("pane", 0) == 0);
 			break;
 		default:
 			BWindow::MessageReceived(message);

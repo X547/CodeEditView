@@ -104,6 +104,10 @@ private:
 	void ShowSelected();
 	void UpdateFileList();
 	void TakeLeft();
+	// The commit the left pane shows a version of: the parent when editing,
+	// the commit when splitting; none for conflicts.
+	std::optional<git_oid> LeftCommit() const;
+	void OpenLeftInCodeEdit();
 	// Sends the result and closes, asking first if conflict markers remain.
 	void Finish();
 	bool SendResult();

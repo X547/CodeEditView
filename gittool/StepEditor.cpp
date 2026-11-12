@@ -23,6 +23,7 @@
 
 #include "Ask.h"
 #include "ChangeView.h"
+#include "CodeEditLink.h"
 #include "CommitDiff.h"
 #include "DiffView.h"
 #include "FindCommands.h"
@@ -346,6 +347,7 @@ void StepEditor::ShowSelected()
 	File *file = Selected();
 	if (file == nullptr) {
 		fDiffView->SetModels(nullptr, nullptr, std::string());
+		fDiffView->SetLabelLink(0, false);
 		return;
 	}
 	static const char *kLeft[] = {"Parent", "The commit", ""};
@@ -355,6 +357,7 @@ void StepEditor::ShowSelected()
 	fDiffView->SetLabel(0, (left + " — " + file->path).c_str());
 	fDiffView->SetLabel(1, (std::string(kRight[mode]) + " — " + file->path
 		+ (file->deleted ? " — deleted" : "")).c_str());
+	fDiffView->SetLabelLink(0, LeftCommit().has_value() && file->left->Exists());
 	fDiffView->SetReadOnly(0, true);
 	fDiffView->SetReadOnly(1, file->wholeFile || file->deleted);
 	fDiffView->SetCopyTargets(false, !file->wholeFile && !file->deleted);
@@ -386,6 +389,38 @@ void StepEditor::UpdateFileList()
 		section.items.push_back({std::to_string(i), mark + file.path});
 	}
 	fChangeView->SetSections({section});
+}
+
+
+std::optional<git_oid> StepEditor::LeftCommit() const
+{
+	switch (fInput.mode) {
+		case StepEditMode::Edit:
+			return fInput.parent;
+		case StepEditMode::Split:
+			return fInput.result;
+		default:
+			return std::nullopt;
+	}
+}
+
+
+void StepEditor::OpenLeftInCodeEdit()
+{
+	const File *file = Selected();
+	const std::optional<git_oid> commit = LeftCommit();
+	if (file == nullptr || !commit.has_value() || !file->left->Exists()) {
+		return;
+	}
+	const char *workdir = git_repository_workdir(fRepository.get());
+	const CodeEdit::TextPoint caret = fDiffView->View(0)->CaretLocation();
+	BMessage message(DiffKit::kMsgCodeEditOpenGitFile);
+	message.AddString("repository", workdir != nullptr ? workdir : git_repository_path(fRepository.get()));
+	message.AddString("commit", OidString(*commit).c_str());
+	message.AddString("path", file->path.c_str());
+	message.AddInt32("line", static_cast<int32>(caret.line + 1));
+	message.AddInt32("column", static_cast<int32>(caret.column + 1));
+	DiffKit::SendToCodeEdit(message);
 }
 
 
@@ -511,6 +546,11 @@ void StepEditor::MessageReceived(BMessage *message)
 				file->deleted = fDeleted->Value() == B_CONTROL_ON;
 				ShowSelected();
 				UpdateFileList();
+			}
+			break;
+		case DiffKit::kMsgPaneLabelClicked:
+			if (message->GetInt32("pane", 0) == 0) {
+				OpenLeftInCodeEdit();
 			}
 			break;
 		case kMsgTakeLeft:

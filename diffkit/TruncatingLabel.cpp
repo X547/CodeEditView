@@ -2,6 +2,9 @@
 
 #include <math.h>
 
+#include <algorithm>
+
+#include <Cursor.h>
 #include <LayoutUtils.h>
 #include <String.h>
 
@@ -23,6 +26,19 @@ void TruncatingLabel::SetLabel(const char *text)
 }
 
 
+void TruncatingLabel::SetLink(bool link)
+{
+	if (link == fLink) {
+		return;
+	}
+	fLink = link;
+	if (!link) {
+		SetViewCursor(B_CURSOR_SYSTEM_DEFAULT);
+	}
+	Invalidate();
+}
+
+
 void TruncatingLabel::Draw(BRect updateRect)
 {
 	(void)updateRect;
@@ -40,7 +56,36 @@ void TruncatingLabel::Draw(BRect updateRect)
 	font.GetHeight(&height);
 	const float baseline = floorf(bounds.top + (bounds.Height() + 1 - height.ascent - height.descent) / 2
 		+ height.ascent);
+	const rgb_color textColor = HighColor();
+	if (fLink) {
+		SetHighUIColor(B_LINK_TEXT_COLOR);
+	}
 	DrawString(text.String(), BPoint(bounds.left, baseline));
+	if (fLink) {
+		const float underline = std::min(bounds.bottom, baseline + 1);
+		StrokeLine(BPoint(bounds.left, underline), BPoint(bounds.left + font.StringWidth(text.String()), underline));
+		SetHighColor(textColor);
+	}
+}
+
+
+void TruncatingLabel::MouseDown(BPoint where)
+{
+	(void)where;
+	if (fLink && Message() != nullptr) {
+		Invoke();
+	}
+}
+
+
+void TruncatingLabel::MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage)
+{
+	(void)where;
+	(void)dragMessage;
+	if (fLink && (transit == B_ENTERED_VIEW || transit == B_INSIDE_VIEW)) {
+		const BCursor cursor(B_CURSOR_ID_FOLLOW_LINK);
+		SetViewCursor(&cursor);
+	}
 }
 
 

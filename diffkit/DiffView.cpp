@@ -94,6 +94,9 @@ DiffView::DiffView():
 		fViews[pane] = new CodeEditView(pane == 0 ? "leftView" : "rightView");
 		fPanes[pane] = new CodeEditScrollView(pane == 0 ? "leftPane" : "rightPane", fViews[pane]);
 		fLabels[pane] = new TruncatingLabel(pane == 0 ? "leftLabel" : "rightLabel", "");
+		BMessage *clicked = new BMessage(kMsgPaneLabelClicked);
+		clicked->AddInt32("pane", pane);
+		fLabels[pane]->SetMessage(clicked);
 	}
 	fLinkMap = new LinkMapView(this);
 	ApplySettings();
@@ -129,6 +132,9 @@ void DiffView::AttachedToWindow()
 	SetViewUIColor(B_PANEL_BACKGROUND_COLOR);
 	for (CodeEditView *view : fViews) {
 		view->SetTarget(BMessenger(this));
+	}
+	for (TruncatingLabel *label : fLabels) {
+		label->SetTarget(Window());
 	}
 }
 
@@ -211,6 +217,12 @@ void DiffView::SetModels(TextModel *left, TextModel *right, const std::string &k
 void DiffView::SetLabel(int pane, const char *text)
 {
 	fLabels[pane]->SetLabel(text);
+}
+
+
+void DiffView::SetLabelLink(int pane, bool link)
+{
+	fLabels[pane]->SetLink(link);
 }
 
 

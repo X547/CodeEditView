@@ -25,6 +25,7 @@
 
 #include "Ask.h"
 #include "ChangeView.h"
+#include "CodeEditLink.h"
 #include "MessageEditor.h"
 #include "Messages.h"
 #include "PathMenu.h"
@@ -38,6 +39,14 @@ namespace GitDiff {
 // changed; changes come in bursts.
 static constexpr bigtime_t kRefreshDelay = 300000;
 static constexpr uint32 kMsgLoadFirst = 'GDlf';
+
+
+// CodeEdit shows files of the working tree and of commits, not of the
+// index.
+static bool OpensInCodeEdit(Side side)
+{
+	return side != Side::Index;
+}
 
 
 // The key of a file in the list: its section and path.
@@ -258,8 +267,10 @@ void DiffWindow::UpdateDiffState()
 	static const char *kMissing[] = {"not in HEAD", "not in index", "deleted"};
 
 	if (fDocument == nullptr) {
-		fDiffView->SetLabel(0, "");
-		fDiffView->SetLabel(1, "");
+		for (int pane = 0; pane < 2; pane++) {
+			fDiffView->SetLabel(pane, "");
+			fDiffView->SetLabelLink(pane, false);
+		}
 		fDiffView->SetCopyTargets(false, false);
 		return;
 	}
@@ -280,6 +291,7 @@ void DiffWindow::UpdateDiffState()
 			text += " — read-only: file " + fDocument->ReadOnlyReason();
 		}
 		fDiffView->SetLabel(pane, text.c_str());
+		fDiffView->SetLabelLink(pane, OpensInCodeEdit(side) && fDocument->Exists(side));
 	}
 	fDiffView->SetReadOnly(0, true);
 	fDiffView->SetReadOnly(1, !CanEdit() || (SideOf(fKind, 1) == Side::Worktree && !fDocument->Exists(Side::Worktree)));
@@ -300,6 +312,37 @@ void DiffWindow::ChangesCopied(int pane)
 		Refresh();
 	}
 	UpdateDiffState();
+}
+
+
+void DiffWindow::OpenInCodeEdit(int pane)
+{
+	if (fDocument == nullptr || pane < 0 || pane > 1) {
+		return;
+	}
+	const Side side = SideOf(fKind, pane);
+	if (!OpensInCodeEdit(side) || !fDocument->Exists(side)) {
+		return;
+	}
+	const CodeEdit::TextPoint caret = fDiffView->View(pane)->CaretLocation();
+	const int32 line = static_cast<int32>(caret.line + 1);
+	const int32 column = static_cast<int32>(caret.column + 1);
+	if (side == Side::Worktree) {
+		std::string path = fRepository->Workdir();
+		if (!path.empty() && path.back() != '/') {
+			path += '/';
+		}
+		path += fDocument->Path();
+		DiffKit::OpenFileInCodeEdit(path.c_str(), line, column);
+		return;
+	}
+	BMessage message(DiffKit::kMsgCodeEditOpenGitFile);
+	message.AddString("repository", fRepository->Workdir().c_str());
+	message.AddString("commit", "HEAD");
+	message.AddString("path", fDocument->Path().c_str());
+	message.AddInt32("line", line);
+	message.AddInt32("column", column);
+	DiffKit::SendToCodeEdit(message);
 }
 
 
@@ -648,6 +691,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgReload:
 			ReloadDocument();
+			break;
+		case DiffKit::kMsgPaneLabelClicked:
+			OpenInCodeEdit(message->GetInt32("pane", 0));
 			break;
 		case kMsgStage:
 			// To the index: left in the unstaged diff, right in the staged one.

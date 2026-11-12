@@ -69,4 +69,22 @@ void SendToCodeEdit(const BMessage &message)
 }
 
 
+void OpenFileInCodeEdit(const char *path, int32 line, int32 column)
+{
+	entry_ref ref;
+	if (get_ref_for_path(path, &ref) != B_OK) {
+		return;
+	}
+	BMessage message(B_REFS_RECEIVED);
+	message.AddRef("refs", &ref);
+	if (line > 0) {
+		message.AddInt32("be:line", line);
+		if (column > 0) {
+			message.AddInt32("be:column", column);
+		}
+	}
+	SendToCodeEdit(message);
+}
+
+
 } // DiffKit

@@ -26,5 +26,9 @@ constexpr uint32 kMsgCodeEditOpenGitFile = 'CEgf';
 // failures are shown in an alert.
 void SendToCodeEdit(const BMessage &message);
 
+// Shows a file of the file system in CodeEdit as /bin/open does, with the
+// caret at line and column (1-based; 0 for none).
+void OpenFileInCodeEdit(const char *path, int32 line = 0, int32 column = 0);
+
 
 } // DiffKit

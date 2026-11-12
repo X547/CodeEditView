@@ -35,6 +35,8 @@ class TruncatingLabel;
 constexpr uint32 kMsgDiffEdited = 'DKed';
 // Changes were copied into a pane ("pane" int32).
 constexpr uint32 kMsgChangesCopied = 'DKcc';
+// The label of a pane shown as a link was clicked ("pane" int32).
+constexpr uint32 kMsgPaneLabelClicked = 'DKlc';
 
 // Internal: the diff timer; an arrow of the link map was clicked ("chunk",
 // "pane" int32: the pane to copy to).
@@ -112,6 +114,8 @@ public:
 	const std::vector<Chunk> &Chunks() const {return fChunks;}
 
 	void SetLabel(int pane, const char *text);
+	// Shows the label as a link: a click posts kMsgPaneLabelClicked.
+	void SetLabelLink(int pane, bool link);
 	// Whether the user can edit a pane; copying changes into it still works.
 	void SetReadOnly(int pane, bool readOnly);
 	// The arrows of the link map copy chunks into these panes.

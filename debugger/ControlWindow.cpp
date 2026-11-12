@@ -16,6 +16,7 @@
 #include <TextControl.h>
 
 #include "Common.h"
+#include "WindowHelpers.h"
 
 
 namespace Debugger {
@@ -185,6 +186,7 @@ void ControlWindow::MessageReceived(BMessage *message)
 				fProgramPanel = std::make_unique<BFilePanel>(B_OPEN_PANEL, &target, nullptr, B_FILE_NODE,
 					false, new BMessage(kMsgProgramChosen));
 			}
+			DiffKit::PlacePanel(fProgramPanel.get(), Frame());
 			fProgramPanel->Show();
 			break;
 		case kMsgProgramChosen: {
@@ -199,6 +201,7 @@ void ControlWindow::MessageReceived(BMessage *message)
 				BMessenger target(be_app_messenger);
 				fSourcePanel = std::make_unique<BFilePanel>(B_OPEN_PANEL, &target);
 			}
+			DiffKit::PlacePanel(fSourcePanel.get(), Frame());
 			fSourcePanel->Show();
 			break;
 		default:

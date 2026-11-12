@@ -13,8 +13,10 @@ diffKit = static_library(
 		'FreezeWatchdog.cpp',
 		'Git.cpp',
 		'LinkMapView.cpp',
+		'Progress.cpp',
 		'TextSide.cpp',
 		'TruncatingLabel.cpp',
+		'WindowHelpers.cpp',
 	),
 	dependencies: [codeEditViewDep, libgit2Dep]
 )

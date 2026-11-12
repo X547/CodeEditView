@@ -26,6 +26,7 @@
 #include "Dialogs.h"
 #include "Messages.h"
 #include "Operations.h"
+#include "WindowHelpers.h"
 
 
 namespace GitTool {
@@ -940,19 +941,16 @@ void HistoryWindow::Apply()
 	Reload();
 	const Plan plan = fEdit->PlanApply(fSnapshot);
 	ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
-		RunContext context;
-		context.repository = fRepository.get();
-		context.resolution = resolution;
-		try {
-			plan.run(context);
-		} catch (const std::exception &e) {
-			ShowError(e.what());
-			return;
-		}
-		Reload();
-		fEdit.reset();
-		fPendingEdit = true;
-		ShowHistoryOf(fSpec);
+		RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
+			if (!error.empty()) {
+				ShowError(error.c_str());
+				return;
+			}
+			Reload();
+			fEdit.reset();
+			fPendingEdit = true;
+			ShowHistoryOf(fSpec);
+		});
 	});
 }
 
@@ -1024,16 +1022,13 @@ void HistoryWindow::CreateReferenceAt(bool tag)
 				? PlanCreateTag(fRepository.get(), fSnapshot, result.Text("name"), id, result.Text("message"))
 				: PlanCreateBranch(fRepository.get(), fSnapshot, result.Text("name"), id, std::string());
 			ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
-				RunContext context;
-				context.repository = fRepository.get();
-				context.resolution = resolution;
-				try {
-					plan.run(context);
-				} catch (const std::exception &e) {
-					ShowError(e.what());
-				}
-				Reload();
-				FillList();
+				RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
+					if (!error.empty()) {
+						ShowError(error.c_str());
+					}
+					Reload();
+					FillList();
+				});
 			});
 		} catch (const std::exception &e) {
 			ShowError(e.what());
@@ -1091,7 +1086,9 @@ void HistoryWindow::ShowChanges()
 		}
 	}
 	try {
-		(new CommitWindow(fRepositoryPath, commit, B_NORMAL_WINDOW_FEEL))->Show();
+		CommitWindow *window = new CommitWindow(fRepositoryPath, commit, B_NORMAL_WINDOW_FEEL);
+		DiffKit::PlaceOver(window, Frame());
+		window->Show();
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 	}

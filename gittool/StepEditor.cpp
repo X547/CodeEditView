@@ -29,6 +29,7 @@
 #include "MessageEditor.h"
 #include "Messages.h"
 #include "PathMenu.h"
+#include "WindowHelpers.h"
 
 
 namespace GitTool {
@@ -234,11 +235,11 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 			.Add(ok)
 		.End();
 	SetDefaultButton(ok);
+	DiffKit::KeepEnterInEditors(this);
 
 	UpdateFileList();
 	fChangeView->SelectFirst();
-	CenterIn(history->Frame());
-	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
+	DiffKit::PlaceOver(this, history->Frame());
 }
 
 

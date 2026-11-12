@@ -150,6 +150,17 @@ void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &curre
 void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
 	std::function<void(Resolution resolution)> run);
 
+// Runs a plan that needs no network on a thread with its own handle of the
+// repository, under a progress dialog over owner; then done runs on the
+// owner's thread with the error (empty on success).
+void RunPlanWithProgress(
+	BWindow *owner,
+	const std::string &repositoryPath,
+	const Plan &plan,
+	Resolution resolution,
+	std::function<void(const std::string &error)> done
+);
+
 
 struct ListColumn {
 	std::string title;

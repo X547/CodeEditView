@@ -13,6 +13,7 @@
 #include <TextControl.h>
 
 #include "Messages.h"
+#include "WindowHelpers.h"
 
 
 namespace Studio {
@@ -163,6 +164,7 @@ void OpenGitWindow::MessageReceived(BMessage *message)
 			if (fDirectoryPanel == nullptr) {
 				fDirectoryPanel = new BFilePanel(B_OPEN_PANEL, new BMessenger(this), nullptr, B_DIRECTORY_NODE, false);
 			}
+			DiffKit::PlacePanel(fDirectoryPanel, Frame());
 			fDirectoryPanel->Show();
 			break;
 		case B_REFS_RECEIVED: {

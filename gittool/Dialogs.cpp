@@ -32,6 +32,8 @@
 #include "BackgroundLoader.h"
 #include "MessageEditor.h"
 #include "Messages.h"
+#include "Progress.h"
+#include "WindowHelpers.h"
 
 
 namespace GitTool {
@@ -60,7 +62,7 @@ void ModalDialog::Open(BWindow *owner, std::function<void(bool accepted)> done)
 	fAnswerPending = true;
 	DiffKit::AttachDialog(owner, this);
 	ResizeToPreferred();
-	CenterIn(owner->Frame());
+	DiffKit::PlaceOver(this, owner->Frame());
 	Show();
 }
 
@@ -442,6 +444,7 @@ FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *reposit
 		.Add(gridView)
 		.Add(ButtonRow(cancel, ok));
 	SetDefaultButton(ok);
+	DiffKit::KeepEnterInEditors(this);
 	// A commit dropped from a history window fills the first commit field.
 	for (size_t i = 0; i < fForm->Fields().size(); i++) {
 		BTextControl *commitField = dynamic_cast<BTextControl*>(fControls[i]);
@@ -744,6 +747,7 @@ void CommitPicker::ShowCommit()
 			: ResolveCommit(fRepository.get(), fSpec->Text());
 		CommitWindow *window = new CommitWindow(fRepositoryPath, id, B_NORMAL_WINDOW_FEEL);
 		DiffKit::AttachDialog(this, window);
+		DiffKit::PlaceOver(window, Frame());
 		window->Show();
 	} catch (const std::exception &e) {
 		DiffKit::ShowError(e.what());
@@ -945,6 +949,25 @@ void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
 			run(*resolution);
 		}
 	});
+}
+
+
+void RunPlanWithProgress(
+	BWindow *owner,
+	const std::string &repositoryPath,
+	const Plan &plan,
+	Resolution resolution,
+	std::function<void(const std::string &error)> done
+)
+{
+	DiffKit::RunWithProgress(owner, plan.title, [repositoryPath, plan, resolution](DiffKit::Progress &progress) {
+		(void)progress;
+		RepositoryPtr repository = OpenRepository(repositoryPath);
+		RunContext context;
+		context.repository = repository.get();
+		context.resolution = resolution;
+		plan.run(context);
+	}, std::move(done));
 }
 
 

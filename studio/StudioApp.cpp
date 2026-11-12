@@ -24,6 +24,7 @@
 #include "OpenLocationWindow.h"
 #include "OpenWindow.h"
 #include "SourceWindow.h"
+#include "WindowHelpers.h"
 
 
 namespace Studio {
@@ -181,9 +182,20 @@ void StudioApp::SetStacking(bool stacking)
 }
 
 
+// The frame of the window a request comes from, if it says.
+static std::optional<BRect> OpenerFrame(const BMessage &message)
+{
+	BRect frame;
+	if (message.FindRect("openerFrame", &frame) != B_OK) {
+		return std::nullopt;
+	}
+	return frame;
+}
+
+
 //#pragma mark - Debug sessions
 
-int32 StudioApp::NewSession()
+int32 StudioApp::NewSession(BRect openerFrame)
 {
 	BAutolock lock(fWindowLock);
 	const int32 id = fNextSessionId++;
@@ -204,6 +216,7 @@ int32 StudioApp::NewSession()
 	closeRequest.AddInt32("session", id);
 	entry.control = new Debugger::ControlWindow(context, ("Debug" + context.titleSuffix).c_str(), "", "",
 		closeRequest);
+	DiffKit::PlaceOver(entry.control, openerFrame);
 	entry.control->Show();
 	return id;
 }
@@ -231,7 +244,7 @@ BReference<CodeEdit::MarkSet> StudioApp::SessionMarks(int32 session, CodeEdit::T
 }
 
 
-void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind)
+void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind, std::optional<BRect> openerFrame)
 {
 	BWindow *window = nullptr;
 	{
@@ -256,6 +269,9 @@ void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind)
 		return;
 	}
 	if (window->IsHidden()) {
+		if (openerFrame.has_value()) {
+			DiffKit::PlaceOver(window, *openerFrame);
+		}
 		window->Show();
 	}
 	window->Activate();
@@ -468,7 +484,7 @@ void StudioApp::WatchCoverage(int32 coverage, const BMessenger &watcher, bool wa
 
 //#pragma mark - Windows
 
-void StudioApp::ShowDocumentsWindow()
+void StudioApp::ShowDocumentsWindow(std::optional<BRect> openerFrame)
 {
 	BAutolock lock(fWindowLock);
 	if (fDocumentsWindow.IsValid()) {
@@ -476,6 +492,9 @@ void StudioApp::ShowDocumentsWindow()
 		return;
 	}
 	DocumentsWindow *window = new DocumentsWindow();
+	if (openerFrame.has_value()) {
+		DiffKit::PlaceOver(window, *openerFrame);
+	}
 	fDocumentsWindow = BMessenger(window);
 	window->Show();
 }
@@ -589,9 +608,14 @@ void StudioApp::MessageReceived(BMessage *message)
 		case Coverage::kMsgOpenCoverage:
 			OpenCoverage(message->GetString("binary", ""), message->GetString("profile", ""));
 			break;
-		case kMsgShowOpenCoverage:
-			(new Coverage::OpenWindow(message->GetString("binary", ""), ""))->Show();
+		case kMsgShowOpenCoverage: {
+			BWindow *window = new Coverage::OpenWindow(message->GetString("binary", ""), "");
+			if (const std::optional<BRect> frame = OpenerFrame(*message)) {
+				DiffKit::PlaceOver(window, *frame);
+			}
+			window->Show();
 			break;
+		}
 		case kMsgCloseCoverage:
 			CloseCoverage(message->GetInt32("coverage", 0));
 			break;
@@ -612,7 +636,7 @@ void StudioApp::MessageReceived(BMessage *message)
 		}
 		case Debugger::kMsgShowToolWindow:
 			ShowToolWindow(message->GetInt32("session", 0),
-				static_cast<Debugger::ToolWindowKind>(message->GetInt32("window", 0)));
+				static_cast<Debugger::ToolWindowKind>(message->GetInt32("window", 0)), OpenerFrame(*message));
 			break;
 		case kMsgCloseSession:
 			CloseSession(message->GetInt32("session", 0));
@@ -652,7 +676,7 @@ void StudioApp::MessageReceived(BMessage *message)
 			(new OpenLocationWindow(BMessenger(this)))->Show();
 			break;
 		case kMsgShowDocuments:
-			ShowDocumentsWindow();
+			ShowDocumentsWindow(OpenerFrame(*message));
 			break;
 		case kMsgToggleStacking:
 			SetStacking(!Stacking());

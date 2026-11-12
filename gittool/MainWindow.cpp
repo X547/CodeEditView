@@ -35,7 +35,9 @@
 #include "HistoryWindow.h"
 #include "Messages.h"
 #include "Operations.h"
+#include "Progress.h"
 #include "Repository.h"
+#include "WindowHelpers.h"
 
 
 namespace GitTool {
@@ -1073,22 +1075,21 @@ void MainWindow::RunPlan(const Plan &plan, Resolution resolution, const BMessage
 		}, done);
 		return;
 	}
-	RunContext context;
-	context.repository = fRepository.get();
-	context.resolution = resolution;
-	try {
-		plan.run(context);
-		AppendLog("Done: " + plan.title);
-	} catch (const std::exception &e) {
-		AppendLog("Failed: " + plan.title + ": " + e.what());
-		ShowError(e.what());
-	}
-	Refresh();
-	if (then) {
-		AfterRefresh([this, then = std::move(then)]() {
-			Guarded(then);
+	RunPlanWithProgress(this, fRepositoryPath, plan, resolution,
+		[this, title = plan.title, then = std::move(then)](const std::string &error) {
+			if (error.empty()) {
+				AppendLog("Done: " + title);
+			} else {
+				AppendLog("Failed: " + title + ": " + error);
+				ShowError(error.c_str());
+			}
+			Refresh();
+			if (then) {
+				AfterRefresh([this, then]() {
+					Guarded(then);
+				});
+			}
 		});
-	}
 }
 
 
@@ -2131,7 +2132,9 @@ void MainWindow::DownloadChange(const RemoteInfo &remote, const Form &form)
 void MainWindow::ShowHistory(const std::string &spec, bool edit, const std::string &onto)
 {
 	try {
-		(new HistoryWindow(fRepositoryPath, spec, edit, onto))->Show();
+		HistoryWindow *window = new HistoryWindow(fRepositoryPath, spec, edit, onto);
+		DiffKit::PlaceOver(window, Frame());
+		window->Show();
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 	}

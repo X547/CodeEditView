@@ -8,6 +8,7 @@
 #include <Application.h>
 #include <Locker.h>
 #include <Messenger.h>
+#include <Rect.h>
 
 #include <CodeEditView/TextModel.h>
 
@@ -91,11 +92,12 @@ private:
 	std::map<int32, CoverageEntry> fCoverages;
 	int32 fNextCoverageId = 1;
 
-	void ShowDocumentsWindow();
+	// Windows opened from another window are placed over its frame.
+	void ShowDocumentsWindow(std::optional<BRect> openerFrame = std::nullopt);
 	void ShowOpenFilePanel();
 	void OpenArgument(const std::string &argument, const char *cwd);
 	void ShowFollowing(const Workspace::Locator &locator, const ShowOptions &options);
-	void ShowToolWindow(int32 session, Debugger::ToolWindowKind kind);
+	void ShowToolWindow(int32 session, Debugger::ToolWindowKind kind, std::optional<BRect> openerFrame);
 	void CloseSession(int32 id);
 	void OpenCoverage(const std::string &binary, const std::string &profile);
 	void CloseCoverage(int32 id);
@@ -123,9 +125,9 @@ public:
 	void WindowShows(const BMessenger &window, const Workspace::Locator &locator, int32 session, int32 coverage);
 	void WindowClosing(const BMessenger &window);
 
-	// Debug sessions. NewSession() shows the session's control window and
-	// returns its id.
-	int32 NewSession();
+	// Debug sessions. NewSession() shows the session's control window over
+	// the window that asks for it and returns its id.
+	int32 NewSession(BRect openerFrame);
 	std::vector<SessionInfo> Sessions();
 	// The marks of a session in a model; none if the session is gone. Must
 	// not be called with the model locked.

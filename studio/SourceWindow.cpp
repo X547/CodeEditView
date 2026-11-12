@@ -35,6 +35,7 @@
 #include "OpenLocationWindow.h"
 #include "OutlineView.h"
 #include "StudioApp.h"
+#include "WindowHelpers.h"
 
 
 namespace Studio {
@@ -632,6 +633,7 @@ void SourceWindow::ShowSavePanel(uint32 chosen, const char *title, const std::st
 		fSavePanel->SetPanelDirectory(directory.c_str());
 	}
 	fSavePanel->SetSaveText(name.c_str());
+	DiffKit::PlacePanel(fSavePanel, Frame());
 	fSavePanel->Show();
 }
 
@@ -715,6 +717,7 @@ void SourceWindow::ShowOpenPanel()
 			fOpenPanel->SetPanelDirectory(directory.c_str());
 		}
 	}
+	DiffKit::PlacePanel(fOpenPanel, Frame());
 	fOpenPanel->Show();
 }
 
@@ -823,7 +826,7 @@ void SourceWindow::MessageReceived(BMessage *message)
 			Follow(message->GetInt32("session", 0), fCoverage);
 			break;
 		case kMsgNewSession:
-			Follow(StudioApp::Get().NewSession(), fCoverage);
+			Follow(StudioApp::Get().NewSession(Frame()), fCoverage);
 			break;
 		case kMsgSessionClosed:
 			if (message->GetInt32("session", 0) == fSession) {
@@ -847,9 +850,12 @@ void SourceWindow::MessageReceived(BMessage *message)
 			be_app->PostMessage(&forward);
 			break;
 		}
-		case kMsgShowOpenCoverage:
-			be_app->PostMessage(kMsgShowOpenCoverage);
+		case kMsgShowOpenCoverage: {
+			BMessage forward(kMsgShowOpenCoverage);
+			forward.AddRect("openerFrame", Frame());
+			be_app->PostMessage(&forward);
 			break;
+		}
 		case kMsgNextUncovered:
 		case kMsgPreviousUncovered:
 			GoToUncovered(message->what == kMsgNextUncovered);
@@ -858,6 +864,7 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case Debugger::kMsgShowToolWindow: {
 			BMessage forward(*message);
 			forward.AddInt32("session", fSession);
+			forward.AddRect("openerFrame", Frame());
 			be_app->PostMessage(&forward);
 			break;
 		}
@@ -894,13 +901,24 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case B_REFS_RECEIVED:
 			OpenRefs(message);
 			break;
-		case kMsgShowOpenGit:
-			(new OpenGitWindow(BMessenger(this), StartDirectory()))->Show();
+		case kMsgShowOpenGit: {
+			BWindow *window = new OpenGitWindow(BMessenger(this), StartDirectory());
+			DiffKit::PlaceOver(window, Frame());
+			window->Show();
 			break;
-		case kMsgShowOpenLocation:
-			(new OpenLocationWindow(BMessenger(this)))->Show();
+		}
+		case kMsgShowOpenLocation: {
+			BWindow *window = new OpenLocationWindow(BMessenger(this));
+			DiffKit::PlaceOver(window, Frame());
+			window->Show();
 			break;
-		case kMsgShowDocuments:
+		}
+		case kMsgShowDocuments: {
+			BMessage forward(*message);
+			forward.AddRect("openerFrame", Frame());
+			be_app->PostMessage(&forward);
+			break;
+		}
 		case kMsgToggleStacking:
 			be_app->PostMessage(message);
 			break;

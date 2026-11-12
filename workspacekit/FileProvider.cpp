@@ -6,6 +6,10 @@
 
 #include <algorithm>
 
+#include <Mime.h>
+#include <Node.h>
+#include <NodeInfo.h>
+
 #include "FileIO.h"
 
 
@@ -54,6 +58,13 @@ FileData FileProvider::Read(const Locator &locator)
 		}
 		if (!result.data.has_value()) {
 			result.version.clear();
+			return result;
+		}
+		BNode node(path.c_str());
+		BNodeInfo info(&node);
+		char type[B_MIME_TYPE_LENGTH];
+		if (node.InitCheck() == B_OK && info.InitCheck() == B_OK && info.GetType(type) == B_OK) {
+			result.mimeType = type;
 		}
 		return result;
 	} catch (const DiffKit::FileError &error) {

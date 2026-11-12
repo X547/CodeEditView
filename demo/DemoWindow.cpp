@@ -500,7 +500,7 @@ void DemoWindow::MessageReceived(BMessage *message)
 			fDocument->path = path;
 			{
 				CodeEdit::ModelLock lock(*fDocument->model);
-				fDocument->model->SetLanguage(CodeEdit::LanguageForPath(path.Path()));
+				fDocument->model->SetLanguage(CodeEdit::LanguageForFile(path.Path()));
 			}
 			Save();
 			break;

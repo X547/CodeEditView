@@ -42,6 +42,10 @@ CodeEdit::ModelLock lock(*model);
 model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp", "python" etc. or nullptr
 ```
 
+`LanguageForFile()` also reads the file's MIME type (`BEOS:TYPE`), which
+takes priority over the path when it names a language: `text/x-jamfile` is
+Jam, `text/x-makefile` is Make.
+
 Parsing runs incrementally in a background thread. Colors come from a
 `CodeEdit::Theme` (`CodeEditView::SetTheme()`); the default follows Pe.
 

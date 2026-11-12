@@ -2,6 +2,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <Node.h>
+#include <NodeInfo.h>
+
 #include <CodeEditView/TextModel.h>
 
 #include "Document.h"
@@ -133,6 +136,46 @@ TEST_CASE("documents of local files")
 		CHECK_FALSE(document->IsModified());
 		CHECK_FALSE(document->Status().changedElsewhere);
 	}
+}
+
+
+static std::string LanguageName(Document &document)
+{
+	ModelLock lock(*document.Model());
+	const char *name = document.Model()->LanguageName();
+	return name != nullptr ? name : "";
+}
+
+
+TEST_CASE("the MIME type of a file gives the language")
+{
+	TempDirectory directory;
+	directory.Write("Build.txt", "rule A { }\n");
+	{
+		BNode node((directory / "Build.txt").c_str());
+		BNodeInfo info(&node);
+		REQUIRE(info.SetType("text/x-jamfile") == B_OK);
+	}
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(Locator::File(directory / "Build.txt"));
+	registry.WaitIdle();
+	CHECK(LanguageName(*document) == "jam");
+
+	// Saving keeps the type and the language.
+	Type(*document, "# note\n");
+	registry.Save(document);
+	registry.WaitIdle();
+	CHECK_FALSE(document->IsModified());
+	CHECK(LanguageName(*document) == "jam");
+	registry.Reload(document, true);
+	registry.WaitIdle();
+	CHECK(LanguageName(*document) == "jam");
+
+	// Without a type, the path decides.
+	directory.Write("Other.txt", "x\n");
+	BReference<Document> other = registry.Open(Locator::File(directory / "Other.txt"));
+	registry.WaitIdle();
+	CHECK(LanguageName(*other).empty());
 }
 
 

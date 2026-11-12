@@ -286,6 +286,11 @@ void DocumentRegistry::Apply(Document &document, const FileData &file, bool forc
 	std::string problem;
 	{
 		ModelLock lock(model);
+		// The MIME type takes priority over the path, which gave the language
+		// so far.
+		if (const char *language = CodeEdit::LanguageForMimeType(file.mimeType)) {
+			model.SetLanguage(language);
+		}
 		// The same data again: the text stays unless forced to drop edits.
 		if (unchanged && (!force || !model.IsModified())) {
 			return;

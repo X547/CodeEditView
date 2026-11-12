@@ -26,8 +26,12 @@ private:
 	std::string fProblem;
 
 public:
-	// The language of the model comes from path.
+	// The language of the model comes from path, until SetLanguage().
 	explicit TextSide(const std::string &path);
+
+	// A language of TextModel::SetLanguage(), such as one from the file's
+	// MIME type.
+	void SetLanguage(const char *name);
 
 	CodeEdit::TextModel *Model() const {return fModel.Get();}
 	bool Exists() const {return fExists;}

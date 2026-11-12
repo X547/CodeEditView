@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <string>
@@ -6,6 +8,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <File.h>
+#include <Node.h>
+#include <NodeInfo.h>
 #include <OS.h>
 
 #include <CodeEditView/Language.h>
@@ -147,6 +152,43 @@ TEST_CASE("languages and capture styles")
 	CHECK(StyleForCapture("type.qualifier") == HighlightStyle::Type);
 	CHECK(StyleForCapture("keyword.control.flow") == HighlightStyle::Keyword);
 	CHECK(StyleForCapture("variable") == HighlightStyle::Default);
+}
+
+
+TEST_CASE("languages from MIME types")
+{
+	CHECK(std::string_view(LanguageForMimeType("text/x-jamfile")) == "jam");
+	CHECK(std::string_view(LanguageForMimeType("Text/X-Makefile")) == "make");
+	CHECK(LanguageForMimeType("text/plain") == nullptr);
+	CHECK(LanguageForMimeType("") == nullptr);
+
+	char directory[] = "/tmp/CodeEditTest-XXXXXX";
+	REQUIRE(mkdtemp(directory) != nullptr);
+	const std::string path = std::string(directory) + "/rules.py";
+	{
+		BFile file(path.c_str(), B_WRITE_ONLY | B_CREATE_FILE);
+		REQUIRE(file.InitCheck() == B_OK);
+	}
+	// Without a type, from the path.
+	CHECK(std::string_view(LanguageForFile(path.c_str())) == "python");
+	// The type takes priority.
+	{
+		BNode node(path.c_str());
+		BNodeInfo info(&node);
+		REQUIRE(info.SetType("text/x-makefile") == B_OK);
+	}
+	CHECK(std::string_view(LanguageForFile(path.c_str())) == "make");
+	// A type that names no language leaves the path.
+	{
+		BNode node(path.c_str());
+		BNodeInfo info(&node);
+		REQUIRE(info.SetType("text/plain") == B_OK);
+	}
+	CHECK(std::string_view(LanguageForFile(path.c_str())) == "python");
+	CHECK(std::string_view(LanguageForFile((std::string(directory) + "/missing.mk").c_str())) == "make");
+	CHECK(LanguageForFile(nullptr) == nullptr);
+	unlink(path.c_str());
+	rmdir(directory);
 }
 
 

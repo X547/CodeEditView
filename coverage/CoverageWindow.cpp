@@ -202,7 +202,7 @@ void CoverageWindow::ShowFile(const std::string &path)
 		}
 		ModelLock lock(*model);
 		model->Load(file);
-		model->SetLanguage(CodeEdit::LanguageForPath(path));
+		model->SetLanguage(CodeEdit::LanguageForFile(path.c_str()));
 	} catch (const std::exception &error) {
 		fModel = model;
 		fEditor->SetModel(fModel.Get());

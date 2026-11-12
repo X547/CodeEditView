@@ -2,6 +2,7 @@
 
 #include <filesystem>
 
+#include <CodeEditView/Language.h>
 #include <FileIO.h>
 
 #include "Compare.h"
@@ -42,6 +43,8 @@ void FilePair::LoadSide(int pane, bool force)
 			} else {
 				try {
 					side.Load(DiffKit::ReadFile(fPaths[pane]), force);
+					// The MIME type may name the language.
+					side.SetLanguage(CodeEdit::LanguageForFile(fPaths[pane].c_str()));
 					return;
 				} catch (const FileError &e) {
 					fProblems[pane] = std::string("cannot be read: ") + e.what();

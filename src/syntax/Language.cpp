@@ -2,9 +2,14 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <strings.h>
 
 #include <algorithm>
 #include <string>
+
+#include <Mime.h>
+#include <Node.h>
+#include <NodeInfo.h>
 
 #include <CodeEditView/Language.h>
 #include <CodeEditView/Rope.h>
@@ -268,6 +273,17 @@ static constexpr FileName kFileNames[] = {
 	{"CMakeLists.txt",       "cmake"},
 };
 
+struct MimeType {
+	std::string_view type;
+	const char *language;
+};
+
+// MIME types of the Haiku MIME database; they take priority over the path.
+static constexpr MimeType kMimeTypes[] = {
+	{"text/x-jamfile",  "jam"},
+	{"text/x-makefile", "make"},
+};
+
 // The Jam rules of the Haiku build have no extension.
 static constexpr std::string_view kJamDirectory = "build/jam/";
 
@@ -444,6 +460,35 @@ const char *LanguageForPath(std::string_view path)
 		return "jam";
 	}
 	return nullptr;
+}
+
+
+// MIME types are case-insensitive.
+const char *LanguageForMimeType(std::string_view type)
+{
+	for (const MimeType &entry : kMimeTypes) {
+		if (entry.type.size() == type.size() && strncasecmp(entry.type.data(), type.data(), type.size()) == 0) {
+			return entry.language;
+		}
+	}
+	return nullptr;
+}
+
+
+const char *LanguageForFile(const char *path)
+{
+	if (path == nullptr) {
+		return nullptr;
+	}
+	BNode node(path);
+	BNodeInfo info(&node);
+	char type[B_MIME_TYPE_LENGTH];
+	if (node.InitCheck() == B_OK && info.InitCheck() == B_OK && info.GetType(type) == B_OK) {
+		if (const char *language = LanguageForMimeType(type)) {
+			return language;
+		}
+	}
+	return LanguageForPath(path);
 }
 
 

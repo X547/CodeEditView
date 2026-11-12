@@ -33,6 +33,9 @@ struct FileData {
 	// Tells versions of the file apart (modification time and size, blob id,
 	// ...); empty if the file does not exist.
 	std::string version;
+	// The file's MIME type (BEOS:TYPE attribute); empty if it has none or
+	// the provider has no attributes.
+	std::string mimeType;
 };
 
 

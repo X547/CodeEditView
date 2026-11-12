@@ -62,7 +62,7 @@ void DemoApp::OpenDocument(const entry_ref &ref)
 		if (file.InitCheck() == B_OK) {
 			document->model->Load(file);
 		}
-		document->model->SetLanguage(CodeEdit::LanguageForPath(ref.name));
+		document->model->SetLanguage(CodeEdit::LanguageForFile(document->path.Path()));
 	} catch (const std::exception &e) {
 		ShowError(e.what());
 		return;

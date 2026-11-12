@@ -26,6 +26,13 @@ TextSide::TextSide(const std::string &path):
 }
 
 
+void TextSide::SetLanguage(const char *name)
+{
+	ModelLock lock(*fModel);
+	fModel->SetLanguage(name);
+}
+
+
 bool TextSide::IsModified() const
 {
 	ModelLock lock(*fModel);

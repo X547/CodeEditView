@@ -103,6 +103,7 @@ struct TagInfo {
 	bool annotated {};
 	std::string message;
 	std::string tagger;
+	std::string taggerEmail;
 	int64_t time {};
 };
 

@@ -13,6 +13,9 @@
 #include "TextSide.h"
 
 
+class BMenu;
+
+
 namespace DiffKit {
 class DiffView;
 }
@@ -24,6 +27,9 @@ class ChangeView;
 
 
 namespace GitTool {
+
+
+class DetailsView;
 
 
 // The changes of one commit: its message, the changed files and the diff of
@@ -45,8 +51,13 @@ private:
 
 	GitDiff::ChangeView *fChangeView {};
 	DiffKit::DiffView *fDiffView {};
+	DetailsView *fInfo {};
+	BMenu *fParentMenu {};
 
-	void ShowHeader();
+	// The title, parents menu, details and message of fDetails.
+	void ShowDetails();
+	// Replaces the shown commit.
+	void ShowCommit(const git_oid &id);
 	// Reads the changes against the parent on a thread, under a progress
 	// dialog.
 	void LoadChanges();

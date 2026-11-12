@@ -85,6 +85,9 @@ struct FormField {
 	bool checked {};
 	int choice {};
 	std::vector<std::string> choices;
+	// A text field that takes People files: their e-mail addresses are
+	// added, separated by commas.
+	bool acceptsPeople {};
 };
 
 
@@ -126,6 +129,8 @@ public:
 	// picker.
 	Form &AddCommit(const std::string &name, const std::string &label, const std::string &spec = std::string());
 	Form &AddLabel(const std::string &text);
+	// The text field takes dropped People files (FormField::acceptsPeople).
+	Form &AcceptPeople(const std::string &name);
 	// The text field target is derive(text of source) as source changes,
 	// until the user edits target.
 	Form &Derive(const std::string &target, const std::string &source,

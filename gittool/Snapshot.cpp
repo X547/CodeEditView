@@ -466,6 +466,7 @@ void LoadTagDetails(git_repository *repository, TagInfo &tag)
 		tag.message = git_tag_message(annotated) != nullptr ? git_tag_message(annotated) : "";
 		if (const git_signature *tagger = git_tag_tagger(annotated)) {
 			tag.tagger = tagger->name != nullptr ? tagger->name : "";
+			tag.taggerEmail = tagger->email != nullptr ? tagger->email : "";
 			tag.time = tagger->when.time;
 		}
 	}

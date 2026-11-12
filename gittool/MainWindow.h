@@ -33,6 +33,9 @@ class BTextView;
 namespace GitTool {
 
 
+class DetailsView;
+
+
 enum class Category {
 	Worktrees,
 	Branches,
@@ -81,7 +84,7 @@ private:
 
 	BListView *fCategories {};
 	BColumnListView *fObjects {};
-	BTextView *fDetails {};
+	DetailsView *fDetails {};
 	BTextView *fLog {};
 	BStringView *fStatus {};
 	BGroupView *fButtons {};
@@ -186,6 +189,8 @@ private:
 	void OpenFolder(const std::string &path);
 	// A history window; edit starts in edit mode for a local branch.
 	void ShowHistory(const std::string &spec, bool edit, const std::string &onto = std::string());
+	// A commit window over this one.
+	void ShowCommit(const git_oid &commit);
 	// Replays a branch onto a commit: with the usual preview, or in the
 	// history editor if it has conflicts.
 	void RebaseBranch(const std::string &branch, const std::string &onto);

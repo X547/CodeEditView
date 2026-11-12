@@ -112,6 +112,19 @@ ChangeView::ChangeView(const char *name, MessageMode messageMode, int messageRow
 }
 
 
+void ChangeView::SetMessageHeader(BView *header)
+{
+	if (fMessagePanel == nullptr) {
+		delete header;
+		return;
+	}
+	if (!fMessageLabel->IsHidden()) {
+		fMessageLabel->Hide();
+	}
+	fMessagePanel->AddView(1, header);
+}
+
+
 void ChangeView::SetMessageLabel(const char *text)
 {
 	if (fMessageLabel != nullptr) {

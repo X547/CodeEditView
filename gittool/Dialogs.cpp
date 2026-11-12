@@ -14,6 +14,8 @@
 #include <GridView.h>
 #include <GroupView.h>
 #include <MessageFilter.h>
+#include <Node.h>
+#include <String.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
 #include <MenuItem.h>
@@ -317,6 +319,55 @@ Form &Form::AddLabel(const std::string &text)
 }
 
 
+Form &Form::AcceptPeople(const std::string &name)
+{
+	for (FormField &field : fFields) {
+		if (field.name == name) {
+			field.acceptsPeople = true;
+		}
+	}
+	return *this;
+}
+
+
+// Adds the e-mail addresses of People files dropped on a text field;
+// other drops go on to the field.
+class PeopleDropFilter: public BMessageFilter {
+private:
+	BTextControl *fField;
+
+public:
+	explicit PeopleDropFilter(BTextControl *field):
+		BMessageFilter(B_DROPPED_DELIVERY, B_ANY_SOURCE, B_SIMPLE_DATA),
+		fField(field)
+	{
+	}
+
+	filter_result Filter(BMessage *message, BHandler **target) final
+	{
+		(void)target;
+		std::string added;
+		entry_ref ref;
+		for (int32 i = 0; message->FindRef("refs", i, &ref) == B_OK; i++) {
+			BNode node(&ref);
+			BString email;
+			if (node.ReadAttrString("META:email", &email) == B_OK && email.Length() > 0) {
+				added += (added.empty() ? "" : ", ") + std::string(email.String());
+			}
+		}
+		if (added.empty()) {
+			return B_DISPATCH_MESSAGE;
+		}
+		std::string text = fField->Text();
+		while (!text.empty() && (text.back() == ' ' || text.back() == ',')) {
+			text.pop_back();
+		}
+		fField->SetText((text.empty() ? added : text + ", " + added).c_str());
+		return B_SKIP_MESSAGE;
+	}
+};
+
+
 Form &Form::Derive(const std::string &target, const std::string &source,
 	std::function<std::string(const std::string &sourceText)> derive)
 {
@@ -413,6 +464,9 @@ FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *reposit
 					grid->AddView(new BButton("pick", "Choose" B_UTF8_ELLIPSIS, message), 2, row);
 				} else {
 					grid->AddItem(textItem, 1, row, 2, 1);
+				}
+				if (field.acceptsPeople) {
+					text->TextView()->AddFilter(new PeopleDropFilter(text));
 				}
 				control = text;
 				break;

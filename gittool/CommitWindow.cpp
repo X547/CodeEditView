@@ -13,9 +13,11 @@
 #include "CodeEditLink.h"
 #include "CommitMessage.h"
 #include "DiffView.h"
+#include "DetailsView.h"
 #include "Dialogs.h"
 #include "Messages.h"
 #include "Progress.h"
+#include "WindowHelpers.h"
 
 
 namespace GitTool {
@@ -28,12 +30,6 @@ using DiffKit::TextSide;
 static constexpr uint32 kMsgOpenInCodeEdit = 'CWoc';
 static constexpr uint32 kMsgOpenParentInCodeEdit = 'CWop';
 static constexpr uint32 kMsgLoadChanges = 'CWlc';
-
-
-static std::string SignatureText(const Signature &signature)
-{
-	return signature.name + " <" + signature.email + ">, " + FormatTime(signature.time);
-}
 
 
 // What a pane shows for a file version: its text, or a note for binary
@@ -63,7 +59,6 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	fDiffView = fChangeView->Diff();
 	fChangeView->ShareTopBorder();
 
-	BMenu *parentMenu = nullptr;
 	BMenu *viewMenu = nullptr;
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BLayoutBuilder::Menu<>(menuBar)
@@ -84,25 +79,13 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 	viewMenu->AddSeparatorItem();
 	fChangeView->AddNavigationItems(viewMenu);
 	viewMenu->AddSeparatorItem();
-	parentMenu = new BMenu("Compare with");
-	viewMenu->AddItem(parentMenu);
+	fParentMenu = new BMenu("Compare with");
+	fParentMenu->SetRadioMode(true);
+	viewMenu->AddItem(fParentMenu);
 
-	parentMenu->SetRadioMode(true);
-	for (size_t i = 0; i < fDetails.parents.size(); i++) {
-		BMessage *message = new BMessage(kMsgSetParent);
-		message->AddInt32("parent", static_cast<int32>(i));
-		const std::string label = "Parent " + std::to_string(i + 1) + ": "
-			+ Describe(fRepository.get(), fDetails.parents[i]);
-		BMenuItem *item = new BMenuItem(label.c_str(), message);
-		item->SetMarked(i == 0);
-		parentMenu->AddItem(item);
-	}
-	if (fDetails.parents.empty()) {
-		BMenuItem *item = new BMenuItem("Empty tree (no parent)", nullptr);
-		item->SetMarked(true);
-		item->SetEnabled(false);
-		parentMenu->AddItem(item);
-	}
+	fInfo = new DetailsView("details");
+	fInfo->SetTarget(BMessenger(this));
+	fChangeView->SetMessageHeader(fInfo);
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
@@ -112,41 +95,70 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 			.Add(fChangeView)
 		.End();
 
-	ShowHeader();
+	ShowDetails();
 	// Once the window is shown.
 	PostMessage(kMsgLoadChanges);
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
 
-void CommitWindow::ShowHeader()
+void CommitWindow::ShowDetails()
 {
 	git_repository *repository = fRepository.get();
-	std::string text = "Commit " + OidString(fDetails.id) + "\n";
-	for (const git_oid &parent : fDetails.parents) {
-		text += "Parent " + Describe(repository, parent) + "\n";
+	SetTitle(("Commit " + ShortId(fDetails.id)).c_str());
+	fParent = 0;
+	while (BMenuItem *item = fParentMenu->RemoveItem(static_cast<int32>(0))) {
+		delete item;
 	}
-	text += "Author " + SignatureText(fDetails.author) + "\n";
+	for (size_t i = 0; i < fDetails.parents.size(); i++) {
+		BMessage *message = new BMessage(kMsgSetParent);
+		message->AddInt32("parent", static_cast<int32>(i));
+		const std::string label = "Parent " + std::to_string(i + 1) + ": "
+			+ Describe(repository, fDetails.parents[i]);
+		BMenuItem *item = new BMenuItem(label.c_str(), message);
+		item->SetMarked(i == 0);
+		fParentMenu->AddItem(item);
+	}
+	if (fDetails.parents.empty()) {
+		BMenuItem *item = new BMenuItem("Empty tree (no parent)", nullptr);
+		item->SetMarked(true);
+		item->SetEnabled(false);
+		fParentMenu->AddItem(item);
+	}
+
+	fInfo->Clear();
+	fInfo->AddCommit("Commit", fDetails.id, OidString(fDetails.id), false);
+	for (size_t i = 0; i < fDetails.parents.size(); i++) {
+		const std::string label = fDetails.parents.size() > 1 ? "Parent " + std::to_string(i + 1) : "Parent";
+		fInfo->AddCommit(label, fDetails.parents[i], Describe(repository, fDetails.parents[i]));
+	}
+	fInfo->AddPerson("Author", fDetails.author.name, fDetails.author.email, FormatTime(fDetails.author.time));
 	if (fDetails.committer.name != fDetails.author.name || fDetails.committer.email != fDetails.author.email
 		|| fDetails.committer.time != fDetails.author.time) {
-		text += "Committer " + SignatureText(fDetails.committer) + "\n";
+		fInfo->AddPerson("Committer", fDetails.committer.name, fDetails.committer.email,
+			FormatTime(fDetails.committer.time));
 	}
-	// The message follows the commit details; its lines are checked against
-	// the conventions of commit messages.
-	text += "\n";
-	const size_t messageStart = text.size();
-	text += fDetails.message;
-	CodeEditView *header = fChangeView->Message();
+
+	// The message, checked against the conventions of commit messages.
+	CodeEditView *message = fChangeView->Message();
 	{
-		CodeEdit::ModelLock lock(*header->Model());
-		header->Model()->SetText(text);
+		CodeEdit::ModelLock lock(*message->Model());
+		message->Model()->SetText(fDetails.message);
 	}
-	std::vector<CodeEdit::Decoration> decorations = GitDiff::CommitMessageDecorations(fDetails.message);
-	for (CodeEdit::Decoration &decoration : decorations) {
-		decoration.start += messageStart;
-		decoration.end += messageStart;
+	message->SetDecorations(GitDiff::CommitMessageDecorations(fDetails.message));
+}
+
+
+void CommitWindow::ShowCommit(const git_oid &id)
+{
+	try {
+		fDetails = ReadCommitDetails(fRepository.get(), id);
+	} catch (const std::exception &e) {
+		DiffKit::ShowError(e.what());
+		return;
 	}
-	header->SetDecorations(std::move(decorations));
+	ShowDetails();
+	LoadChanges();
 }
 
 
@@ -334,6 +346,26 @@ void CommitWindow::MessageReceived(BMessage *message)
 		case DiffKit::kMsgPaneLabelClicked:
 			OpenInCodeEdit(message->GetInt32("pane", 0) == 0);
 			break;
+		case kMsgCommitLinkClicked: {
+			const void *data = nullptr;
+			ssize_t size = 0;
+			if (message->FindData("commit", B_RAW_TYPE, &data, &size) != B_OK || size != sizeof(git_oid)) {
+				break;
+			}
+			const git_oid commit = *static_cast<const git_oid*>(data);
+			if (message->GetBool("replace", false)) {
+				ShowCommit(commit);
+				break;
+			}
+			try {
+				CommitWindow *window = new CommitWindow(fRepositoryPath, commit, B_NORMAL_WINDOW_FEEL);
+				DiffKit::PlaceOver(window, Frame());
+				window->Show();
+			} catch (const std::exception &e) {
+				DiffKit::ShowError(e.what());
+			}
+			break;
+		}
 		default:
 			BWindow::MessageReceived(message);
 			break;

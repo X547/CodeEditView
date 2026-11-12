@@ -25,6 +25,7 @@ executable(
 	'CodeEditGitTool',
 	files(
 		'CommitWindow.cpp',
+		'DetailsView.cpp',
 		'Dialogs.cpp',
 		'GitToolApp.cpp',
 		'HistoryWindow.cpp',

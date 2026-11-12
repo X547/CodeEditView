@@ -100,6 +100,9 @@ public:
 	CodeEditView *Message() const {return fMessage;}
 	MessageMode GetMessageMode() const {return fMessageMode;}
 	void SetMessageLabel(const char *text);
+	// A view above the message in place of its label, e.g. the details of a
+	// commit; the view is owned.
+	void SetMessageHeader(BView *header);
 	// Sets an editable or read-only message, with its line checks.
 	void SetMessage(const std::string &text);
 	std::string MessageText() const;

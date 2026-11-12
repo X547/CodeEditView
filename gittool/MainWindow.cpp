@@ -28,6 +28,8 @@
 #include <TextView.h>
 
 #include "DiffView.h"
+#include "CommitWindow.h"
+#include "DetailsView.h"
 #include "DiffWindow.h"
 #include "Ask.h"
 #include "Dialogs.h"
@@ -474,13 +476,13 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	fButtons = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
 	ShowCategoryButtons();
 
-	fDetails = new BTextView("details");
-	fDetails->MakeEditable(false);
-	fDetails->SetWordWrap(true);
+	fDetails = new DetailsView("details");
+	fDetails->SetTarget(BMessenger(this));
 	fLog = new BTextView("log");
 	fLog->MakeEditable(false);
 	fLog->SetWordWrap(true);
-	BScrollView *detailScroll = new BScrollView("detailScroll", fDetails, 0, false, true);
+	// The scroll view only gives the frame; long texts scroll inside.
+	BScrollView *detailScroll = new BScrollView("detailScroll", fDetails, 0, false, false);
 	BScrollView *logScroll = new BScrollView("logScroll", fLog, 0, false, true);
 	BScrollView *categoryScroll = new BScrollView("categoryScroll", fCategories, 0, false, false);
 	fStatus = new BStringView("status", "");
@@ -813,63 +815,59 @@ void MainWindow::FillObjects()
 
 void MainWindow::ShowDetails()
 {
-	std::string text;
-	auto line = [&text](const std::string &label, const std::string &value) {
-		if (!value.empty()) {
-			text += label + ": " + value + "\n";
-		}
-	};
+	fDetails->Clear();
 	git_repository *repository = fRepository.get();
+	auto commit = [this, repository](const std::string &label, const git_oid &id) {
+		fDetails->AddCommit(label, id, Describe(repository, id));
+	};
 	if (const WorktreeInfo *worktree = SelectedWorktree()) {
-		line("Folder", worktree->path);
-		line("Kind", worktree->IsMain() ? "main worktree" : "linked worktree \"" + worktree->name + "\"");
-		line("Position", PositionText(*worktree));
+		fDetails->AddText("Folder", worktree->path);
+		fDetails->AddText("Kind", worktree->IsMain() ? "main worktree" : "linked worktree \"" + worktree->name + "\"");
+		fDetails->AddText("Position", PositionText(*worktree));
 		if (worktree->commit.has_value()) {
-			line("Commit", Describe(repository, *worktree->commit));
+			commit("Commit", *worktree->commit);
 		}
-		line("State", StateText(*worktree));
+		fDetails->AddText("State", StateText(*worktree));
 		if (worktree->locked) {
-			line("Protected", worktree->lockReason.empty() ? "yes" : worktree->lockReason);
+			fDetails->AddText("Protected", worktree->lockReason.empty() ? "yes" : worktree->lockReason);
 		}
 	} else if (const BranchInfo *branch = SelectedBranch()) {
-		line("Branch", branch->name);
-		line("Commit", Describe(repository, branch->commit));
+		fDetails->AddText("Branch", branch->name);
+		commit("Commit", branch->commit);
 		if (!branch->upstream.empty()) {
-			line("Tracks", branch->upstream + (branch->upstreamGone ? " (no longer exists)" : ""));
+			fDetails->AddText("Tracks", branch->upstream + (branch->upstreamGone ? " (no longer exists)" : ""));
 			if (!branch->upstreamGone) {
-				line("Compared to it", std::to_string(branch->ahead) + " ahead, " + std::to_string(branch->behind)
-					+ " behind");
+				fDetails->AddText("Compared to it", std::to_string(branch->ahead) + " ahead, "
+					+ std::to_string(branch->behind) + " behind");
 			}
 		}
-		line("Worktree", branch->worktree.empty() ? "none" : branch->worktree);
-		line("Last updated", FormatTime(branch->updated));
+		fDetails->AddText("Worktree", branch->worktree.empty() ? "none" : branch->worktree);
+		fDetails->AddText("Last updated", FormatTime(branch->updated));
 	} else if (const RemoteInfo *remote = SelectedRemote()) {
-		line("Remote", remote->name);
-		line("Download URL", remote->url);
-		line("Upload URL", remote->pushUrl.empty() ? remote->url : remote->pushUrl);
-		line("Last download", remote->lastDownload != 0 ? FormatTime(remote->lastDownload) : "unknown");
-		line("Remote copies", std::to_string(remote->copies.size()));
+		fDetails->AddText("Remote", remote->name);
+		fDetails->AddText("Download URL", remote->url);
+		fDetails->AddText("Upload URL", remote->pushUrl.empty() ? remote->url : remote->pushUrl);
+		fDetails->AddText("Last download", remote->lastDownload != 0 ? FormatTime(remote->lastDownload) : "unknown");
+		fDetails->AddText("Remote copies", std::to_string(remote->copies.size()));
 	} else if (const RemoteCopyInfo *copy = SelectedRemoteCopy()) {
-		line("Remote copy", copy->name + " (last downloaded state)");
-		line("Commit", Describe(repository, copy->commit));
+		fDetails->AddText("Remote copy", copy->name + " (last downloaded state)");
+		commit("Commit", copy->commit);
 		std::string tracking;
 		for (const BranchInfo &candidate : fSnapshot.branches) {
 			if (candidate.upstream == copy->name) {
 				tracking += (tracking.empty() ? "" : ", ") + candidate.name;
 			}
 		}
-		line("Tracked by", tracking);
+		fDetails->AddText("Tracked by", tracking);
 	} else if (const TagInfo *tag = LoadedTag(SelectedName())) {
-		line("Tag", tag->name);
-		line("Commit", Describe(repository, tag->commit));
-		line("Kind", tag->annotated ? "with message" : "simple");
-		line("Tagger", tag->tagger);
-		line("Date", FormatTime(tag->time));
-		if (!tag->message.empty()) {
-			text += "\n" + tag->message;
+		fDetails->AddText("Tag", tag->name);
+		commit("Commit", tag->commit);
+		fDetails->AddText("Kind", tag->annotated ? "with message" : "simple");
+		if (!tag->tagger.empty()) {
+			fDetails->AddPerson("Tagger", tag->tagger, tag->taggerEmail, FormatTime(tag->time));
 		}
+		fDetails->SetMessage(tag->message);
 	}
-	fDetails->SetText(text.c_str());
 }
 
 
@@ -2113,7 +2111,9 @@ void MainWindow::UploadForReview(const BranchInfo &branch)
 		.AddChoice("state", "State:", {"As the server decides", "Work in progress", "Ready for review"}, 0)
 		.AddText("reviewers", "Reviewers:")
 		.AddText("cc", "CC:")
-		.AddLabel("Separate names or e-mail addresses with spaces or commas.");
+		.AddLabel("Separate names or e-mail addresses with spaces or commas; People files can be dropped.")
+		.AcceptPeople("reviewers")
+		.AcceptPeople("cc");
 	AskForm(form, [this, branch, remotes](const Form &result) {
 		ReviewOptions options;
 		options.topic = result.Text("topic");
@@ -2197,6 +2197,18 @@ void MainWindow::ShowHistory(const std::string &spec, bool edit, const std::stri
 {
 	try {
 		HistoryWindow *window = new HistoryWindow(fRepositoryPath, spec, edit, onto);
+		DiffKit::PlaceOver(window, Frame());
+		window->Show();
+	} catch (const std::exception &e) {
+		ShowError(e.what());
+	}
+}
+
+
+void MainWindow::ShowCommit(const git_oid &commit)
+{
+	try {
+		CommitWindow *window = new CommitWindow(fRepositoryPath, commit, B_NORMAL_WINDOW_FEEL);
 		DiffKit::PlaceOver(window, Frame());
 		window->Show();
 	} catch (const std::exception &e) {
@@ -2333,6 +2345,14 @@ void MainWindow::MessageReceived(BMessage *message)
 		case kMsgNetworkLog:
 			AppendLog(message->GetString("text", ""));
 			break;
+		case kMsgCommitLinkClicked: {
+			const void *data = nullptr;
+			ssize_t size = 0;
+			if (message->FindData("commit", B_RAW_TYPE, &data, &size) == B_OK && size == sizeof(git_oid)) {
+				ShowCommit(*static_cast<const git_oid*>(data));
+			}
+			break;
+		}
 		default:
 			BWindow::MessageReceived(message);
 			break;

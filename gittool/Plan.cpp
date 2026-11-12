@@ -213,6 +213,13 @@ bool Plan::FilesLocked() const
 }
 
 
+bool Plan::RunsWithoutPreview() const
+{
+	return blocked.empty() && !destructive && unreachableCount == 0 && warnings.empty() && !NeedsResolution()
+		&& !FilesLocked();
+}
+
+
 static std::string FileList(const std::vector<std::string> &files)
 {
 	constexpr size_t kListed = 10;
@@ -234,15 +241,25 @@ std::string Plan::Describe(git_repository *repository) const
 	if (!blocked.empty()) {
 		text += "\nCannot run: " + blocked + "\n";
 	}
-	if (!steps.empty()) {
+	if (steps.size() == 1) {
+		text += "\n" + steps[0] + "\n";
+	} else if (!steps.empty()) {
 		text += "\nChanges:\n";
 		for (const std::string &step : steps) {
 			text += "  • " + step + "\n";
 		}
 	}
-	if (!worktrees.empty()) {
+	// Worktrees whose files are simply updated are not listed.
+	std::vector<const WorktreeEffect*> notable;
+	for (const WorktreeEffect &effect : worktrees) {
+		if (effect.check.state != WorktreeState::Clean) {
+			notable.push_back(&effect);
+		}
+	}
+	if (!notable.empty()) {
 		text += "\nWorktrees:\n";
-		for (const WorktreeEffect &effect : worktrees) {
+		for (const WorktreeEffect *notableEffect : notable) {
+			const WorktreeEffect &effect = *notableEffect;
 			text += "  • " + effect.path + ": ";
 			const WorktreeCheck &check = effect.check;
 			switch (check.state) {

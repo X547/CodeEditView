@@ -31,6 +31,7 @@
 #include "Ask.h"
 #include "BackgroundLoader.h"
 #include "MessageEditor.h"
+#include "TruncatingLabel.h"
 #include "Messages.h"
 #include "Progress.h"
 #include "WindowHelpers.h"
@@ -316,6 +317,18 @@ Form &Form::AddLabel(const std::string &text)
 }
 
 
+Form &Form::Derive(const std::string &target, const std::string &source,
+	std::function<std::string(const std::string &sourceText)> derive)
+{
+	fDerivations.push_back({target, source, std::move(derive)});
+	return *this;
+}
+
+
+static constexpr uint32 kMsgFieldChanged = 'GTfc';
+static constexpr uint32 kMsgFormActionDone = 'GTfd';
+
+
 class FormDialog: public ModalDialog {
 private:
 	// Shared with the owner's callback, which reads it after the answer.
@@ -327,11 +340,27 @@ private:
 	// One control per field: BTextControl, BTextView, BCheckBox, BMenuField
 	// or nullptr.
 	std::vector<BView*> fControls;
+	BButton *fOk {};
+	DiffKit::TruncatingLabel *fStatus {};
+	// Per derivation: the text it last gave its target; none once the user
+	// edited the target.
+	std::vector<std::optional<std::string>> fDerived;
+	// With an action: the message that runs it on the owner's thread.
+	std::optional<BMessage> fAction;
+	BMessenger fActionTarget;
 
+	size_t FieldIndex(const std::string &name) const;
+	BTextControl *TextControl(const std::string &name) const;
+	void UpdateDerived();
+	void SetBusy(bool busy);
 	bool Accept() final;
 
 public:
 	FormDialog(std::shared_ptr<Form> form, git_repository *repository, const Snapshot *snapshot);
+	~FormDialog() override;
+
+	// Before Open().
+	void SetAction(const BMessage &action, const BMessenger &target);
 
 	void MessageReceived(BMessage *message) final;
 };
@@ -439,10 +468,15 @@ FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *reposit
 
 	BButton *cancel = new BButton("Cancel", new BMessage(kMsgDialogCancel));
 	BButton *ok = new BButton(form.okLabel.c_str(), new BMessage(kMsgDialogOk));
+	fOk = ok;
+	fStatus = new DiffKit::TruncatingLabel("status", "");
+	fStatus->SetExplicitMinSize(BSize(360, B_SIZE_UNSET));
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(gridView)
+		.Add(fStatus)
 		.Add(ButtonRow(cancel, ok));
+	fStatus->Hide();
 	SetDefaultButton(ok);
 	DiffKit::KeepEnterInEditors(this);
 	// A commit dropped from a history window fills the first commit field.
@@ -460,6 +494,98 @@ FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *reposit
 	} else if (focus != nullptr) {
 		focus->MakeFocus(true);
 	}
+
+	// Derived fields start derived unless they have a text.
+	for (const Form::Derivation &derivation : fForm->Derivations()) {
+		BTextControl *source = TextControl(derivation.source);
+		BTextControl *target = TextControl(derivation.target);
+		std::optional<std::string> derived;
+		if (source != nullptr && target != nullptr) {
+			source->SetModificationMessage(new BMessage(kMsgFieldChanged));
+			target->SetModificationMessage(new BMessage(kMsgFieldChanged));
+			const std::string value = derivation.derive(source->Text());
+			if (target->Text()[0] == '\0') {
+				target->SetText(value.c_str());
+			}
+			if (value == target->Text()) {
+				derived = value;
+			}
+		}
+		fDerived.push_back(derived);
+	}
+}
+
+
+FormDialog::~FormDialog()
+{
+	if (fAction.has_value()) {
+		DiffKit::ForgetAnswer(*fAction);
+	}
+}
+
+
+void FormDialog::SetAction(const BMessage &action, const BMessenger &target)
+{
+	fAction = action;
+	fActionTarget = target;
+}
+
+
+size_t FormDialog::FieldIndex(const std::string &name) const
+{
+	for (size_t i = 0; i < fForm->Fields().size(); i++) {
+		if (fForm->Fields()[i].name == name) {
+			return i;
+		}
+	}
+	return fControls.size();
+}
+
+
+BTextControl *FormDialog::TextControl(const std::string &name) const
+{
+	const size_t index = FieldIndex(name);
+	return index < fControls.size() ? dynamic_cast<BTextControl*>(fControls[index]) : nullptr;
+}
+
+
+// After a text field changed: targets the user edited stop following their
+// source; the others follow it.
+void FormDialog::UpdateDerived()
+{
+	const std::vector<Form::Derivation> &derivations = fForm->Derivations();
+	for (size_t i = 0; i < derivations.size() && i < fDerived.size(); i++) {
+		BTextControl *source = TextControl(derivations[i].source);
+		BTextControl *target = TextControl(derivations[i].target);
+		if (source == nullptr || target == nullptr || !fDerived[i].has_value()) {
+			continue;
+		}
+		if (*fDerived[i] != target->Text()) {
+			fDerived[i].reset();
+			continue;
+		}
+		const std::string value = derivations[i].derive(source->Text());
+		if (value != target->Text()) {
+			target->SetText(value.c_str());
+		}
+		fDerived[i] = value;
+	}
+}
+
+
+// While the action runs, nothing can be changed.
+void FormDialog::SetBusy(bool busy)
+{
+	for (BView *view : fControls) {
+		if (BControl *control = dynamic_cast<BControl*>(view)) {
+			control->SetEnabled(!busy);
+		} else if (BMenuField *menuField = dynamic_cast<BMenuField*>(view)) {
+			menuField->SetEnabled(!busy);
+		} else if (BTextView *textView = dynamic_cast<BTextView*>(view)) {
+			textView->MakeEditable(!busy);
+		}
+	}
+	fOk->SetEnabled(!busy);
 }
 
 
@@ -486,6 +612,38 @@ bool FormDialog::Accept()
 
 void FormDialog::MessageReceived(BMessage *message)
 {
+	switch (message->what) {
+		case kMsgFieldChanged:
+			UpdateDerived();
+			return;
+		case kMsgDialogOk:
+			if (!fAction.has_value()) {
+				break;
+			}
+			if (fOk->IsEnabled() && Accept()) {
+				SetBusy(true);
+				fStatus->SetHighUIColor(B_PANEL_TEXT_COLOR);
+				fStatus->SetLabel("Working" B_UTF8_ELLIPSIS);
+				if (fStatus->IsHidden()) {
+					fStatus->Show();
+				}
+				fActionTarget.SendMessage(&*fAction);
+			}
+			return;
+		case kMsgFormActionDone: {
+			const std::string error = message->GetString("error", "");
+			if (error.empty()) {
+				Finish(true);
+				return;
+			}
+			SetBusy(false);
+			fStatus->SetHighUIColor(B_FAILURE_COLOR);
+			fStatus->SetLabel(error.c_str());
+			return;
+		}
+		default:
+			break;
+	}
 	if (message->what == CodeEdit::kMsgContentsChanged) {
 		for (BView *control : fControls) {
 			if (CodeEditView *editor = dynamic_cast<CodeEditView*>(control)) {
@@ -526,6 +684,27 @@ void Form::Open(BWindow *owner, std::function<void(const Form &form)> accepted, 
 		} else if (cancelled) {
 			cancelled();
 		}
+	});
+}
+
+
+void Form::OpenWithAction(BWindow *owner, Action action) const
+{
+	std::shared_ptr<Form> form = std::make_shared<Form>(*this);
+	FormDialog *dialog = new FormDialog(form, nullptr, nullptr);
+	const BMessenger dialogMessenger(dialog);
+	const BMessage run = DiffKit::RepeatedAnswerMessage(owner,
+		[form, action = std::move(action), dialogMessenger](BMessage *message) {
+			(void)message;
+			action(*form, [dialogMessenger](const std::string &error) {
+				BMessage done(kMsgFormActionDone);
+				done.AddString("error", error.c_str());
+				dialogMessenger.SendMessage(&done);
+			});
+		});
+	dialog->SetAction(run, BMessenger(owner));
+	dialog->Open(owner, [](bool accepted) {
+		(void)accepted;
 	});
 }
 
@@ -943,6 +1122,10 @@ void PlanDialog::MessageReceived(BMessage *message)
 void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
 	std::function<void(Resolution resolution)> run)
 {
+	if (plan.RunsWithoutPreview()) {
+		run(Resolution::Cancel);
+		return;
+	}
 	std::shared_ptr<Resolution> resolution = std::make_shared<Resolution>(Resolution::Cancel);
 	(new PlanDialog(plan, repository, resolution))->Open(owner, [resolution, run = std::move(run)](bool accepted) {
 		if (accepted) {

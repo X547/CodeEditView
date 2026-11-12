@@ -89,6 +89,9 @@ private:
 
 	// A network operation runs (under its progress dialog).
 	bool fNetworkRunning {};
+	// Gets the outcome of the running network operation instead of an
+	// alert, for a form that stays open until it works.
+	std::function<void(const std::string &error)> fNetworkFinished;
 	std::unique_ptr<BMessageRunner> fRefreshRunner;
 	std::vector<node_ref> fWatched;
 	std::map<std::string, BMessenger> fDiffWindows;
@@ -150,7 +153,8 @@ private:
 		std::function<void(const std::vector<int> &selected)> chosen);
 	void UploadForReview(const BranchInfo &branch);
 	void DownloadChange(const RemoteInfo &remote);
-	void DownloadChange(const RemoteInfo &remote, const Form &form);
+	void DownloadChange(const RemoteInfo &remote, const Form &form,
+		std::function<void(const std::string &error)> finished);
 	// Report lines are shown to the user when the work finishes.
 	using NetworkWork = std::function<void(git_repository *repository, NetworkHandler &handler,
 		std::vector<std::string> &report)>;

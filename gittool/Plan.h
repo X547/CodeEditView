@@ -105,6 +105,9 @@ struct Plan {
 	bool NeedsResolution() const;
 	// Only "move position only" or cancel is possible for some worktree.
 	bool FilesLocked() const;
+	// Nothing for the user to read or choose before it runs: it can run,
+	// loses nothing and has no warnings.
+	bool RunsWithoutPreview() const;
 	std::string Describe(git_repository *repository) const;
 };
 

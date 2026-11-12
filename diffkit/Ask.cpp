@@ -24,7 +24,12 @@ static const uint32 kMsgAnswer = 'DKan';
 struct Registry {
 	std::mutex lock;
 	uint64 nextId = 1;
-	std::map<uint64, std::pair<const BLooper*, std::function<void(BMessage*)>>> answers;
+	struct Answer {
+		const BLooper *owner;
+		std::function<void(BMessage*)> done;
+		bool repeated;
+	};
+	std::map<uint64, Answer> answers;
 	std::multimap<const BLooper*, BMessenger> dialogs;
 	std::set<const BLooper*> filtered;
 };
@@ -57,7 +62,7 @@ public:
 		{
 			std::lock_guard<std::mutex> lock(registry.lock);
 			for (auto it = registry.answers.begin(); it != registry.answers.end();) {
-				it = it->second.first == fOwner ? registry.answers.erase(it) : std::next(it);
+				it = it->second.owner == fOwner ? registry.answers.erase(it) : std::next(it);
 			}
 			const auto range = registry.dialogs.equal_range(fOwner);
 			for (auto it = range.first; it != range.second; ++it) {
@@ -80,8 +85,12 @@ public:
 			std::lock_guard<std::mutex> lock(registry.lock);
 			const auto found = registry.answers.find(message->GetUInt64("answer", 0));
 			if (found != registry.answers.end()) {
-				done = std::move(found->second.second);
-				registry.answers.erase(found);
+				if (found->second.repeated) {
+					done = found->second.done;
+				} else {
+					done = std::move(found->second.done);
+					registry.answers.erase(found);
+				}
 			}
 		}
 		if (done) {
@@ -106,7 +115,7 @@ static void WatchOwner(BWindow *owner)
 }
 
 
-BMessage AnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done)
+static BMessage NewAnswer(BWindow *owner, std::function<void(BMessage *answer)> done, bool repeated)
 {
 	WatchOwner(owner);
 	Registry &registry = TheRegistry();
@@ -114,11 +123,41 @@ BMessage AnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> don
 	{
 		std::lock_guard<std::mutex> lock(registry.lock);
 		id = registry.nextId++;
-		registry.answers[id] = {owner, std::move(done)};
+		registry.answers[id] = {owner, std::move(done), repeated};
 	}
 	BMessage message(kMsgAnswer);
 	message.AddUInt64("answer", id);
 	return message;
+}
+
+
+BMessage AnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done)
+{
+	return NewAnswer(owner, std::move(done), false);
+}
+
+
+BMessage RepeatedAnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done)
+{
+	return NewAnswer(owner, std::move(done), true);
+}
+
+
+void ForgetAnswer(const BMessage &message)
+{
+	Registry &registry = TheRegistry();
+	std::function<void(BMessage*)> done;
+	{
+		std::lock_guard<std::mutex> lock(registry.lock);
+		const auto found = registry.answers.find(message.GetUInt64("answer", 0));
+		if (found == registry.answers.end()) {
+			return;
+		}
+		// Destroyed outside the lock: it may hold the last references to
+		// objects whose destructors use the registry.
+		done = std::move(found->second.done);
+		registry.answers.erase(found);
+	}
 }
 
 

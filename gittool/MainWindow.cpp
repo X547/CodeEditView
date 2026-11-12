@@ -1147,15 +1147,24 @@ void MainWindow::NetworkDone(BMessage *message, const std::vector<std::string> &
 {
 	const std::string title = message->GetString("title", "");
 	const std::string error = message->GetString("error", "");
+	const std::function<void(const std::string &error)> finished = std::move(fNetworkFinished);
+	fNetworkFinished = nullptr;
 	if (!error.empty()) {
 		fStatus->SetText(("Failed: " + title).c_str());
 		AppendLog("Failed: " + title + ": " + error);
 		Refresh();
-		ShowError(error.c_str());
+		if (finished) {
+			finished(error);
+		} else {
+			ShowError(error.c_str());
+		}
 		return;
 	}
 	fStatus->SetText(("Done: " + title).c_str());
 	AppendLog("Done: " + title);
+	if (finished) {
+		finished(std::string());
+	}
 	Refresh();
 	// The follow-ups use the snapshot after the operation.
 	AfterRefresh([this, followUp = BMessage(*message), report, title]() {
@@ -1376,7 +1385,7 @@ void MainWindow::CreateWorktree(const std::string &branch)
 		const std::string &main = fSnapshot.worktrees[0].path;
 		folder = main.substr(0, main.rfind('/') + 1);
 	}
-	Form form("Create worktree", "Preview");
+	Form form("Create worktree", "OK");
 	form.AddText("path", "Folder:", folder + branch)
 		.AddChoice("start", "Start:", kStarts, 0)
 		.AddText("branch", "Branch:", branch)
@@ -1423,7 +1432,7 @@ void MainWindow::RunWorktreeAction(Action action)
 				ShowError("There are no branches");
 				break;
 			}
-			Form form("Set branch of " + worktree.path, "Preview");
+			Form form("Set branch of " + worktree.path, "OK");
 			form.AddChoice("branch", "Branch:", names);
 			AskForm(form, [this, worktree, names](const Form &result) {
 				Execute(PlanSetWorktreeBranch(fRepository.get(), fSnapshot, worktree, names[result.Choice("branch")]));
@@ -1438,7 +1447,7 @@ void MainWindow::RunWorktreeAction(Action action)
 			break;
 		}
 		case Action::WorktreeCreateBranch: {
-			Form form("Create branch here", "Preview");
+			Form form("Create branch here", "OK");
 			form.AddText("name", "Branch name:");
 			AskForm(form, [this, worktree](const Form &result) {
 				Execute(PlanCreateBranchHere(fRepository.get(), fSnapshot, worktree, result.Text("name")));
@@ -1449,7 +1458,7 @@ void MainWindow::RunWorktreeAction(Action action)
 			Execute(PlanUnstageAll(repository, worktree));
 			break;
 		case Action::WorktreeDiscard: {
-			Form form("Discard changes in " + worktree.path, "Preview");
+			Form form("Discard changes in " + worktree.path, "OK");
 			form.AddCheck("untracked", "Also delete untracked files", false);
 			AskForm(form, [this, worktree](const Form &result) {
 				Execute(PlanDiscardChanges(fRepository.get(), worktree, result.Checked("untracked")));
@@ -1459,7 +1468,7 @@ void MainWindow::RunWorktreeAction(Action action)
 		case Action::WorktreeRemove: {
 			const Plan plan = PlanRemoveWorktree(repository, worktree, false);
 			if (!plan.blocked.empty() && worktree.HasChanges() && !worktree.locked) {
-				Form form("Remove worktree " + worktree.path, "Preview");
+				Form form("Remove worktree " + worktree.path, "OK");
 				form.AddLabel("The worktree has changes.")
 					.AddCheck("force", "Remove it anyway and discard them", false);
 				AskForm(form, [this, worktree](const Form &result) {
@@ -1473,7 +1482,7 @@ void MainWindow::RunWorktreeAction(Action action)
 			break;
 		}
 		case Action::WorktreeProtect: {
-			Form form("Protect " + worktree.path, "Preview");
+			Form form("Protect " + worktree.path, "OK");
 			form.AddText("reason", "Reason:", "")
 				.AddLabel("A protected worktree is not removed or forgotten, and its files are not updated.");
 			AskForm(form, [this, worktree](const Form &result) {
@@ -1500,7 +1509,7 @@ void MainWindow::UpdateFromTracked(const BranchInfo &branch)
 		"Merge the tracked branch into this",
 		"Replay this branch's commits onto the tracked branch",
 	};
-	Form form("Update " + branch.name + " from " + branch.upstream, "Download and preview");
+	Form form("Update " + branch.name + " from " + branch.upstream, "Download");
 	form.AddChoice("mode", "Integration:", kModes, 0)
 		.AddLabel("Merge and replay run without a worktree; conflicts are not supported yet.");
 	AskForm(form, [this, branch](const Form &result) {
@@ -1557,7 +1566,7 @@ void MainWindow::CleanUpBranches()
 		for (const auto &[name, reason] : candidates) {
 			rows.push_back({name, reason});
 		}
-		ChooseRowsThen("Select the branches to delete", "Preview", {{"Branch", 200}, {"Reason", 360}}, rows, true,
+		ChooseRowsThen("Select the branches to delete", "OK", {{"Branch", 200}, {"Reason", 360}}, rows, true,
 			[this, candidates](const std::vector<int> &selected) {
 				std::vector<std::string> deleted;
 				for (int index : selected) {
@@ -1591,7 +1600,7 @@ void MainWindow::RunBranchAction(Action action)
 	git_repository *repository = fRepository.get();
 	switch (action) {
 		case Action::CreateBranch: {
-			Form form("Create branch", "Preview");
+			Form form("Create branch", "OK");
 			form.AddText("name", "Name:")
 				.AddCommit("commit", "Start commit:", DefaultCommit())
 				.AddText("upstream", "Tracks:", "")
@@ -1664,7 +1673,7 @@ void MainWindow::RunBranchAction(Action action)
 					remoteChoice = static_cast<int>(i);
 				}
 			}
-			Form form("Upload " + branch.name, "Preview");
+			Form form("Upload " + branch.name, "OK");
 			form.AddChoice("remote", "Remote:", remotes, remoteChoice)
 				.AddChoice("mode", "Mode:", {
 					"Normal (fast-forward only)",
@@ -1692,7 +1701,7 @@ void MainWindow::RunBranchAction(Action action)
 				ShowError("There are no remote copies; download from a remote first");
 				break;
 			}
-			Form form("Set tracked remote branch of " + branch.name, "Preview");
+			Form form("Set tracked remote branch of " + branch.name, "OK");
 			form.AddChoice("upstream", "Track:", copies);
 			AskForm(form, [this, branch, copies](const Form &result) {
 				Execute(PlanSetUpstream(fRepository.get(), fSnapshot, branch.name, copies[result.Choice("upstream")]));
@@ -1703,7 +1712,7 @@ void MainWindow::RunBranchAction(Action action)
 			Execute(PlanSetUpstream(repository, fSnapshot, branch.name, std::string()));
 			break;
 		case Action::BranchAddTag: {
-			Form form("Add tag at " + branch.name, "Preview");
+			Form form("Add tag at " + branch.name, "OK");
 			form.AddText("name", "Tag name:")
 				.AddMultiLine("message", "Message:")
 				.AddLabel("Without a message, the tag is a simple tag.");
@@ -1714,7 +1723,7 @@ void MainWindow::RunBranchAction(Action action)
 			break;
 		}
 		case Action::BranchSetInWorktree: {
-			ChooseWorktree("Set " + branch.name + " in worktree", "Preview", branch.worktree,
+			ChooseWorktree("Set " + branch.name + " in worktree", "OK", branch.worktree,
 				[this, branch](const WorktreeInfo &worktree) {
 					Execute(PlanSetWorktreeBranch(fRepository.get(), fSnapshot, worktree, branch.name));
 				});
@@ -1724,7 +1733,7 @@ void MainWindow::RunBranchAction(Action action)
 			CreateWorktree(branch.name);
 			break;
 		case Action::BranchRename: {
-			Form form("Rename " + branch.name, "Preview");
+			Form form("Rename " + branch.name, "OK");
 			form.AddText("name", "New name:", branch.name);
 			AskForm(form, [this, branch](const Form &result) {
 				Execute(PlanRenameBranch(fRepository.get(), fSnapshot, branch.name, result.Text("name")));
@@ -1751,7 +1760,7 @@ void MainWindow::RunBranchAction(Action action)
 				deleteBranch(false);
 				break;
 			}
-			Form form("Delete " + branch.name, "Preview");
+			Form form("Delete " + branch.name, "OK");
 			form.AddCheck("server", "Also delete " + branch.upstream + " on the server", false);
 			AskForm(form, [deleteBranch](const Form &result) {
 				deleteBranch(result.Checked("server"));
@@ -1786,7 +1795,7 @@ void MainWindow::RunRemoteAction(Action action)
 {
 	switch (action) {
 		case Action::AddRemote: {
-			Form form("Add remote", "Preview");
+			Form form("Add remote", "OK");
 			form.AddText("name", "Name:", fSnapshot.remotes.empty() ? "origin" : "")
 				.AddText("url", "Download URL:")
 				.AddText("pushUrl", "Upload URL:")
@@ -1819,7 +1828,7 @@ void MainWindow::RunRemoteAction(Action action)
 		const std::string remote = copy.name.substr(0, copy.name.size() - copy.branch.size() - 1);
 		switch (action) {
 			case Action::CopyCreateBranch: {
-				Form form("Create branch from " + copy.name, "Preview");
+				Form form("Create branch from " + copy.name, "OK");
 				form.AddText("name", "Name:", copy.branch)
 					.AddCheck("track", "Track " + copy.name, true);
 				AskForm(form, [this, copy](const Form &result) {
@@ -1833,7 +1842,7 @@ void MainWindow::RunRemoteAction(Action action)
 				if (names.empty()) {
 					break;
 				}
-				Form form("Set " + copy.name + " as tracked", "Preview");
+				Form form("Set " + copy.name + " as tracked", "OK");
 				form.AddChoice("branch", "For branch:", names);
 				AskForm(form, [this, copy, names](const Form &result) {
 					Execute(PlanSetUpstream(fRepository.get(), fSnapshot, names[result.Choice("branch")], copy.name));
@@ -1841,7 +1850,7 @@ void MainWindow::RunRemoteAction(Action action)
 				break;
 			}
 			case Action::CopySetWorktree: {
-				ChooseWorktree("Set worktree to " + copy.name, "Preview", std::string(),
+				ChooseWorktree("Set worktree to " + copy.name, "OK", std::string(),
 					[this, copy](const WorktreeInfo &worktree) {
 						Execute(PlanSetWorktreeCommit(fRepository.get(), fSnapshot, worktree, copy.name));
 					});
@@ -1866,7 +1875,7 @@ void MainWindow::RunRemoteAction(Action action)
 	const RemoteInfo remote = *selected;
 	switch (action) {
 		case Action::RemoteDownload: {
-			Form form("Download from " + remote.name, "Preview");
+			Form form("Download from " + remote.name, "OK");
 			form.AddCheck("prune", "Remove stale remote copies (branches deleted on the server)", false)
 				.AddCheck("tags", "Download all tags", false);
 			AskForm(form, [this, remote](const Form &result) {
@@ -1890,7 +1899,7 @@ void MainWindow::RunRemoteAction(Action action)
 			break;
 		}
 		case Action::RemoteEdit: {
-			Form form("Edit URLs of " + remote.name, "Preview");
+			Form form("Edit URLs of " + remote.name, "OK");
 			form.AddText("url", "Download URL:", remote.url)
 				.AddText("pushUrl", "Upload URL:", remote.pushUrl)
 				.AddLabel("Leave the upload URL empty to upload to the download URL.");
@@ -1900,7 +1909,7 @@ void MainWindow::RunRemoteAction(Action action)
 			break;
 		}
 		case Action::RemoteRename: {
-			Form form("Rename " + remote.name, "Preview");
+			Form form("Rename " + remote.name, "OK");
 			form.AddText("name", "New name:", remote.name);
 			AskForm(form, [this, remote](const Form &result) {
 				Execute(PlanRenameRemote(fSnapshot, remote.name, result.Text("name")));
@@ -1925,7 +1934,7 @@ void MainWindow::UploadTags()
 			tagNames.push_back(tag.name);
 			rows.push_back({tag.name});
 		}
-		ChooseRowsThen("Select the tags to upload to " + remote, "Preview", {{"Tag", 400}}, rows, true,
+		ChooseRowsThen("Select the tags to upload to " + remote, "OK", {{"Tag", 400}}, rows, true,
 			[this, remote, tagNames](const std::vector<int> &selected) {
 				std::vector<std::string> names;
 				for (int index : selected) {
@@ -1942,7 +1951,7 @@ void MainWindow::RunTagAction(Action action)
 	git_repository *repository = fRepository.get();
 	switch (action) {
 		case Action::CreateTag: {
-			Form form("Create tag", "Preview");
+			Form form("Create tag", "OK");
 			form.AddText("name", "Name:")
 				.AddCommit("commit", "Commit:", DefaultCommit())
 				.AddMultiLine("message", "Message:")
@@ -1980,7 +1989,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagEditMessage: {
-			Form form("Edit message of " + tag.name, "Preview");
+			Form form("Edit message of " + tag.name, "OK");
 			form.AddMultiLine("message", "Message:", tag.message)
 				.AddLabel("Without a message, the tag becomes a simple tag.");
 			AskForm(form, [this, tag](const Form &result) {
@@ -1989,7 +1998,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagRename: {
-			Form form("Rename " + tag.name, "Preview");
+			Form form("Rename " + tag.name, "OK");
 			form.AddText("name", "New name:", tag.name);
 			AskForm(form, [this, tag](const Form &result) {
 				Execute(PlanRenameTag(fRepository.get(), fSnapshot, tag.name, result.Text("name")));
@@ -2012,7 +2021,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagCreateBranch: {
-			Form form("Create branch from " + tag.name, "Preview");
+			Form form("Create branch from " + tag.name, "OK");
 			form.AddText("name", "Name:");
 			AskForm(form, [this, spec](const Form &result) {
 				Execute(PlanCreateBranch(fRepository.get(), fSnapshot, result.Text("name"), spec, std::string()));
@@ -2020,7 +2029,7 @@ void MainWindow::RunTagAction(Action action)
 			break;
 		}
 		case Action::TagSetWorktree: {
-			ChooseWorktree("Set worktree to " + tag.name, "Preview", std::string(),
+			ChooseWorktree("Set worktree to " + tag.name, "OK", std::string(),
 				[this, spec](const WorktreeInfo &worktree) {
 					Execute(PlanSetWorktreeCommit(fRepository.get(), fSnapshot, worktree, spec));
 				});
@@ -2091,7 +2100,7 @@ void MainWindow::UploadForReview(const BranchInfo &branch)
 		target = "main";
 	}
 
-	Form form("Upload " + branch.name + " for review", "Preview");
+	Form form("Upload " + branch.name + " for review", "OK");
 	form.AddChoice("remote", "Remote:", remotes, remoteChoice)
 		.AddText("target", "Target branch:", target)
 		.AddText("topic", "Topic:")
@@ -2113,25 +2122,37 @@ void MainWindow::UploadForReview(const BranchInfo &branch)
 
 void MainWindow::DownloadChange(const RemoteInfo &remote)
 {
-	Form form("Download a review change from " + remote.name, "Preview");
+	Form form("Download a review change from " + remote.name, "Download");
 	form.AddText("change", "Change:")
 		.AddText("patchset", "Patch set:")
 		.AddLabel("A change number, number/patch set, or a link to the change.")
 		.AddLabel("Without a patch set, the latest is downloaded.")
 		.AddText("branch", "New branch:")
-		.AddLabel("Optional; the change is kept as refs/review/" + remote.name + "/<change>/<patch set>.");
-	AskForm(form, [this, remote](const Form &result) {
-		DownloadChange(remote, result);
+		.AddLabel("Optional; the change is kept as refs/review/" + remote.name + "/<change>/<patch set>.")
+		.Derive("branch", "change", [](const std::string &text) {
+			int change = 0;
+			std::optional<int> patchset;
+			return ParseChange(text, change, patchset) ? "review/" + std::to_string(change) : std::string();
+		});
+	// The form stays until the download works, so that a mistake can be
+	// corrected.
+	form.OpenWithAction(this, [this, remote](const Form &result, std::function<void(const std::string &error)> finished) {
+		try {
+			DownloadChange(remote, result, finished);
+		} catch (const std::exception &e) {
+			finished(e.what());
+		}
 	});
 }
 
 
-void MainWindow::DownloadChange(const RemoteInfo &remote, const Form &form)
+void MainWindow::DownloadChange(const RemoteInfo &remote, const Form &form,
+	std::function<void(const std::string &error)> finished)
 {
 	int change = 0;
 	std::optional<int> patchset;
 	if (!ParseChange(form.Text("change"), change, patchset)) {
-		ShowError(("\"" + form.Text("change") + "\" is not a change number or a link to a change").c_str());
+		finished("\"" + form.Text("change") + "\" is not a change number or a link to a change");
 		return;
 	}
 	const std::string patchsetText = form.Text("patchset");
@@ -2139,19 +2160,26 @@ void MainWindow::DownloadChange(const RemoteInfo &remote, const Form &form)
 		int number = 0;
 		std::optional<int> parsed;
 		if (!ParseChange(patchsetText, number, parsed) || parsed.has_value()) {
-			ShowError(("\"" + patchsetText + "\" is not a patch set number").c_str());
+			finished("\"" + patchsetText + "\" is not a patch set number");
 			return;
 		}
 		patchset = number;
 	}
 	const std::string branch = form.Text("branch");
+	const Plan plan = PlanDownloadChange(fSnapshot, remote.name, change, patchset, branch);
+	if (!plan.blocked.empty()) {
+		finished(plan.blocked);
+		return;
+	}
 	BMessage done(kMsgNetworkDone);
 	done.AddInt32("followUp", static_cast<int32>(FollowUp::ShowChange));
 	done.AddString("remote", remote.name.c_str());
 	done.AddInt32("change", change);
 	done.AddInt32("patchset", patchset.value_or(0));
 	done.AddString("branch", branch.c_str());
-	Execute(PlanDownloadChange(fSnapshot, remote.name, change, patchset, branch), done);
+	// Downloading loses nothing: it runs without a preview.
+	fNetworkFinished = std::move(finished);
+	RunPlan(plan, Resolution::Cancel, done, nullptr);
 }
 
 

@@ -27,6 +27,11 @@ void Ask(BWindow *owner, BAlert *alert, std::function<void(int32 button)> done);
 // on the owner's thread, once. Call on the owner's thread.
 BMessage AnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done);
 
+// The same, for each time the message is sent, until ForgetAnswer() or the
+// owner closes. ForgetAnswer() may be called on any thread.
+BMessage RepeatedAnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done);
+void ForgetAnswer(const BMessage &message);
+
 // Makes a window modal to the owner and closes it when the owner closes.
 // Call on the owner's thread, before the window is shown.
 void AttachDialog(BWindow *owner, BWindow *dialog);

@@ -90,8 +90,20 @@ struct FormField {
 // Input fields shown in a modal dialog; the values are read after it is
 // accepted.
 class Form {
+public:
+	// A text field that follows another one (Derive()).
+	struct Derivation {
+		std::string target;
+		std::string source;
+		std::function<std::string(const std::string &sourceText)> derive;
+	};
+	// Runs with the values each time the user accepts (OpenWithAction());
+	// finished closes the form with an empty error, else shows the error.
+	using Action = std::function<void(const Form &form, std::function<void(const std::string &error)> finished)>;
+
 private:
 	std::vector<FormField> fFields;
+	std::vector<Derivation> fDerivations;
 
 	const FormField &Field(const std::string &name) const;
 	Form &Add(FieldKind kind, const std::string &name, const std::string &label);
@@ -113,8 +125,13 @@ public:
 	// picker.
 	Form &AddCommit(const std::string &name, const std::string &label, const std::string &spec = std::string());
 	Form &AddLabel(const std::string &text);
+	// The text field target is derive(text of source) as source changes,
+	// until the user edits target.
+	Form &Derive(const std::string &target, const std::string &source,
+		std::function<std::string(const std::string &sourceText)> derive);
 
 	std::vector<FormField> &Fields() {return fFields;}
+	const std::vector<Derivation> &Derivations() const {return fDerivations;}
 	std::string Text(const std::string &name) const {return Field(name).text;}
 	bool Checked(const std::string &name) const {return Field(name).checked;}
 	int Choice(const std::string &name) const {return Field(name).choice;}
@@ -126,6 +143,11 @@ public:
 	void Open(BWindow *owner, std::function<void(const Form &form)> accepted,
 		git_repository *repository = nullptr, const Snapshot *snapshot = nullptr,
 		std::function<void()> cancelled = nullptr) const;
+	// Opens the form modal to owner; each time the user accepts, action runs
+	// on the owner's thread with the values while the form stays open with
+	// its fields disabled. Its outcome closes the form, or shows the error
+	// in it so that the user can correct the values and try again.
+	void OpenWithAction(BWindow *owner, Action action) const;
 	// False if cancelled. Only for threads that are not loopers'.
 	bool Go(git_repository *repository = nullptr, const Snapshot *snapshot = nullptr);
 };
@@ -146,7 +168,7 @@ void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &curre
 
 // Shows the preview of a plan modal to owner; run runs on the owner's thread
 // if the user chose to run it, with the resolution for overlapping worktree
-// changes.
+// changes. A plan that needs no preview (RunsWithoutPreview()) runs at once.
 void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
 	std::function<void(Resolution resolution)> run);
 

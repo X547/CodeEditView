@@ -1087,7 +1087,7 @@ void HistoryWindow::CreateReferenceAt(bool tag)
 	if (!commit.has_value()) {
 		return;
 	}
-	Form form(std::string(tag ? "Create tag at " : "Create branch at ") + ShortId(*commit), "Preview");
+	Form form(std::string(tag ? "Create tag at " : "Create branch at ") + ShortId(*commit), "OK");
 	form.AddText("name", "Name:");
 	if (tag) {
 		form.AddMultiLine("message", "Message:")

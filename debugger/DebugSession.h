@@ -95,7 +95,13 @@ private:
 	// For kMsgRestart.
 	std::optional<BMessage> fLastLaunch;
 	std::map<int64_t, std::pair<std::string, ResponseHandler>> fPending;
-	std::vector<BMessenger> fWatchers;
+	struct Watcher {
+		BMessenger messenger;
+		bool stateOnly {};
+	};
+	std::vector<Watcher> fWatchers;
+	// How the last run ended, for the idle status; empty while running.
+	std::string fEndReason;
 	// Output so far, for new watchers: text and category, the oldest
 	// dropped past a size.
 	std::deque<std::pair<std::string, std::string>> fOutputLog;

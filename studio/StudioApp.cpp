@@ -225,6 +225,11 @@ int32 StudioApp::NewSession()
 	entry.name = SessionTitle(id);
 	entry.session = new Debugger::DebugSession(fRegistry, id);
 	entry.session->Run();
+	// The status of each session is kept for the source windows.
+	BMessage watch(Debugger::kMsgWatch);
+	watch.AddMessenger("target", BMessenger(this));
+	watch.AddBool("stateOnly", true);
+	BMessenger(entry.session).SendMessage(&watch);
 	return id;
 }
 
@@ -244,7 +249,7 @@ std::vector<SessionInfo> StudioApp::Sessions()
 	BAutolock lock(fWindowLock);
 	std::vector<SessionInfo> sessions;
 	for (const auto &[id, entry] : fSessions) {
-		sessions.push_back({id, entry.name, BMessenger(entry.session)});
+		sessions.push_back({id, entry.name, BMessenger(entry.session), entry.status});
 	}
 	return sessions;
 }
@@ -680,6 +685,21 @@ void StudioApp::MessageReceived(BMessage *message)
 				summary->Activate();
 				summary->Unlock();
 			}
+			break;
+		}
+		case Debugger::kNoticeState: {
+			const int32 session = message->GetInt32("session", 0);
+			{
+				BAutolock lock(fWindowLock);
+				const auto it = fSessions.find(session);
+				if (it == fSessions.end()) {
+					break;
+				}
+				it->second.status = message->GetString("text", "");
+			}
+			BMessage changed(kMsgSessionStatusChanged);
+			changed.AddInt32("session", session);
+			BroadcastToSourceWindows(changed);
 			break;
 		}
 		case Debugger::kMsgShowToolWindow:

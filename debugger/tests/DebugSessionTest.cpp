@@ -201,7 +201,8 @@ TEST_CASE("debug session with GDB")
 	mark = collector->notices.size();
 	BMessenger(session).SendMessage(kMsgStop);
 	CHECK(collector->WaitFor(mark, [](const BMessage &message) {
-		return IsState(message, SessionState::Idle);
+		return IsState(message, SessionState::Idle)
+			&& message.GetString("text", "") == std::string("Ended by the user");
 	}).has_value());
 	{
 		CodeEdit::ModelLock lock(model);
@@ -355,7 +356,7 @@ TEST_CASE("breakpoints set before attaching")
 	const size_t mark = collector->notices.size();
 	BMessenger(session).SendMessage(kMsgStop);
 	CHECK(collector->WaitFor(mark, [](const BMessage &message) {
-		return IsState(message, SessionState::Idle);
+		return IsState(message, SessionState::Idle) && message.GetString("text", "") == std::string("Detached");
 	}).has_value());
 	kill_team(team);
 

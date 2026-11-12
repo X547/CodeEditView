@@ -199,7 +199,12 @@ void DebugSession::HandleEvent(const std::string &event, const JsonValue &body)
 		BMessage notice = BreakpointsNotice();
 		Broadcast(notice);
 	} else if (event == "exited") {
-		Output("Program exited with code " + std::to_string(body["exitCode"].AsInt()) + "\n", "important");
+		const std::string exitCode = std::to_string(body["exitCode"].AsInt());
+		Output("Program exited with code " + exitCode + "\n", "important");
+		// Stopping by the user says so instead.
+		if (fEndReason.empty()) {
+			fEndReason = "Exited with code " + exitCode;
+		}
 	} else if (event == "terminated") {
 		End();
 	}
@@ -223,6 +228,7 @@ void DebugSession::Start(const std::string &command, JsonValue arguments, std::v
 		return;
 	}
 	fAttached = command == "attach";
+	fEndReason.clear();
 	fInitialized = false;
 	fStartSent = false;
 	fConfigured = false;
@@ -294,7 +300,7 @@ void DebugSession::End()
 		watched.sentLines.reset();
 	}
 	fBreakpointStatus.clear();
-	SetState(SessionState::Idle, "Not running");
+	SetState(SessionState::Idle, fEndReason.empty() ? "Ended" : fEndReason);
 	BMessage threads = ThreadsNotice();
 	Broadcast(threads);
 	BMessage breakpoints = BreakpointsNotice();
@@ -663,7 +669,11 @@ void DebugSession::Broadcast(BMessage &message)
 {
 	message.AddInt32("session", fId);
 	for (auto it = fWatchers.begin(); it != fWatchers.end();) {
-		if (it->SendMessage(&message) == B_BAD_PORT_ID) {
+		if (it->stateOnly && message.what != kNoticeState) {
+			++it;
+			continue;
+		}
+		if (it->messenger.SendMessage(&message) == B_BAD_PORT_ID) {
 			it = fWatchers.erase(it);
 		} else {
 			++it;
@@ -768,6 +778,9 @@ void DebugSession::MessageReceived(BMessage *message)
 			break;
 		case kMsgDapClosed:
 			if (fClient != nullptr) {
+				if (fEndReason.empty()) {
+					fEndReason = "GDB ended unexpectedly";
+				}
 				End();
 			}
 			break;
@@ -857,6 +870,7 @@ void DebugSession::MessageReceived(BMessage *message)
 			break;
 		case kMsgStop:
 			if (fClient != nullptr) {
+				fEndReason = fAttached ? "Detached" : "Ended by the user";
 				Request("disconnect", JsonValue::MakeObject().Set("terminateDebuggee", !fAttached),
 					[this](const JsonValue &) {
 						End();
@@ -906,7 +920,14 @@ void DebugSession::MessageReceived(BMessage *message)
 			if (message->FindMessenger("target", &target) != B_OK) {
 				break;
 			}
-			fWatchers.push_back(target);
+			const bool stateOnly = message->GetBool("stateOnly", false);
+			fWatchers.push_back({target, stateOnly});
+			if (stateOnly) {
+				BMessage state = StateNotice();
+				state.AddInt32("session", fId);
+				target.SendMessage(&state);
+				break;
+			}
 			BMessage notices[] = {StateNotice(), ThreadsNotice(), StackNotice(), ScopesNotice(), BreakpointsNotice(),
 				BMessage(kNoticeOutput)};
 			BMessage &output = notices[5];
@@ -923,7 +944,9 @@ void DebugSession::MessageReceived(BMessage *message)
 		case kMsgUnwatch: {
 			BMessenger target;
 			if (message->FindMessenger("target", &target) == B_OK) {
-				fWatchers.erase(std::remove(fWatchers.begin(), fWatchers.end(), target), fWatchers.end());
+				fWatchers.erase(std::remove_if(fWatchers.begin(), fWatchers.end(), [&target](const Watcher &watcher) {
+					return watcher.messenger == target;
+				}), fWatchers.end());
 			}
 			break;
 		}

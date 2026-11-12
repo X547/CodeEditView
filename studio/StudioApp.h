@@ -36,6 +36,8 @@ struct SessionInfo {
 	int32 id {};
 	std::string name;
 	BMessenger messenger;
+	// The session's status line: running, stopped, how it ended.
+	std::string status;
 };
 
 
@@ -81,6 +83,7 @@ private:
 	struct SessionEntry {
 		Debugger::DebugSession *session {};
 		std::string name;
+		std::string status = "Not running";
 	};
 
 	struct CoverageEntry {

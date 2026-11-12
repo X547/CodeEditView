@@ -241,7 +241,7 @@ void SourceWindow::UpdateDebugMenu()
 	for (const SessionInfo &session : StudioApp::Get().Sessions()) {
 		BMessage *follow = new BMessage(kMsgFollowSession);
 		follow->AddInt32("session", session.id);
-		BMenuItem *item = new BMenuItem(session.name.c_str(), follow);
+		BMenuItem *item = new BMenuItem((session.name + " (" + session.status + ")").c_str(), follow);
 		item->SetMarked(session.id == fSession);
 		fSessionMenu->AddItem(item);
 	}
@@ -544,7 +544,13 @@ void SourceWindow::UpdateStatus()
 		text = StudioApp::Get().CoverageStatus(fCoverage, locator) + " \xe2\x80\x94 " + text;
 	}
 	if (fSession != 0) {
-		text = "Session " + std::to_string(fSession) + " \xe2\x80\x94 " + text;
+		std::string sessionStatus;
+		for (const SessionInfo &session : StudioApp::Get().Sessions()) {
+			if (session.id == fSession) {
+				sessionStatus = session.status;
+			}
+		}
+		text = "Session " + std::to_string(fSession) + ": " + sessionStatus + " \xe2\x80\x94 " + text;
 	}
 	fStatus->SetText(text.c_str());
 	fStatus->SetToolTip(text.c_str());
@@ -870,6 +876,11 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgSessionClosed:
 			if (message->GetInt32("session", 0) == fSession) {
 				Follow(0, fCoverage);
+			}
+			break;
+		case kMsgSessionStatusChanged:
+			if (message->GetInt32("session", 0) == fSession) {
+				UpdateStatus();
 			}
 			break;
 		case kMsgFollowCoverage:

@@ -32,7 +32,8 @@ constexpr uint32 kMsgRequestVariables = 'DSva';
 // "expression" (string): a GDB command or expression from the console.
 constexpr uint32 kMsgEvaluate = 'DSev';
 // "target" (messenger): receives the notices below, starting with the
-// current state and the output so far.
+// current state and the output so far; with "stateOnly" (bool), only
+// kNoticeState.
 constexpr uint32 kMsgWatch = 'DSwa';
 // "target" (messenger): no longer receives the notices.
 constexpr uint32 kMsgUnwatch = 'DSuw';
@@ -46,7 +47,8 @@ enum class SessionState: int32 {
 	Stopped,
 };
 
-// "state" (int32 SessionState), "text" (string): status line.
+// "state" (int32 SessionState), "text" (string): status line; when idle
+// after a run, how it ended ("Exited with code 0", "Detached", ...).
 constexpr uint32 kNoticeState = 'DNst';
 // "text" (string), "category" (string): program and debugger output; when
 // watching starts, the output so far, repeated.

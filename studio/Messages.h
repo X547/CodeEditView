@@ -23,6 +23,8 @@ constexpr uint32 kMsgFollowSession = 'SWfs';
 // To the application: "session" (int32) followed by the active source
 // window; the debug tool windows show it (0 leaves them as they are).
 constexpr uint32 kMsgActiveSession = 'CSas';
+// To the source windows: "session" (int32) has another status.
+constexpr uint32 kMsgSessionStatusChanged = 'CSss';
 // "coverage" (int32), "locator" (string): shows the document in a window
 // following the coverage run.
 constexpr uint32 kMsgShowCoverageSource = 'CScS';

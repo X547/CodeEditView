@@ -2072,6 +2072,7 @@ void MainWindow::OpenDiff(const WorktreeInfo &worktree)
 	}
 	GitDiff::DiffWindow *window = new GitDiff::DiffWindow(std::move(diffRepository), std::string());
 	fDiffWindows[worktree.path] = BMessenger(window);
+	DiffKit::PlaceOver(window, Frame());
 	window->Show();
 }
 

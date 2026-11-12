@@ -335,6 +335,15 @@ void CodeEditView::ScrollToSelection()
 }
 
 
+void CodeEditView::GoToLocation(const CodeEdit::TextPoint &location)
+{
+	const size_t offset = fCore->OffsetOfLocation(location);
+	RevealLine(location.line);
+	SetSelection({offset, offset});
+	ScrollToSelection();
+}
+
+
 void CodeEditView::RevealLine(size_t line)
 {
 	const size_t row = fCore->RevealLine(line);

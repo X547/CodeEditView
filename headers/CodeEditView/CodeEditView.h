@@ -48,6 +48,11 @@ constexpr uint32 kMsgGutterClicked = 'CEgc';
 // were added or removed (edits, folds, wrapping, resizing). "scrolled" (bool)
 // is true if the view scrolled. Bursts are coalesced into one message.
 constexpr uint32 kMsgViewportChanged = 'CEvc';
+// Posted to the window (not the target) when the caret position shown
+// beside the horizontal scroll bar is clicked; the view is focused first.
+// Hosts pass it to EditorCommands::Dispatch(), where a go to line command
+// (FindKit) handles it.
+constexpr uint32 kMsgPositionClicked = 'CEpc';
 
 
 class EditorCore;
@@ -180,6 +185,9 @@ public:
 	// Unfolds and scrolls so that the line is visible with context rows,
 	// without moving the caret (e.g. for a debugger's execution line).
 	void RevealLine(size_t line);
+	// Moves the caret to a line and display column (0-based, clamped to the
+	// text), unfolding and scrolling to it.
+	void GoToLocation(const CodeEdit::TextPoint &location);
 
 	// Receives the notifications above.
 	void SetTarget(const BMessenger &target) {fTarget = target;}

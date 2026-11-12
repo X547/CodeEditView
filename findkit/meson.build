@@ -8,6 +8,7 @@ findKit = static_library(
 		'FindCommands.cpp',
 		'FindPanel.cpp',
 		'FindState.cpp',
+		'GoToLinePanel.cpp',
 		'ModelSearch.cpp',
 		'Search.cpp',
 	),
@@ -23,6 +24,7 @@ if get_option('tests')
 	findKitTests = executable(
 		'FindKitTests',
 		files(
+			'tests/GoToLineTest.cpp',
 			'tests/ModelSearchTest.cpp',
 			'tests/SearchTest.cpp',
 		),

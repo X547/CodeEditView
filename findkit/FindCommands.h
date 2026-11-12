@@ -20,10 +20,14 @@ constexpr uint32 kMsgEnterSearchString = 'FKes';
 constexpr uint32 kMsgReplace = 'FKrp';
 constexpr uint32 kMsgReplaceAndFind = 'FKrf';
 constexpr uint32 kMsgReplaceAll = 'FKra';
+// Moves the caret to "line" and "column" (int32, 1-based; column optional);
+// without them, asks for them in a panel. CodeEdit::kMsgPositionClicked
+// asks too.
+constexpr uint32 kMsgGoToLine = 'FKgl';
 
 
-// Adds the find and replace items to the menu and registers the find
-// commands with CodeEdit::EditorCommands.
+// Adds the find, replace and go to line items to the menu and registers the
+// find commands with CodeEdit::EditorCommands.
 void AddFindItems(BMenu *menu);
 
 

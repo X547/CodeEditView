@@ -512,6 +512,17 @@ TEST_CASE("caret location in display columns")
 	CHECK(core.CaretLocation() == TextPoint {1, 5});
 	Place(core, 8);
 	CHECK(core.CaretLocation() == TextPoint {1, 7});
+
+	// Back to offsets: a column inside a cluster gives its start, and
+	// locations past the text are clamped.
+	CHECK(core.OffsetOfLocation({0, 1}) == 1);
+	CHECK(core.OffsetOfLocation({1, 0}) == 3);
+	CHECK(core.OffsetOfLocation({1, 2}) == 3);
+	CHECK(core.OffsetOfLocation({1, 5}) == 5);
+	CHECK(core.OffsetOfLocation({1, 6}) == 5);
+	CHECK(core.OffsetOfLocation({1, 7}) == 8);
+	CHECK(core.OffsetOfLocation({1, 99}) == 9);
+	CHECK(core.OffsetOfLocation({7, 0}) == 3);
 }
 
 

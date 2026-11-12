@@ -1,5 +1,7 @@
 #include "EditorCore.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -813,6 +815,20 @@ TextPoint EditorCore::CaretLocation()
 	const Rope &text = fModel->Text();
 	const size_t line = text.LineOfOffset(fSelection.caret);
 	return {line, LayoutOfLine(line).ColumnOfOffset(fSelection.caret - text.LineStart(line))};
+}
+
+
+size_t EditorCore::OffsetOfLocation(const TextPoint &location)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	const Rope &text = fModel->Text();
+	const size_t line = std::min(location.line, text.NewlineCount());
+	const LineLayout &layout = LayoutOfLine(line);
+	const size_t cluster = layout.ClusterAtColumn(static_cast<uint32_t>(std::min<size_t>(location.column,
+		UINT32_MAX)));
+	const size_t offset = cluster < layout.Clusters().size() ? layout.Clusters()[cluster].offset : layout.Length();
+	return text.LineStart(line) + offset;
 }
 
 

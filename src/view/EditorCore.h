@@ -317,6 +317,8 @@ public:
 	CellHit HitTestCell(size_t row, float column);
 	// Model line and display column of the caret.
 	TextPoint CaretLocation();
+	// The offset at a line and display column, clamped to the text.
+	size_t OffsetOfLocation(const TextPoint &location);
 	std::string SelectedText();
 
 	// Mouse selection. For words, offset is the start of the clicked cluster:

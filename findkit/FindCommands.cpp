@@ -14,6 +14,7 @@
 #include <CodeEditView/EditorCommands.h>
 
 #include "FindPanel.h"
+#include "GoToLinePanel.h"
 #include "FindState.h"
 #include "ModelSearch.h"
 #include "Search.h"
@@ -228,6 +229,8 @@ bool FindCommandSet::Handles(uint32 what) const
 		case kMsgReplace:
 		case kMsgReplaceAndFind:
 		case kMsgReplaceAll:
+		case kMsgGoToLine:
+		case CodeEdit::kMsgPositionClicked:
 			return true;
 		default:
 			return false;
@@ -259,6 +262,9 @@ bool FindCommandSet::IsEnabled(uint32 what, CodeEditView *view)
 			return editable && SelectionIsMatch(view, settings);
 		case kMsgReplaceAll:
 			return editable && !settings.findText.empty() && (!settings.inSelection || HasSelection(view));
+		case kMsgGoToLine:
+		case CodeEdit::kMsgPositionClicked:
+			return true;
 		default:
 			return false;
 	}
@@ -273,6 +279,18 @@ void FindCommandSet::Execute(BMessage *message, CodeEditView *view)
 	}
 	if (view == nullptr) {
 		beep();
+		return;
+	}
+
+	if (message->what == kMsgGoToLine || message->what == CodeEdit::kMsgPositionClicked) {
+		int32 line = 0;
+		if (message->FindInt32("line", &line) != B_OK) {
+			(new GoToLinePanel(view))->Show();
+			return;
+		}
+		const int32 column = message->GetInt32("column", 1);
+		view->GoToLocation({static_cast<size_t>(std::max<int32>(line, 1) - 1),
+			static_cast<size_t>(std::max<int32>(column, 1) - 1)});
 		return;
 	}
 
@@ -332,6 +350,8 @@ void AddFindItems(BMenu *menu)
 	menu->AddItem(new BMenuItem("Replace", new BMessage(kMsgReplace), '='));
 	menu->AddItem(new BMenuItem("Replace & find", new BMessage(kMsgReplaceAndFind), 'T'));
 	menu->AddItem(new BMenuItem("Replace all", new BMessage(kMsgReplaceAll)));
+	menu->AddSeparatorItem();
+	menu->AddItem(new BMenuItem("Go to line" B_UTF8_ELLIPSIS, new BMessage(kMsgGoToLine), 'L'));
 }
 
 

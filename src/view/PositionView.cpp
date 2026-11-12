@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <string>
 
+#include <Window.h>
+
 #include <CodeEditView/CodeEditView.h>
 
 
@@ -62,6 +64,17 @@ void PositionView::Draw(BRect updateRect)
 	SetHighUIColor(B_PANEL_TEXT_COLOR);
 	SetLowColor(panel);
 	DrawString(text, BPoint(bounds.left + kPadding, baseline));
+}
+
+
+void PositionView::MouseDown(BPoint where)
+{
+	(void)where;
+	if (Window() == nullptr) {
+		return;
+	}
+	fEditView->MakeFocus(true);
+	Window()->PostMessage(kMsgPositionClicked);
 }
 
 

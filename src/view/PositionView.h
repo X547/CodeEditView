@@ -21,6 +21,7 @@ public:
 	float PreferredWidth();
 
 	void Draw(BRect updateRect) final;
+	void MouseDown(BPoint where) final;
 };
 
 

@@ -211,6 +211,29 @@ TEST_CASE("outline sections from pragma marks")
 }
 
 
+TEST_CASE("outline of shell functions")
+{
+	const std::string_view text =
+		"f() {\n"
+		"\ttrue\n"
+		"}\n"
+		"function g {\n"
+		"\tfalse\n"
+		"}\n";
+	EditorCore core(MakeModel(text, "shell"));
+	const std::vector<OutlineItem> outline = core.Outline();
+	REQUIRE(outline.size() == 2);
+	CHECK(outline[0].kind == OutlineKind::Function);
+	CHECK(outline[0].label == "f()");
+	CHECK(outline[0].nameStart == 0);
+	CHECK(outline[0].nameEnd == 1);
+	CHECK(outline[1].kind == OutlineKind::Function);
+	CHECK(outline[1].label == "g()");
+	CHECK(outline[1].nameStart == text.find("g {"));
+	CHECK(outline[1].start == text.find("function"));
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

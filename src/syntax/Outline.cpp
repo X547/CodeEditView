@@ -96,7 +96,11 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 
 	TSNode name = ChildByField(node, "name");
 	const char *anonymous = nullptr;
-	if (type == "function_definition") {
+	if (type == "function_definition" && !ts_node_is_null(name)) {
+		// A shell function, named directly.
+		item.kind = OutlineKind::Function;
+		item.label = Compact(NodeText(name, text) + "()");
+	} else if (type == "function_definition") {
 		item.kind = OutlineKind::Function;
 		const std::optional<TSNode> declarator = FunctionDeclarator(node);
 		if (!declarator.has_value()) {

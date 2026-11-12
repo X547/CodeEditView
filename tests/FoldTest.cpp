@@ -118,6 +118,33 @@ TEST_CASE("fold candidates from the syntax tree")
 }
 
 
+TEST_CASE("fold candidates of shell and meson")
+{
+	// Closing keywords on their own line stay visible.
+	BReference<TextModel> shell = MakeModel(
+		"f() {\n"
+		"\tif true; then\n"
+		"\t\techo a\n"
+		"\tfi\n"
+		"}\n",
+		"shell"
+	);
+	EditorCore shellCore(shell);
+	CHECK(shellCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
+
+	BReference<TextModel> meson = MakeModel(
+		"foreach x : y\n"
+		"\tif x\n"
+		"\t\tmessage(x)\n"
+		"\tendif\n"
+		"endforeach\n",
+		"meson"
+	);
+	EditorCore mesonCore(meson);
+	CHECK(mesonCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
+}
+
+
 TEST_CASE("folded lines have no rows")
 {
 	BReference<TextModel> model = MakeModel(kSample, "cpp");

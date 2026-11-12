@@ -13,10 +13,14 @@
 
 #include "CHighlights.inc"
 #include "CppHighlights.inc"
+#include "MesonHighlights.inc"
+#include "ShellHighlights.inc"
 
 
 extern "C" const TSLanguage *tree_sitter_c();
 extern "C" const TSLanguage *tree_sitter_cpp();
+extern "C" const TSLanguage *tree_sitter_bash();
+extern "C" const TSLanguage *tree_sitter_meson();
 
 
 namespace CodeEdit {
@@ -37,6 +41,13 @@ static constexpr const char *kCppNavigation = R"scm(
 (class_specifier body: (_)) @definition
 (namespace_definition) @definition
 )scm";
+
+static constexpr const char *kShellNavigation = R"scm(
+(function_definition) @definition
+)scm";
+
+// Meson has no definitions.
+static constexpr const char *kMesonNavigation = "";
 
 
 static constexpr const char *kCFolds = R"scm(
@@ -62,9 +73,39 @@ static constexpr const char *kCppFolds = R"scm(
 (declaration_list) @fold
 )scm";
 
+// An if statement folds with its elif and else clauses: the grammar has no
+// node for the first branch alone.
+static constexpr const char *kShellFolds = R"scm(
+(compound_statement) @fold
+(do_group) @fold
+(if_statement) @fold
+(elif_clause) @fold
+(else_clause) @fold
+(case_statement) @fold
+(case_item) @fold
+(subshell) @fold
+(array) @fold
+(heredoc_redirect) @fold
+)scm";
+
+static constexpr const char *kMesonFolds = R"scm(
+(if_command) @fold
+(elseif_command) @fold
+(else_command) @fold
+(foreach_command) @fold
+(normal_command) @fold
+(list) @fold
+(dictionaries) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
+	const char *language;
+};
+
+struct FileName {
+	std::string_view name;
 	const char *language;
 };
 
@@ -80,6 +121,25 @@ static constexpr FileExtension kFileExtensions[] = {
 	{"hpp", "cpp"},
 	{"hxx", "cpp"},
 	{"h++", "cpp"},
+	{"sh",   "shell"},
+	{"bash", "shell"},
+	{"ksh",  "shell"},
+	{"zsh",  "shell"},
+};
+
+// Files known by their whole name, compared case-sensitively.
+static constexpr FileName kFileNames[] = {
+	{"meson.build",          "meson"},
+	{"meson_options.txt",    "meson"},
+	{"meson.options",        "meson"},
+	{".profile",             "shell"},
+	{".bashrc",              "shell"},
+	{".bash_profile",        "shell"},
+	{".bash_logout",         "shell"},
+	{".zshrc",               "shell"},
+	{".zprofile",            "shell"},
+	{"profile",              "shell"},
+	{"UserSetupEnvironment", "shell"},
 };
 
 
@@ -192,7 +252,9 @@ const std::vector<const Language*> &Language::All()
 {
 	static const Language sC("c", tree_sitter_c(), kCHighlights, kCNavigation, kCFolds);
 	static const Language sCpp("cpp", tree_sitter_cpp(), kCppHighlights, kCppNavigation, kCppFolds);
-	static const std::vector<const Language*> sAll = {&sC, &sCpp};
+	static const Language sShell("shell", tree_sitter_bash(), kShellHighlights, kShellNavigation, kShellFolds);
+	static const Language sMeson("meson", tree_sitter_meson(), kMesonHighlights, kMesonNavigation, kMesonFolds);
+	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson};
 	return sAll;
 }
 
@@ -222,6 +284,11 @@ const char *LanguageForPath(std::string_view path)
 {
 	const size_t slash = path.rfind('/');
 	const std::string_view leaf = slash == std::string_view::npos ? path : path.substr(slash + 1);
+	for (const FileName &entry : kFileNames) {
+		if (entry.name == leaf) {
+			return entry.language;
+		}
+	}
 	const size_t dot = leaf.rfind('.');
 	if (dot == std::string_view::npos || dot == 0) {
 		return nullptr;

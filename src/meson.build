@@ -13,6 +13,19 @@ highlightQueries = [
 		output: 'CppHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kCppHighlights', '@INPUT@']
 	),
+	custom_target(
+		'shell-highlights',
+		input: files('syntax/queries/shell-highlights.scm'),
+		output: 'ShellHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kShellHighlights', '@INPUT@']
+	),
+	custom_target(
+		# Target names starting with "meson-" are reserved.
+		'mesonbuild-highlights',
+		input: files('syntax/queries/meson-highlights.scm'),
+		output: 'MesonHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kMesonHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -49,7 +62,7 @@ codeEditViewLib = shared_library(
 	codeEditViewSources,
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
-	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep],
+	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

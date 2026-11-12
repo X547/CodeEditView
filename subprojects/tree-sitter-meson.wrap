@@ -1,0 +1,8 @@
+# A commit after v1.3.0, which adds format strings and fixes method calls on
+# the next line.
+[wrap-file]
+directory = tree-sitter-meson-aa8d472034956f94f51f2ef2cbfec4cc07efbfde
+source_url = https://github.com/tree-sitter-grammars/tree-sitter-meson/archive/aa8d472034956f94f51f2ef2cbfec4cc07efbfde.tar.gz
+source_filename = tree-sitter-meson-aa8d4720.tar.gz
+source_hash = a0324a5b85b74139e73031458c86c9e65fd8c47013c3beed9783611684d0891f
+patch_directory = tree-sitter-meson

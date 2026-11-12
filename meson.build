@@ -27,6 +27,8 @@ libInstallDir = appInstallDir / 'lib'
 grammarOptions = ['debug=false', 'optimization=2', 'warning_level=0']
 treeSitterCDep = subproject('tree-sitter-c', default_options: grammarOptions).get_variable('tree_sitter_c_dep')
 treeSitterCppDep = subproject('tree-sitter-cpp', default_options: grammarOptions).get_variable('tree_sitter_cpp_dep')
+treeSitterBashDep = subproject('tree-sitter-bash', default_options: grammarOptions).get_variable('tree_sitter_bash_dep')
+treeSitterMesonDep = subproject('tree-sitter-meson', default_options: grammarOptions).get_variable('tree_sitter_meson_dep')
 
 publicInc = include_directories('headers')
 privateInc = include_directories('src')

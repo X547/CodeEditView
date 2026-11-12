@@ -97,6 +97,8 @@ TEST_CASE("languages and capture styles")
 	const std::vector<std::string> languages = AvailableLanguages();
 	CHECK(std::find(languages.begin(), languages.end(), "c") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "cpp") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "shell") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "meson") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -108,8 +110,15 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::string_view(LanguageForPath("src/main.c")) == "c");
 	CHECK(std::string_view(LanguageForPath("/boot/x/View.CPP")) == "cpp");
 	CHECK(std::string_view(LanguageForPath("Header.h")) == "cpp");
+	CHECK(std::string_view(LanguageForPath("tools/run.sh")) == "shell");
+	CHECK(std::string_view(LanguageForPath("/boot/home/.bashrc")) == "shell");
+	CHECK(std::string_view(LanguageForPath("meson.build")) == "meson");
+	CHECK(std::string_view(LanguageForPath("src/meson.build")) == "meson");
+	CHECK(std::string_view(LanguageForPath("meson_options.txt")) == "meson");
 	CHECK(LanguageForPath("Makefile") == nullptr);
-	CHECK(LanguageForPath(".bashrc") == nullptr);
+	CHECK(LanguageForPath("x.build") == nullptr);
+	CHECK(LanguageForPath("notes.txt") == nullptr);
+	CHECK(LanguageForPath(".gitignore") == nullptr);
 	CHECK(LanguageForPath("dir.c/file") == nullptr);
 
 	CHECK(StyleForCapture("type.builtin") == HighlightStyle::BuiltinType);
@@ -144,6 +153,80 @@ TEST_CASE("highlighting follows Pe styles")
 	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Character);
 	CHECK(StyleAt(core, 5, 12) == HighlightStyle::Operator);
 	CHECK(StyleAt(core, 5, 14) == HighlightStyle::Number);
+}
+
+
+TEST_CASE("shell highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"f() {\n"
+		"\tlocal a=\"x $HOME\" # c\n"
+		"\tif [ -n \"$a\" ]; then return 2; fi\n"
+		"\techo \"${a}\"\n"
+		"}\n",
+		"shell"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 0, 1) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 1, 7) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 8) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 1, 10) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 12) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 1, 14) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 1, 17) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 19) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 4) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 6) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 2, 9) == HighlightStyle::String);
+	CHECK(StyleAt(core, 2, 10) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 2, 17) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 22) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 29) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 2, 32) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 1) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 6) == HighlightStyle::String);
+	CHECK(StyleAt(core, 3, 7) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 10) == HighlightStyle::Constant);
+}
+
+
+TEST_CASE("meson highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"project('x', 'cpp')\n"
+		"# note\n"
+		"cc = meson.get_compiler('cpp')\n"
+		"if cc.found() and not false\n"
+		"\tmessage(f'@VAR@\\n', 42)\n"
+		"endif\n",
+		"meson"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 0, 7) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 0, 8) == HighlightStyle::String);
+	CHECK(StyleAt(core, 0, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 2, 3) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 2, 5) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 2, 10) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 11) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 3) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 6) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 14) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 18) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 22) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 10) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 11) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 16) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 4, 21) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 5, 0) == HighlightStyle::Keyword);
 }
 
 

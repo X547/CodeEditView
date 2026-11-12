@@ -144,7 +144,7 @@ private:
 	// Runs work, showing what it throws (dialog answers run outside
 	// RunAction()).
 	void Guarded(const std::function<void()> &work);
-	// Opens a form modal to this window; accepted runs with its values. With
+	// Opens a form over this window; accepted runs with its values. With
 	// commitPicker, its commit fields get the picker.
 	void AskForm(const Form &form, std::function<void(const Form &form)> accepted, bool commitPicker = false);
 	void PickCommitThen(const std::string &spec, std::function<void(const std::string &spec)> chosen);

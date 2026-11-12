@@ -161,11 +161,11 @@ void CommitWindow::LoadChanges()
 	const git_oid id = fDetails.id;
 	const size_t parent = fParent;
 	std::shared_ptr<std::vector<FileChange>> changes = std::make_shared<std::vector<FileChange>>();
-	const std::function<void()> work = [path, id, parent, changes]() {
+	DiffKit::RunWithProgress(this, "Reading the changes", [path, id, parent, changes](DiffKit::Progress &progress) {
+		(void)progress;
 		RepositoryPtr repository = OpenRepository(path);
 		*changes = CommitChanges(repository.get(), id, parent);
-	};
-	const std::function<void(const std::string &error)> done = [this, request, changes](const std::string &error) {
+	}, [this, request, changes](const std::string &error) {
 		if (request != fLoadRequest) {
 			return;
 		}
@@ -173,17 +173,7 @@ void CommitWindow::LoadChanges()
 			DiffKit::ShowError(error.c_str());
 		}
 		ShowChanges(std::move(*changes));
-	};
-	if (Feel() == B_NORMAL_WINDOW_FEEL) {
-		DiffKit::RunWithProgress(this, "Reading the changes", [work](DiffKit::Progress &progress) {
-			(void)progress;
-			work();
-		}, done);
-	} else {
-		fDiffView->SetLabel(0, "");
-		fDiffView->SetLabel(1, "Reading the changes" B_UTF8_ELLIPSIS);
-		DiffKit::RunInBackground(this, work, done);
-	}
+	});
 }
 
 

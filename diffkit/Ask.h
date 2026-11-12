@@ -13,10 +13,11 @@ class BWindow;
 namespace DiffKit {
 
 
-// Asking without blocking: a dialog is modal to the window that opened it
-// only (that window takes no input but keeps working), and its answer runs
-// a callback on that window's thread. If the window closes first, its
-// dialogs close and their callbacks are dropped.
+// Asking without blocking: a dialog is an ordinary window that belongs to
+// the window that opened it (the owner keeps taking input), and its answer
+// runs a callback on the owner's thread. If the owner closes first, its
+// dialogs close and their callbacks are dropped. Only progress dialogs
+// (RunWithProgress()) are modal to their owner.
 
 
 // Shows the alert and calls done with the index of the button chosen. Call
@@ -32,8 +33,8 @@ BMessage AnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> don
 BMessage RepeatedAnswerMessage(BWindow *owner, std::function<void(BMessage *answer)> done);
 void ForgetAnswer(const BMessage &message);
 
-// Makes a window modal to the owner and closes it when the owner closes.
-// Call on the owner's thread, before the window is shown.
+// Closes the window when the owner closes. Call on the owner's thread,
+// before the window is shown.
 void AttachDialog(BWindow *owner, BWindow *dialog);
 
 

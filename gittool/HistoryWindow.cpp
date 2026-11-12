@@ -899,11 +899,13 @@ void HistoryWindow::Reword()
 	}
 	const size_t step = steps[0];
 	const HistoryEdit *edit = fEdit.get();
+	const uint64_t revision = fEdit->Revision();
 	Form form("Reword " + ShortId(fEdit->Steps()[step].commit), "OK");
 	form.AddMessage("message", "Message:", fEdit->Message(step));
-	form.Open(this, [this, step, edit](const Form &result) {
-		// The edits may have been replaced meanwhile.
-		if (fEdit.get() != edit || step >= fEdit->Steps().size()) {
+	form.Open(this, [this, step, edit, revision](const Form &result) {
+		// The edits may have been changed or replaced meanwhile.
+		if (fEdit.get() != edit || fEdit->Revision() != revision) {
+			ShowError("The history was edited while the message was open; reword the commit again");
 			return;
 		}
 		fEdit->SetMessage(step, result.Text("message"));
@@ -926,6 +928,7 @@ void HistoryWindow::OpenStepEditor(StepEditMode mode)
 	input.parent = result.parent;
 	input.conflicts = result.conflictFiles;
 	input.message = fEdit->Message(steps[0]);
+	input.revision = fEdit->Revision();
 	try {
 		(new StepEditor(this, fRepositoryPath, input))->Show();
 	} catch (const std::exception &e) {
@@ -938,6 +941,11 @@ void HistoryWindow::StepEdited(BMessage *message)
 {
 	const int32 step = message->GetInt32("step", -1);
 	if (fEdit == nullptr || step < 0 || static_cast<size_t>(step) >= fEdit->Steps().size()) {
+		return;
+	}
+	// The history may have been edited while the editor was open.
+	if (message->GetUInt64("revision", 0) != fEdit->Revision()) {
+		ShowError("The history was edited while the commit was open in the editor; edit the commit again");
 		return;
 	}
 	const StepEditMode mode = static_cast<StepEditMode>(message->GetInt32("mode", 0));

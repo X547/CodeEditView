@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Fails if a dialog is waited for (BAlert::Go(), ModalDialog::Go(),
+# Fails if a dialog is waited for (BAlert::Go(), Dialog::Go(),
 # Form::Go()) outside the code that runs on threads that are not loopers'.
 # Window threads must use DiffKit::Ask() and the Open() methods instead,
 # or the window freezes while the dialog is open.

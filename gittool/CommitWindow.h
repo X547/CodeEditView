@@ -47,8 +47,8 @@ private:
 	DiffKit::DiffView *fDiffView {};
 
 	void ShowHeader();
-	// Reads the changes against the parent on a thread: under a progress
-	// dialog, or in a dialog, with a note in the panes.
+	// Reads the changes against the parent on a thread, under a progress
+	// dialog.
 	void LoadChanges();
 	void ShowChanges(std::vector<FileChange> changes);
 	void ShowSelectedFile();

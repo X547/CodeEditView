@@ -164,8 +164,6 @@ void ForgetAnswer(const BMessage &message)
 void AttachDialog(BWindow *owner, BWindow *dialog)
 {
 	WatchOwner(owner);
-	dialog->SetFeel(B_MODAL_SUBSET_WINDOW_FEEL);
-	dialog->AddToSubset(owner);
 	Registry &registry = TheRegistry();
 	std::lock_guard<std::mutex> lock(registry.lock);
 	// Dialogs closed meanwhile are forgotten.

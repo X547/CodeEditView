@@ -1120,6 +1120,11 @@ void MainWindow::RunPlan(const Plan &plan, Resolution resolution, const BMessage
 
 void MainWindow::StartNetwork(const std::string &status, NetworkWork work, const BMessage &done)
 {
+	// Dialogs do not block the window, so their answers can come meanwhile.
+	if (fNetworkRunning) {
+		ShowError("Another network operation is running; try again when it ends");
+		return;
+	}
 	BMessage message(done);
 	if (!message.HasString("title")) {
 		message.AddString("title", status.c_str());
@@ -2164,6 +2169,10 @@ void MainWindow::DownloadChange(const RemoteInfo &remote, const Form &form,
 			return;
 		}
 		patchset = number;
+	}
+	if (fNetworkRunning) {
+		finished("Another network operation is running; try again when it ends");
+		return;
 	}
 	const std::string branch = form.Text("branch");
 	const Plan plan = PlanDownloadChange(fSnapshot, remote.name, change, patchset, branch);

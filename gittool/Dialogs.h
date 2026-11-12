@@ -29,7 +29,7 @@ namespace GitTool {
 
 // A dialog opened without blocking (Open()), or, on a thread that is not a
 // looper's, waited for (Go()).
-class ModalDialog: public BWindow {
+class Dialog: public BWindow {
 private:
 	sem_id fSemaphore = -1;
 	bool *fAccepted = nullptr;
@@ -47,11 +47,12 @@ protected:
 	void Finish(bool accepted);
 
 public:
-	ModalDialog(const char *title, uint32 flags, window_feel feel = B_MODAL_APP_WINDOW_FEEL);
+	Dialog(const char *title, uint32 flags);
 
-	// Shows the dialog modal to owner only and returns at once; done runs on
-	// the owner's thread with whether it was accepted, unless the owner
-	// closed first. Call on the owner's thread. The dialog deletes itself.
+	// Shows the dialog over owner and returns at once; done runs on the
+	// owner's thread with whether it was accepted, unless the owner closed
+	// first. The owner goes on taking input. Call on the owner's thread. The
+	// dialog deletes itself.
 	void Open(BWindow *owner, std::function<void(bool accepted)> done);
 	// Shows the dialog and waits until it closes; true if accepted. Only for
 	// threads that are not loopers' (as network work); the dialog deletes
@@ -87,7 +88,7 @@ struct FormField {
 };
 
 
-// Input fields shown in a modal dialog; the values are read after it is
+// Input fields shown in a dialog; the values are read after it is
 // accepted.
 class Form {
 public:
@@ -136,14 +137,14 @@ public:
 	bool Checked(const std::string &name) const {return Field(name).checked;}
 	int Choice(const std::string &name) const {return Field(name).choice;}
 
-	// Opens the form modal to owner and returns at once; accepted runs on the
+	// Opens the form over owner and returns at once; accepted runs on the
 	// owner's thread with the values, cancelled (if any) when the form is
 	// cancelled. The repository and snapshot serve the commit picker; the
 	// dialog uses its own handle and copy.
 	void Open(BWindow *owner, std::function<void(const Form &form)> accepted,
 		git_repository *repository = nullptr, const Snapshot *snapshot = nullptr,
 		std::function<void()> cancelled = nullptr) const;
-	// Opens the form modal to owner; each time the user accepts, action runs
+	// Opens the form over owner; each time the user accepts, action runs
 	// on the owner's thread with the values while the form stays open with
 	// its fields disabled. Its outcome closes the form, or shows the error
 	// in it so that the user can correct the values and try again.
@@ -154,7 +155,7 @@ public:
 
 
 // Lets the user pick a commit from the history of a branch, remote copy,
-// tag or worktree, or enter it, in a dialog modal to owner; chosen runs on
+// tag or worktree, or enter it, in a dialog over owner; chosen runs on
 // the owner's thread with the commit in revision syntax. The picker uses its
 // own repository handle and snapshot copy.
 void PickCommit(BWindow *owner, git_repository *repository, const Snapshot &snapshot, const std::string &spec,
@@ -166,7 +167,7 @@ BPopUpMenu *RefMenu(const Snapshot &snapshot, const std::string &current);
 void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &current);
 
 
-// Shows the preview of a plan modal to owner; run runs on the owner's thread
+// Shows the preview of a plan over owner; run runs on the owner's thread
 // if the user chose to run it, with the resolution for overlapping worktree
 // changes. A plan that needs no preview (RunsWithoutPreview()) runs at once.
 void ConfirmPlan(BWindow *owner, const Plan &plan, git_repository *repository,
@@ -190,7 +191,7 @@ struct ListColumn {
 };
 
 
-// Rows to choose from, modal to owner; chosen runs on the owner's thread
+// Rows to choose from, in a dialog over owner; chosen runs on the owner's thread
 // with the chosen row indices. With okLabel empty, the list is only shown.
 void ChooseFromList(
 	BWindow *owner,
@@ -203,7 +204,7 @@ void ChooseFromList(
 );
 
 
-// A text to read, modal to owner.
+// A text to read, in a dialog over owner.
 void ShowText(BWindow *owner, const std::string &title, const std::string &text);
 
 // Local date and time; empty for 0.

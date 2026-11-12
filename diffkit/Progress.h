@@ -43,23 +43,15 @@ public:
 // (Progress::Cancelled()) and finishes unseen.
 //
 // The work must not use the owner's objects: it captures copies (as a
-// repository path, to open its own handle). Only a top-level window can be
-// the owner: Haiku has no hierarchy of modal windows, so dialogs show their
-// progress themselves. Call on the owner's thread.
+// repository path, to open its own handle). The owner must not be modal
+// itself: Haiku has no hierarchy of modal windows. Call on the owner's
+// thread.
 void RunWithProgress(
 	BWindow *owner,
 	const std::string &title,
 	std::function<void(Progress &progress)> work,
 	std::function<void(const std::string &error)> done,
 	bool cancellable = false
-);
-
-// The same without a dialog, for dialogs, which show their progress
-// themselves.
-void RunInBackground(
-	BWindow *owner,
-	std::function<void()> work,
-	std::function<void(const std::string &error)> done
 );
 
 

@@ -152,7 +152,7 @@ void RunWithProgress(
 )
 {
 	if (owner->Feel() != B_NORMAL_WINDOW_FEEL) {
-		debugger("RunWithProgress() called with a dialog as the owner");
+		debugger("RunWithProgress() called with a modal window as the owner");
 	}
 	ProgressDialog *dialog = new ProgressDialog(title, cancellable);
 	const std::shared_ptr<Progress> progress = dialog->GetProgress();
@@ -162,6 +162,7 @@ void RunWithProgress(
 		done(message->GetString("error", ""));
 	});
 	AttachDialog(owner, dialog);
+	dialog->AddToSubset(owner);
 	dialog->ResizeToPreferred();
 	PlaceOver(dialog, owner->Frame());
 	dialog->Show();
@@ -170,18 +171,6 @@ void RunWithProgress(
 	}, std::move(answer));
 }
 
-
-void RunInBackground(
-	BWindow *owner,
-	std::function<void()> work,
-	std::function<void(const std::string &error)> done
-)
-{
-	BMessage answer = AnswerMessage(owner, [done = std::move(done)](BMessage *message) {
-		done(message->GetString("error", ""));
-	});
-	StartWork(owner, std::move(work), std::move(answer));
-}
 
 
 } // DiffKit

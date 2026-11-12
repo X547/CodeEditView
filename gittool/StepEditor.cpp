@@ -75,14 +75,14 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 		BRect(0, 0, 939, 639),
 		"",
 		B_TITLED_WINDOW_LOOK,
-		B_MODAL_SUBSET_WINDOW_FEEL,
+		B_NORMAL_WINDOW_FEEL,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
 	),
 	fTarget(history),
 	fRepository(OpenRepository(repositoryPath)),
 	fInput(input)
 {
-	AddToSubset(history);
+	DiffKit::AttachDialog(history, this);
 	static const char *kTitles[] = {"Edit contents", "Split", "Resolve conflicts"};
 	const std::string commitName = input.mode == StepEditMode::Resolve ? std::string("the commit")
 		: ShortId(input.result);
@@ -445,6 +445,7 @@ bool StepEditor::SendResult()
 	BMessage message(kMsgStepEdited);
 	message.AddInt32("step", static_cast<int32>(fInput.step));
 	message.AddInt32("mode", static_cast<int32>(fInput.mode));
+	message.AddUInt64("revision", fInput.revision);
 	try {
 		for (const std::unique_ptr<File> &file : fFiles) {
 			const std::string text = Text(*file->right);

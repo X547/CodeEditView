@@ -40,21 +40,21 @@
 namespace GitTool {
 
 
-//#pragma mark - ModalDialog
+//#pragma mark - Dialog
 
-ModalDialog::ModalDialog(const char *title, uint32 flags, window_feel feel):
+Dialog::Dialog(const char *title, uint32 flags):
 	BWindow(
 		BRect(0, 0, 100, 100),
 		title,
 		B_TITLED_WINDOW_LOOK,
-		feel,
+		B_NORMAL_WINDOW_FEEL,
 		flags | B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE
 	)
 {
 }
 
 
-void ModalDialog::Open(BWindow *owner, std::function<void(bool accepted)> done)
+void Dialog::Open(BWindow *owner, std::function<void(bool accepted)> done)
 {
 	fAnswer = DiffKit::AnswerMessage(owner, [done = std::move(done)](BMessage *answer) {
 		done(answer->GetBool("accepted", false));
@@ -68,7 +68,7 @@ void ModalDialog::Open(BWindow *owner, std::function<void(bool accepted)> done)
 }
 
 
-void ModalDialog::SendAnswer(bool accepted)
+void Dialog::SendAnswer(bool accepted)
 {
 	if (!fAnswerPending) {
 		return;
@@ -80,11 +80,11 @@ void ModalDialog::SendAnswer(bool accepted)
 }
 
 
-bool ModalDialog::Go()
+bool Dialog::Go()
 {
 	// A looper waiting here would freeze its windows; loopers use Open().
 	if (BLooper::LooperForThread(find_thread(nullptr)) != nullptr) {
-		debugger("ModalDialog::Go() called on a looper thread; use Open()");
+		debugger("Dialog::Go() called on a looper thread; use Open()");
 	}
 	bool accepted = false;
 	fAccepted = &accepted;
@@ -100,7 +100,7 @@ bool ModalDialog::Go()
 }
 
 
-void ModalDialog::Finish(bool accepted)
+void Dialog::Finish(bool accepted)
 {
 	SendAnswer(accepted);
 	if (fAccepted != nullptr) {
@@ -112,7 +112,7 @@ void ModalDialog::Finish(bool accepted)
 }
 
 
-bool ModalDialog::QuitRequested()
+bool Dialog::QuitRequested()
 {
 	SendAnswer(false);
 	if (fAccepted != nullptr) {
@@ -124,7 +124,7 @@ bool ModalDialog::QuitRequested()
 }
 
 
-void ModalDialog::MessageReceived(BMessage *message)
+void Dialog::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
 		case kMsgDialogOk:
@@ -329,7 +329,7 @@ static constexpr uint32 kMsgFieldChanged = 'GTfc';
 static constexpr uint32 kMsgFormActionDone = 'GTfd';
 
 
-class FormDialog: public ModalDialog {
+class FormDialog: public Dialog {
 private:
 	// Shared with the owner's callback, which reads it after the answer.
 	std::shared_ptr<Form> fForm;
@@ -367,7 +367,7 @@ public:
 
 
 FormDialog::FormDialog(std::shared_ptr<Form> sharedForm, git_repository *repository, const Snapshot *snapshot):
-	ModalDialog(sharedForm->title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+	Dialog(sharedForm->title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fForm(std::move(sharedForm))
 {
 	Form &form = *fForm;
@@ -653,7 +653,7 @@ void FormDialog::MessageReceived(BMessage *message)
 		return;
 	}
 	if (message->what != kMsgPickCommit) {
-		ModalDialog::MessageReceived(message);
+		Dialog::MessageReceived(message);
 		return;
 	}
 	const int32 index = message->GetInt32("field", -1);
@@ -805,7 +805,7 @@ void FillRefMenu(BMenu *menu, const Snapshot &snapshot, const std::string &curre
 static constexpr uint32 kMsgPickerHistoryLoaded = 'GTph';
 
 
-class CommitPicker: public ModalDialog {
+class CommitPicker: public Dialog {
 private:
 	// Its own handle: the owner goes on using its own meanwhile.
 	RepositoryPtr fRepository;
@@ -832,7 +832,7 @@ public:
 
 CommitPicker::CommitPicker(git_repository *repository, const Snapshot &snapshot, const std::string &spec,
 	std::shared_ptr<std::string> result):
-	ModalDialog("Choose a commit", B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+	Dialog("Choose a commit", B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fRepository(OpenRepository(git_repository_commondir(repository))),
 	fRepositoryPath(git_repository_commondir(repository)),
 	fResult(std::move(result)),
@@ -979,7 +979,7 @@ void CommitPicker::MessageReceived(BMessage *message)
 			HistoryLoaded();
 			break;
 		default:
-			ModalDialog::MessageReceived(message);
+			Dialog::MessageReceived(message);
 			break;
 	}
 }
@@ -1006,7 +1006,7 @@ void PickCommit(BWindow *owner, git_repository *repository, const Snapshot &snap
 
 //#pragma mark - PlanDialog
 
-class PlanDialog: public ModalDialog {
+class PlanDialog: public Dialog {
 private:
 	const Plan fPlan;
 	// Shared with the owner's callback, which reads it after the answer.
@@ -1034,7 +1034,7 @@ static BRadioButton *ResolutionButton(const char *label, Resolution resolution)
 
 
 PlanDialog::PlanDialog(const Plan &plan, git_repository *repository, std::shared_ptr<Resolution> resolution):
-	ModalDialog(plan.title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+	Dialog(plan.title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fPlan(plan),
 	fResolution(std::move(resolution))
 {
@@ -1113,7 +1113,7 @@ void PlanDialog::MessageReceived(BMessage *message)
 			UpdateRunButton();
 			break;
 		default:
-			ModalDialog::MessageReceived(message);
+			Dialog::MessageReceived(message);
 			break;
 	}
 }
@@ -1156,7 +1156,7 @@ void RunPlanWithProgress(
 
 //#pragma mark - ListDialog
 
-class ListDialog: public ModalDialog {
+class ListDialog: public Dialog {
 private:
 	BColumnListView *fList {};
 	// Shared with the owner's callback, which reads it after the answer.
@@ -1187,7 +1187,7 @@ ListDialog::ListDialog(
 	bool multiple,
 	std::shared_ptr<std::vector<int>> selected
 ):
-	ModalDialog(title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
+	Dialog(title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE),
 	fSelected(std::move(selected)),
 	fChoosing(!okLabel.empty())
 {
@@ -1243,7 +1243,7 @@ void ListDialog::MessageReceived(BMessage *message)
 		}
 		return;
 	}
-	ModalDialog::MessageReceived(message);
+	Dialog::MessageReceived(message);
 }
 
 
@@ -1267,10 +1267,10 @@ void ChooseFromList(
 }
 
 
-class TextDialog: public ModalDialog {
+class TextDialog: public Dialog {
 public:
 	TextDialog(const std::string &title, const std::string &text):
-		ModalDialog(title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE)
+		Dialog(title.c_str(), B_NOT_ZOOMABLE | B_NOT_MINIMIZABLE)
 	{
 		BTextView *textView = nullptr;
 		BScrollView *scrollView = ReadOnlyText(textView, text, 600, 300);

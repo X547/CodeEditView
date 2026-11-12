@@ -55,13 +55,16 @@ struct StepEditorInput {
 	// Resolve.
 	std::vector<ConflictFile> conflicts;
 	std::string message;
+	// HistoryEdit::Revision() of the edits the step belongs to.
+	uint64_t revision {};
 };
 
 
 // Edits the files of one step of a history edit and sends the result to
-// the history window as kMsgStepEdited: "step", "mode" (int32), and per
+// the history window as kMsgStepEdited: "step", "mode" (int32), "revision"
+// (uint64), and per
 // file "path" (string), "deleted" (bool), "blob" (raw git_oid), "fileMode"
-// (int32); "message" (string) for Split. Modal to the history window.
+// (int32); "message" (string) for Split. Closes with the history window.
 class StepEditor: public BWindow {
 private:
 	struct File {

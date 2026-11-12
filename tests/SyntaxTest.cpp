@@ -99,6 +99,7 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::find(languages.begin(), languages.end(), "cpp") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "shell") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "meson") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "jam") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -115,6 +116,13 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::string_view(LanguageForPath("meson.build")) == "meson");
 	CHECK(std::string_view(LanguageForPath("src/meson.build")) == "meson");
 	CHECK(std::string_view(LanguageForPath("meson_options.txt")) == "meson");
+	CHECK(std::string_view(LanguageForPath("src/apps/Jamfile")) == "jam");
+	CHECK(std::string_view(LanguageForPath("Jamrules")) == "jam");
+	CHECK(std::string_view(LanguageForPath("rules.jam")) == "jam");
+	CHECK(std::string_view(LanguageForPath("/haiku/build/jam/ArchitectureRules")) == "jam");
+	CHECK(std::string_view(LanguageForPath("build/jam/packages/Haiku")) == "jam");
+	CHECK(std::string_view(LanguageForPath("build/jam/tool.sh")) == "shell");
+	CHECK(LanguageForPath("mybuild/jam/Rules") == nullptr);
 	CHECK(LanguageForPath("Makefile") == nullptr);
 	CHECK(LanguageForPath("x.build") == nullptr);
 	CHECK(LanguageForPath("notes.txt") == nullptr);
@@ -227,6 +235,65 @@ TEST_CASE("meson highlighting")
 	CHECK(StyleAt(core, 4, 16) == HighlightStyle::Character);
 	CHECK(StyleAt(core, 4, 21) == HighlightStyle::Number);
 	CHECK(StyleAt(core, 5, 0) == HighlightStyle::Keyword);
+}
+
+
+TEST_CASE("jam highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"# note\n"
+		"rule Foo a : b\n"
+		"{\n"
+		"\tlocal x = $(a:S=.o)/y \"s $(b)\" ;\n"
+		"\tif ! $(x) in c { return [ Bar $(x) ] ; }\n"
+		"\tEcho if on ;\n"
+		"}\n"
+		"actions quietly Foo\n"
+		"{\n"
+		"\techo $(1) # not a comment\n"
+		"}\n",
+		"jam"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 1, 5) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 1, 9) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 7) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 9) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 3, 11) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 16) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 19) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 20) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 23) == HighlightStyle::String);
+	CHECK(StyleAt(core, 3, 24) == HighlightStyle::String);
+	CHECK(StyleAt(core, 3, 26) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 30) == HighlightStyle::String);
+	CHECK(StyleAt(core, 3, 32) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 4) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 4, 6) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 11) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 14) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 16) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 18) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 25) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 27) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 31) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 38) == HighlightStyle::Punctuation);
+	// Keywords in lists are words, as in Jam.
+	CHECK(StyleAt(core, 5, 1) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 6) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 7, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 8) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 16) == HighlightStyle::Function);
+	// Action bodies are shell commands.
+	CHECK(StyleAt(core, 9, 1) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 9, 6) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 9, 11) == HighlightStyle::Default);
 }
 
 

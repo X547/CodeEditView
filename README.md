@@ -34,12 +34,12 @@ write a `BPositionIO`; line endings and a UTF-8 BOM are preserved.
 The view handles `B_CUT`, `B_COPY`, `B_PASTE`, `B_SELECT_ALL`, `B_UNDO` and
 `B_REDO` messages, so menu items can target it directly.
 
-Syntax highlighting is enabled per document; C, C++, shell (sh and Bash) and
-Meson are built in:
+Syntax highlighting is enabled per document; C, C++, shell (sh and Bash),
+Meson and Jam are built in:
 
 ```cpp
 CodeEdit::ModelLock lock(*model);
-model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp", "shell", "meson" or nullptr
+model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp", "shell", "meson", "jam" or nullptr
 ```
 
 Parsing runs incrementally in a background thread. Colors come from a

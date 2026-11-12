@@ -118,7 +118,7 @@ TEST_CASE("fold candidates from the syntax tree")
 }
 
 
-TEST_CASE("fold candidates of shell and meson")
+TEST_CASE("fold candidates of shell, meson and jam")
 {
 	// Closing keywords on their own line stay visible.
 	BReference<TextModel> shell = MakeModel(
@@ -142,6 +142,19 @@ TEST_CASE("fold candidates of shell and meson")
 	);
 	EditorCore mesonCore(meson);
 	CHECK(mesonCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
+
+	// Rule invocations over several lines fold up to the closing ";".
+	BReference<TextModel> jam = MakeModel(
+		"rule F\n"
+		"{\n"
+		"\tLib x :\n"
+		"\t\ta.c\n"
+		"\t\t;\n"
+		"}\n",
+		"jam"
+	);
+	EditorCore jamCore(jam);
+	CHECK(jamCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{1, 4}, {2, 3}});
 }
 
 

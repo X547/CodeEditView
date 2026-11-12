@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "jam",
+      "camelcase": "Jam",
+      "scope": "source.jam",
+      "path": ".",
+      "file-types": ["jam", "Jamfile", "Jamrules", "Jambase"]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Jam build tool grammar"
+  }
+}

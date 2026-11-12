@@ -234,6 +234,31 @@ TEST_CASE("outline of shell functions")
 }
 
 
+TEST_CASE("outline of jam rules and actions")
+{
+	const std::string_view text =
+		"rule A x : y\n"
+		"{\n"
+		"}\n"
+		"actions quietly A\n"
+		"{\n"
+		"\techo\n"
+		"}\n"
+		"rule B { }\n";
+	EditorCore core(MakeModel(text, "jam"));
+	const std::vector<OutlineItem> outline = core.Outline();
+	REQUIRE(outline.size() == 3);
+	CHECK(outline[0].kind == OutlineKind::Function);
+	CHECK(outline[0].label == "A");
+	CHECK(outline[0].nameStart == 5);
+	CHECK(outline[0].nameEnd == 6);
+	CHECK(outline[1].kind == OutlineKind::Function);
+	CHECK(outline[1].label == "actions A");
+	CHECK(outline[1].nameStart == text.find("A\n{\n\techo"));
+	CHECK(outline[2].label == "B");
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

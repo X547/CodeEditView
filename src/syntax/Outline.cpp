@@ -113,6 +113,15 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 		const TSNode parameters = ChildByField(*declarator, "parameters");
 		item.label = Compact(NodeText(name, text)
 			+ (ts_node_is_null(parameters) ? std::string() : NodeText(parameters, text)));
+	} else if (type == "rule_definition") {
+		// Jam
+		item.kind = OutlineKind::Function;
+	} else if (type == "actions_definition") {
+		// Jam; usually named like the rule that runs it.
+		item.kind = OutlineKind::Function;
+		if (!ts_node_is_null(name)) {
+			item.label = "actions " + Compact(NodeText(name, text));
+		}
 	} else if (type == "namespace_definition") {
 		item.kind = OutlineKind::Namespace;
 		anonymous = "(anonymous namespace)";

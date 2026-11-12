@@ -13,6 +13,7 @@
 
 #include "CHighlights.inc"
 #include "CppHighlights.inc"
+#include "JamHighlights.inc"
 #include "MesonHighlights.inc"
 #include "ShellHighlights.inc"
 
@@ -21,6 +22,7 @@ extern "C" const TSLanguage *tree_sitter_c();
 extern "C" const TSLanguage *tree_sitter_cpp();
 extern "C" const TSLanguage *tree_sitter_bash();
 extern "C" const TSLanguage *tree_sitter_meson();
+extern "C" const TSLanguage *tree_sitter_jam();
 
 
 namespace CodeEdit {
@@ -48,6 +50,11 @@ static constexpr const char *kShellNavigation = R"scm(
 
 // Meson has no definitions.
 static constexpr const char *kMesonNavigation = "";
+
+static constexpr const char *kJamNavigation = R"scm(
+(rule_definition) @definition
+(actions_definition) @definition
+)scm";
 
 
 static constexpr const char *kCFolds = R"scm(
@@ -98,6 +105,18 @@ static constexpr const char *kMesonFolds = R"scm(
 (dictionaries) @fold
 )scm";
 
+// Statements over several lines fold, like the long lists of Jamfiles.
+static constexpr const char *kJamFolds = R"scm(
+(block) @fold
+(switch_statement) @fold
+(case_clause) @fold
+(actions_definition) @fold
+(rule_invocation) @fold
+(assignment) @fold
+(on_assignment) @fold
+(local_statement) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
@@ -125,6 +144,7 @@ static constexpr FileExtension kFileExtensions[] = {
 	{"bash", "shell"},
 	{"ksh",  "shell"},
 	{"zsh",  "shell"},
+	{"jam",  "jam"},
 };
 
 // Files known by their whole name, compared case-sensitively.
@@ -140,7 +160,13 @@ static constexpr FileName kFileNames[] = {
 	{".zprofile",            "shell"},
 	{"profile",              "shell"},
 	{"UserSetupEnvironment", "shell"},
+	{"Jamfile",              "jam"},
+	{"Jamrules",             "jam"},
+	{"Jambase",              "jam"},
 };
+
+// The Jam rules of the Haiku build have no extension.
+static constexpr std::string_view kJamDirectory = "build/jam/";
 
 
 Language::Language(
@@ -254,7 +280,8 @@ const std::vector<const Language*> &Language::All()
 	static const Language sCpp("cpp", tree_sitter_cpp(), kCppHighlights, kCppNavigation, kCppFolds);
 	static const Language sShell("shell", tree_sitter_bash(), kShellHighlights, kShellNavigation, kShellFolds);
 	static const Language sMeson("meson", tree_sitter_meson(), kMesonHighlights, kMesonNavigation, kMesonFolds);
-	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson};
+	static const Language sJam("jam", tree_sitter_jam(), kJamHighlights, kJamNavigation, kJamFolds);
+	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson, &sJam};
 	return sAll;
 }
 
@@ -290,17 +317,21 @@ const char *LanguageForPath(std::string_view path)
 		}
 	}
 	const size_t dot = leaf.rfind('.');
-	if (dot == std::string_view::npos || dot == 0) {
-		return nullptr;
-	}
-	std::string extension(leaf.substr(dot + 1));
-	std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
-		return static_cast<char>(tolower(ch));
-	});
-	for (const FileExtension &entry : kFileExtensions) {
-		if (entry.extension == extension) {
-			return entry.language;
+	if (dot != std::string_view::npos && dot != 0) {
+		std::string extension(leaf.substr(dot + 1));
+		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+			return static_cast<char>(tolower(ch));
+		});
+		for (const FileExtension &entry : kFileExtensions) {
+			if (entry.extension == extension) {
+				return entry.language;
+			}
 		}
+	}
+	const std::string_view directory = path.substr(0, path.size() - leaf.size());
+	const size_t jamDirectory = directory.find(kJamDirectory);
+	if (jamDirectory != std::string_view::npos && (jamDirectory == 0 || directory[jamDirectory - 1] == '/')) {
+		return "jam";
 	}
 	return nullptr;
 }

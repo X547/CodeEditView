@@ -26,6 +26,12 @@ highlightQueries = [
 		output: 'MesonHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kMesonHighlights', '@INPUT@']
 	),
+	custom_target(
+		'jam-highlights',
+		input: files('syntax/queries/jam-highlights.scm'),
+		output: 'JamHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kJamHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -62,7 +68,7 @@ codeEditViewLib = shared_library(
 	codeEditViewSources,
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
-	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep],
+	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

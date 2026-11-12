@@ -37,8 +37,11 @@ private:
 	std::map<std::string, BReference<FileDocument>> fDocuments;
 	// Files chosen in the path menu; listed until the window closes.
 	std::set<std::string> fOpened;
-	// The status is read on a thread; files to select wait for it.
-	std::unique_ptr<DiffKit::BackgroundLoader<std::vector<StatusEntry>>> fStatusLoader;
+	// The status is read on a thread; files to select wait for it. Each read
+	// has a number; an older status than the one shown is not shown.
+	std::unique_ptr<DiffKit::BackgroundLoader<std::pair<uint64, std::vector<StatusEntry>>>> fStatusLoader;
+	uint64 fStatusRequest {};
+	uint64 fShownRequest {};
 	bool fFirstStatus = true;
 	std::string fInitialPath;
 	std::optional<std::string> fPendingSelect;
@@ -68,7 +71,10 @@ private:
 	void ShowPath(const std::string &path);
 	// Reads the status on a thread; StatusLoaded() updates the window.
 	void Refresh();
+	// The first status is read under a progress dialog.
+	void LoadFirst();
 	void StatusLoaded();
+	void ShowStatus(uint64 request, const std::vector<StatusEntry> &status);
 	void ScheduleRefresh();
 	void UpdateTitle();
 	void Save(bool all);

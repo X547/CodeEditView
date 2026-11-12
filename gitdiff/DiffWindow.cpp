@@ -28,6 +28,7 @@
 #include "MessageEditor.h"
 #include "Messages.h"
 #include "PathMenu.h"
+#include "Progress.h"
 
 
 namespace GitDiff {
@@ -36,6 +37,7 @@ namespace GitDiff {
 // Delay before refreshing after the window was activated or the index
 // changed; changes come in bursts.
 static constexpr bigtime_t kRefreshDelay = 300000;
+static constexpr uint32 kMsgLoadFirst = 'GDlf';
 
 
 // The key of a file in the list: its section and path.
@@ -101,8 +103,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	),
 	fRepository(std::move(repository))
 {
-	fStatusLoader = std::make_unique<DiffKit::BackgroundLoader<std::vector<StatusEntry>>>(BMessenger(this),
-		kMsgStatusLoaded);
+	fStatusLoader = std::make_unique<DiffKit::BackgroundLoader<std::pair<uint64, std::vector<StatusEntry>>>>(
+		BMessenger(this), kMsgStatusLoaded);
 	fChangeView = new ChangeView("changes", MessageMode::Editable, 8);
 	fChangeView->ShareTopBorder();
 	fDiffView = fChangeView->Diff();
@@ -180,7 +182,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 
 	// The first status selects the file.
 	fInitialPath = relativePath;
-	Refresh();
+	// Once the window is shown.
+	PostMessage(kMsgLoadFirst);
 	UpdateTitle();
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
@@ -304,9 +307,29 @@ void DiffWindow::Refresh()
 {
 	fRefreshRunner.reset();
 	const std::string workdir = fRepository->Workdir();
-	fStatusLoader->Load([workdir]() {
+	const uint64 request = ++fStatusRequest;
+	fStatusLoader->Load([workdir, request]() {
 		Repository repository(workdir);
-		return repository.Status();
+		return std::make_pair(request, repository.Status());
+	});
+}
+
+
+void DiffWindow::LoadFirst()
+{
+	const std::string workdir = fRepository->Workdir();
+	const uint64 request = ++fStatusRequest;
+	std::shared_ptr<std::vector<StatusEntry>> status = std::make_shared<std::vector<StatusEntry>>();
+	DiffKit::RunWithProgress(this, "Reading the changes", [workdir, status](DiffKit::Progress &progress) {
+		(void)progress;
+		Repository repository(workdir);
+		*status = repository.Status();
+	}, [this, request, status](const std::string &error) {
+		if (!error.empty()) {
+			ShowError(error.c_str());
+			return;
+		}
+		ShowStatus(request, *status);
 	});
 }
 
@@ -314,14 +337,23 @@ void DiffWindow::Refresh()
 void DiffWindow::StatusLoaded()
 {
 	std::string error;
-	std::optional<std::vector<StatusEntry>> loaded = fStatusLoader->Take(error);
+	std::optional<std::pair<uint64, std::vector<StatusEntry>>> loaded = fStatusLoader->Take(error);
 	if (!loaded.has_value()) {
 		if (!error.empty()) {
 			fprintf(stderr, "Git diff: %s\n", error.c_str());
 		}
 		return;
 	}
-	const std::vector<StatusEntry> &status = *loaded;
+	ShowStatus(loaded->first, loaded->second);
+}
+
+
+void DiffWindow::ShowStatus(uint64 request, const std::vector<StatusEntry> &status)
+{
+	if (request < fShownRequest) {
+		return;
+	}
+	fShownRequest = request;
 	fChangeView->SetSections(FileSections(status, fOpened));
 	if (fFirstStatus) {
 		fFirstStatus = false;
@@ -603,6 +635,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgStatusLoaded:
 			StatusLoaded();
+			break;
+		case kMsgLoadFirst:
+			LoadFirst();
 			break;
 		case B_NODE_MONITOR:
 			ScheduleRefresh();

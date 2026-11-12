@@ -103,6 +103,13 @@ void BreakpointsWindow::Update(const BMessage &notice)
 }
 
 
+void BreakpointsWindow::SessionChanged()
+{
+	fList->Clear();
+	UpdateButtons();
+}
+
+
 void BreakpointsWindow::UpdateButtons()
 {
 	const bool selected = fList->CurrentSelection() != nullptr;

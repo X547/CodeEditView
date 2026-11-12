@@ -466,6 +466,13 @@ void DebugSession::RequestVariables(int64_t reference)
 
 void DebugSession::Output(const std::string &text, const char *category)
 {
+	static constexpr size_t kMaxOutputLog = 1 << 20;
+	fOutputLog.emplace_back(text, category);
+	fOutputLogSize += text.size();
+	while (fOutputLogSize > kMaxOutputLog && fOutputLog.size() > 1) {
+		fOutputLogSize -= fOutputLog.front().first.size();
+		fOutputLog.pop_front();
+	}
 	BMessage notice(kNoticeOutput);
 	notice.AddString("text", text.c_str());
 	notice.AddString("category", category);
@@ -654,6 +661,7 @@ void DebugSession::RemoveMark(std::optional<PlacedMark> &mark)
 
 void DebugSession::Broadcast(BMessage &message)
 {
+	message.AddInt32("session", fId);
 	for (auto it = fWatchers.begin(); it != fWatchers.end();) {
 		if (it->SendMessage(&message) == B_BAD_PORT_ID) {
 			it = fWatchers.erase(it);
@@ -899,16 +907,24 @@ void DebugSession::MessageReceived(BMessage *message)
 				break;
 			}
 			fWatchers.push_back(target);
-			BMessage state = StateNotice();
-			target.SendMessage(&state);
-			BMessage threads = ThreadsNotice();
-			target.SendMessage(&threads);
-			BMessage stack = StackNotice();
-			target.SendMessage(&stack);
-			BMessage scopes = ScopesNotice();
-			target.SendMessage(&scopes);
-			BMessage breakpoints = BreakpointsNotice();
-			target.SendMessage(&breakpoints);
+			BMessage notices[] = {StateNotice(), ThreadsNotice(), StackNotice(), ScopesNotice(), BreakpointsNotice(),
+				BMessage(kNoticeOutput)};
+			BMessage &output = notices[5];
+			for (const auto &[text, category] : fOutputLog) {
+				output.AddString("text", text.c_str());
+				output.AddString("category", category.c_str());
+			}
+			for (BMessage &notice : notices) {
+				notice.AddInt32("session", fId);
+				target.SendMessage(&notice);
+			}
+			break;
+		}
+		case kMsgUnwatch: {
+			BMessenger target;
+			if (message->FindMessenger("target", &target) == B_OK) {
+				fWatchers.erase(std::remove(fWatchers.begin(), fWatchers.end(), target), fWatchers.end());
+			}
 			break;
 		}
 		default:

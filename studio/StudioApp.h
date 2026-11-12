@@ -22,6 +22,7 @@ class BFilePanel;
 
 namespace Debugger {
 class DebugSession;
+struct SessionContext;
 }
 
 
@@ -80,7 +81,6 @@ private:
 	struct SessionEntry {
 		Debugger::DebugSession *session {};
 		std::string name;
-		std::map<Debugger::ToolWindowKind, BWindow*> tools;
 	};
 
 	struct CoverageEntry {
@@ -97,6 +97,10 @@ private:
 	BFilePanel *fOpenPanel {};
 	std::map<int32, SessionEntry> fSessions;
 	int32 fNextSessionId = 1;
+	// The debug tool windows, one of each kind, and the session they show
+	// (0 for none).
+	std::map<Debugger::ToolWindowKind, BWindow*> fTools;
+	int32 fToolSession {};
 	std::map<int32, CoverageEntry> fCoverages;
 	int32 fNextCoverageId = 1;
 
@@ -106,6 +110,11 @@ private:
 	void OpenArgument(const std::string &argument, const char *cwd);
 	void ShowFollowing(const Workspace::Locator &locator, const ShowOptions &options);
 	void ShowToolWindow(int32 session, Debugger::ToolWindowKind kind, std::optional<BRect> openerFrame);
+	// The context of a session for the tool windows; empty if it is gone.
+	// Call with fWindowLock held.
+	Debugger::SessionContext ToolContext(int32 session);
+	// The tool windows show the session (0: none).
+	void SetToolSession(int32 session);
 	void CloseSession(int32 id);
 	void OpenCoverage(const std::string &binary, const std::string &profile);
 	void CloseCoverage(int32 id);

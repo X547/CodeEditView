@@ -78,6 +78,7 @@ private:
 	void GoToUncovered(bool forward);
 	BMessenger SessionMessenger() const;
 	void Reveal(const ShowOptions &options);
+	void ShowSessionInTools();
 
 public:
 	SourceWindow(Workspace::Document *document, BRect frame, int32 session, int32 coverage);

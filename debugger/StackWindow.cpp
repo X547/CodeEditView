@@ -92,6 +92,13 @@ void StackWindow::SelectFrame(bool showSource)
 }
 
 
+void StackWindow::SessionChanged()
+{
+	fList->Clear();
+	fCurrent = 0;
+}
+
+
 void StackWindow::MessageReceived(BMessage *message)
 {
 	switch (message->what) {

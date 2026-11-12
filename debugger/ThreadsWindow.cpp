@@ -65,6 +65,13 @@ void ThreadsWindow::Update(const BMessage &notice)
 }
 
 
+void ThreadsWindow::SessionChanged()
+{
+	fList->Clear();
+	fCurrent = 0;
+}
+
+
 void ThreadsWindow::MessageReceived(BMessage *message)
 {
 	switch (message->what) {

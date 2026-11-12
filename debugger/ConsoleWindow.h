@@ -18,6 +18,9 @@ private:
 
 	void Append(const char *text, const char *category);
 
+protected:
+	void SessionChanged() override;
+
 public:
 	explicit ConsoleWindow(const SessionContext &context);
 

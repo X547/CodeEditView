@@ -62,12 +62,22 @@ void ConsoleWindow::Append(const char *text, const char *category)
 }
 
 
+void ConsoleWindow::SessionChanged()
+{
+	fOutput->SetText("");
+}
+
+
 void ConsoleWindow::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
-		case kNoticeOutput:
-			Append(message->GetString("text", ""), message->GetString("category", "console"));
+		case kNoticeOutput: {
+			const char *text;
+			for (int32 i = 0; message->FindString("text", i, &text) == B_OK; i++) {
+				Append(text, message->GetString("category", i, "console"));
+			}
 			break;
+		}
 		case kMsgInput: {
 			const char *text = fInput->Text();
 			if (text[0] == '\0') {

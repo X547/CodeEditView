@@ -310,6 +310,15 @@ void SourceWindow::UpdateCoverageMenu()
 
 // Shows the marks of the session and the coverage of the run (none: 0)
 // beside the shared marks.
+// The debug tool windows show the session of the active source window.
+void SourceWindow::ShowSessionInTools()
+{
+	BMessage active(kMsgActiveSession);
+	active.AddInt32("session", fSession);
+	be_app->PostMessage(&active);
+}
+
+
 void SourceWindow::Follow(int32 session, int32 coverage)
 {
 	StudioApp &app = StudioApp::Get();
@@ -319,6 +328,9 @@ void SourceWindow::Follow(int32 session, int32 coverage)
 		marks = app.SessionMarks(session, fDocument->Model());
 	}
 	fSession = marks.Get() != nullptr ? session : 0;
+	if (IsActive()) {
+		ShowSessionInTools();
+	}
 	std::vector<BReference<CodeEdit::MarkSet>> markSets;
 	if (marks.Get() != nullptr) {
 		markSets.push_back(marks);
@@ -990,6 +1002,7 @@ void SourceWindow::WindowActivated(bool active)
 {
 	if (active) {
 		CodeEdit::EditorCommands::SetActiveHost(this);
+		ShowSessionInTools();
 	}
 	BWindow::WindowActivated(active);
 }

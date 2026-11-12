@@ -19,6 +19,9 @@ private:
 
 	void Update(const BMessage &notice);
 
+protected:
+	void SessionChanged() override;
+
 public:
 	explicit ThreadsWindow(const SessionContext &context);
 

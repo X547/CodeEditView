@@ -34,6 +34,9 @@ private:
 	void AddVariables(const BMessage &notice);
 	BRow *AddRow(BRow *parent, const std::string &path, const char *name, const char *value, const char *type, int64_t reference);
 
+protected:
+	void SessionChanged() override;
+
 public:
 	explicit VariablesWindow(const SessionContext &context);
 

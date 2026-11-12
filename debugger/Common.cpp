@@ -148,11 +148,55 @@ std::string FileName(const std::string &path)
 ToolWindow::ToolWindow(BRect frame, const char *title, const SessionContext &context):
 	BWindow(frame, (title + context.titleSuffix).c_str(), B_FLOATING_WINDOW_LOOK, B_FLOATING_APP_WINDOW_FEEL,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
+	fBaseTitle(title),
 	fContext(context)
 {
-	BMessage watch(kMsgWatch);
+	Watch(kMsgWatch);
+}
+
+
+void ToolWindow::Watch(uint32 what)
+{
+	if (!Session().IsValid()) {
+		return;
+	}
+	BMessage watch(what);
 	watch.AddMessenger("target", BMessenger(this));
 	Session().SendMessage(&watch);
+}
+
+
+void ToolWindow::SetContext(const SessionContext &context)
+{
+	if (context.session == fContext.session && context.id == fContext.id) {
+		return;
+	}
+	Watch(kMsgUnwatch);
+	fContext = context;
+	SetTitle((fBaseTitle + fContext.titleSuffix).c_str());
+	SessionChanged();
+	Watch(kMsgWatch);
+}
+
+
+void ToolWindow::DispatchMessage(BMessage *message, BHandler *handler)
+{
+	switch (message->what) {
+		case kNoticeState:
+		case kNoticeOutput:
+		case kNoticeThreads:
+		case kNoticeStack:
+		case kNoticeScopes:
+		case kNoticeVariables:
+		case kNoticeBreakpoints:
+			if (message->GetInt32("session", fContext.id) != fContext.id || !Session().IsValid()) {
+				return;
+			}
+			break;
+		default:
+			break;
+	}
+	BWindow::DispatchMessage(message, handler);
 }
 
 

@@ -19,6 +19,9 @@ private:
 	void Update(const BMessage &notice);
 	void SelectFrame(bool showSource);
 
+protected:
+	void SessionChanged() override;
+
 public:
 	explicit StackWindow(const SessionContext &context);
 

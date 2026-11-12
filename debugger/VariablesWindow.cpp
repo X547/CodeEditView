@@ -188,6 +188,16 @@ void VariablesWindow::RowExpanded(BRow *row, bool expanded)
 }
 
 
+// Values of another session are not compared; expanded rows stay so.
+void VariablesWindow::SessionChanged()
+{
+	fList->Clear();
+	fLoading.clear();
+	fValues.clear();
+	fPreviousValues.clear();
+}
+
+
 void VariablesWindow::MessageReceived(BMessage *message)
 {
 	switch (message->what) {

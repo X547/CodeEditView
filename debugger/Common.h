@@ -60,16 +60,30 @@ std::string FileName(const std::string &path);
 
 
 // A floating window above the application's windows that hides when
-// closed. It watches the session from creation.
+// closed. It watches the session from creation, and another one after
+// SetContext(); without a session (an invalid messenger), it is empty.
 class ToolWindow: public BWindow {
+private:
+	std::string fBaseTitle;
+
+	void Watch(uint32 what);
+
 protected:
-	const SessionContext fContext;
+	SessionContext fContext;
 
 	const BMessenger &Session() const {return fContext.session;}
+	// The session changed: the window forgets what it showed; the new
+	// session's notices follow.
+	virtual void SessionChanged() {}
 
 public:
 	ToolWindow(BRect frame, const char *title, const SessionContext &context);
 
+	// Shows another session. Call with the window locked.
+	void SetContext(const SessionContext &context);
+
+	// Notices of other sessions (queued before a change) are dropped.
+	void DispatchMessage(BMessage *message, BHandler *handler) override;
 	bool QuitRequested() override;
 };
 

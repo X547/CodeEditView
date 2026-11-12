@@ -216,6 +216,64 @@ TEST_CASE("debug session with GDB")
 }
 
 
+TEST_CASE("watchers get the output so far and can stop watching")
+{
+	Workspace::DocumentRegistry registry;
+	DebugSession *session = new DebugSession(registry, 7);
+	session->Run();
+	NoticeCollector *early = new NoticeCollector();
+	early->Run();
+	NoticeCollector *late = new NoticeCollector();
+	late->Run();
+
+	BMessage watch(kMsgWatch);
+	watch.AddMessenger("target", BMessenger(early));
+	BMessenger(session).SendMessage(&watch);
+	// Not running: the session says so in its output.
+	BMessage evaluate(kMsgEvaluate);
+	evaluate.AddString("expression", "print 1");
+	BMessenger(session).SendMessage(&evaluate);
+	REQUIRE(early->WaitFor(0, [](const BMessage &message) {
+		return message.what == kNoticeOutput && message.HasString("text");
+	}).has_value());
+
+	// A later watcher gets that output at once, marked with the session.
+	BMessage lateWatch(kMsgWatch);
+	lateWatch.AddMessenger("target", BMessenger(late));
+	BMessenger(session).SendMessage(&lateWatch);
+	CHECK(late->WaitFor(0, [](const BMessage &message) {
+		return message.what == kNoticeOutput && message.GetInt32("session", 0) == 7
+			&& std::string(message.GetString("text", "")).find("Not running") != std::string::npos;
+	}).has_value());
+
+	// After unwatching, no more notices.
+	BMessage unwatch(kMsgUnwatch);
+	unwatch.AddMessenger("target", BMessenger(early));
+	BMessenger(session).SendMessage(&unwatch);
+	size_t earlyCount = 0;
+	{
+		BAutolock lock(early);
+		earlyCount = early->notices.size();
+	}
+	BMessenger(session).SendMessage(&evaluate);
+	const size_t lateMark = late->notices.size();
+	CHECK(late->WaitFor(lateMark, [](const BMessage &message) {
+		return message.what == kNoticeOutput;
+	}).has_value());
+	{
+		BAutolock lock(early);
+		CHECK(early->notices.size() == earlyCount);
+	}
+
+	session->Lock();
+	session->Quit();
+	early->Lock();
+	early->Quit();
+	late->Lock();
+	late->Quit();
+}
+
+
 // The session's output, for failures.
 static std::string Outputs(NoticeCollector &collector)
 {

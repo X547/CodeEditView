@@ -225,15 +225,6 @@ int32 StudioApp::NewSession()
 	entry.name = SessionTitle(id);
 	entry.session = new Debugger::DebugSession(fRegistry, id);
 	entry.session->Run();
-
-	Debugger::SessionContext context;
-	context.session = BMessenger(entry.session);
-	context.id = id;
-	context.titleSuffix = " \xe2\x80\x94 " + SessionTitle(id);
-	context.registry = &fRegistry;
-	// The console collects all output from the start.
-	entry.tools[Debugger::ToolWindowKind::Console] = Debugger::CreateToolWindow(Debugger::ToolWindowKind::Console,
-		context);
 	return id;
 }
 
@@ -270,24 +261,57 @@ BReference<CodeEdit::MarkSet> StudioApp::SessionMarks(int32 session, CodeEdit::T
 }
 
 
+Debugger::SessionContext StudioApp::ToolContext(int32 session)
+{
+	Debugger::SessionContext context;
+	context.registry = &fRegistry;
+	const auto it = fSessions.find(session);
+	if (it == fSessions.end()) {
+		context.titleSuffix = " \xe2\x80\x94 no session";
+		return context;
+	}
+	context.session = BMessenger(it->second.session);
+	context.id = session;
+	context.titleSuffix = " \xe2\x80\x94 " + SessionTitle(session);
+	return context;
+}
+
+
+void StudioApp::SetToolSession(int32 session)
+{
+	Debugger::SessionContext context;
+	std::vector<BWindow*> tools;
+	{
+		BAutolock lock(fWindowLock);
+		if (session == fToolSession) {
+			return;
+		}
+		fToolSession = fSessions.count(session) != 0 ? session : 0;
+		context = ToolContext(fToolSession);
+		for (const auto &[kind, tool] : fTools) {
+			tools.push_back(tool);
+		}
+	}
+	for (BWindow *window : tools) {
+		Debugger::ToolWindow *tool = dynamic_cast<Debugger::ToolWindow*>(window);
+		if (tool != nullptr && tool->Lock()) {
+			tool->SetContext(context);
+			tool->Unlock();
+		}
+	}
+}
+
+
+// The tool windows are shared: they show the session asked for.
 void StudioApp::ShowToolWindow(int32 session, Debugger::ToolWindowKind kind, std::optional<BRect> openerFrame)
 {
+	SetToolSession(session);
 	BWindow *window = nullptr;
 	{
 		BAutolock lock(fWindowLock);
-		const auto it = fSessions.find(session);
-		if (it == fSessions.end()) {
-			return;
-		}
-		SessionEntry &entry = it->second;
-		BWindow *&tool = entry.tools[kind];
+		BWindow *&tool = fTools[kind];
 		if (tool == nullptr) {
-			Debugger::SessionContext context;
-			context.session = BMessenger(entry.session);
-			context.id = session;
-			context.titleSuffix = " \xe2\x80\x94 " + SessionTitle(session);
-			context.registry = &fRegistry;
-			tool = Debugger::CreateToolWindow(kind, context);
+			tool = Debugger::CreateToolWindow(kind, ToolContext(fToolSession));
 		}
 		window = tool;
 	}
@@ -381,10 +405,8 @@ void StudioApp::CloseSession(int32 id)
 		entry = it->second;
 		fSessions.erase(it);
 	}
-	for (auto &[kind, tool] : entry.tools) {
-		if (tool != nullptr && tool->Lock()) {
-			tool->Quit();
-		}
+	if (fToolSession == id) {
+		SetToolSession(0);
 	}
 	// Ends the program (QuitRequested() disconnects).
 	BMessenger(entry.session).SendMessage(B_QUIT_REQUESTED);
@@ -667,6 +689,13 @@ void StudioApp::MessageReceived(BMessage *message)
 		case kMsgCloseSession:
 			CloseSession(message->GetInt32("session", 0));
 			break;
+		case kMsgActiveSession: {
+			const int32 session = message->GetInt32("session", 0);
+			if (session != 0) {
+				SetToolSession(session);
+			}
+			break;
+		}
 		case kMsgShowOpenFile:
 			ShowOpenFilePanel();
 			break;

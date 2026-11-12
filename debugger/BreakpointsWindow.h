@@ -21,6 +21,9 @@ private:
 	void Update(const BMessage &notice);
 	void UpdateButtons();
 
+protected:
+	void SessionChanged() override;
+
 public:
 	explicit BreakpointsWindow(const SessionContext &context);
 

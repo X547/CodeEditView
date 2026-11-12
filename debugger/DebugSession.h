@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -95,6 +96,10 @@ private:
 	std::optional<BMessage> fLastLaunch;
 	std::map<int64_t, std::pair<std::string, ResponseHandler>> fPending;
 	std::vector<BMessenger> fWatchers;
+	// Output so far, for new watchers: text and category, the oldest
+	// dropped past a size.
+	std::deque<std::pair<std::string, std::string>> fOutputLog;
+	size_t fOutputLogSize {};
 
 	std::vector<ThreadInfo> fThreads;
 	int64_t fCurrentThread {};

@@ -416,11 +416,18 @@ BMessenger SourceWindow::SessionMessenger() const
 }
 
 
-void SourceWindow::Reveal(int32 line)
+void SourceWindow::Reveal(const ShowOptions &options)
 {
 	Activate();
-	if (line > 0) {
-		fEditView->RevealLine(line - 1);
+	if (options.line <= 0) {
+		return;
+	}
+	if (options.goTo) {
+		fEditView->GoToLocation({static_cast<size_t>(options.line - 1),
+			static_cast<size_t>(std::max<int32>(options.column, 1) - 1)});
+		fEditView->MakeFocus(true);
+	} else {
+		fEditView->RevealLine(options.line - 1);
 	}
 }
 
@@ -728,7 +735,11 @@ void SourceWindow::OpenRefs(BMessage *message)
 	for (int32 i = 0; message->FindRef("refs", i, &ref) == B_OK; i++) {
 		BPath path(&ref);
 		if (path.InitCheck() == B_OK) {
-			StudioApp::Get().ShowDocument(Locator::File(path.Path()), this);
+			ShowOptions options;
+			options.line = message->GetInt32("be:line", 0);
+			options.column = message->GetInt32("be:column", 0);
+			options.goTo = options.line > 0;
+			StudioApp::Get().ShowDocument(Locator::File(path.Path()), this, options);
 		}
 	}
 }
@@ -814,14 +825,17 @@ void SourceWindow::MessageReceived(BMessage *message)
 				options.newView = message->GetBool("newView", false);
 				options.session = message->GetInt32("session", 0);
 				options.coverage = message->GetInt32("coverage", 0);
-				options.line = message->GetInt32("line", 0);
+				ReadRevealFields(*message, options);
 				StudioApp::Get().ShowDocument(*locator, this, options);
 			}
 			break;
 		}
-		case kMsgReveal:
-			Reveal(message->GetInt32("line", 0));
+		case kMsgReveal: {
+			ShowOptions options;
+			ReadRevealFields(*message, options);
+			Reveal(options);
 			break;
+		}
 		case kMsgFollowSession:
 			Follow(message->GetInt32("session", 0), fCoverage);
 			break;

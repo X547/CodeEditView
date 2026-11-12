@@ -59,6 +59,22 @@ StudioApp::~StudioApp()
 }
 
 
+void AddRevealFields(BMessage &message, const ShowOptions &options)
+{
+	message.AddInt32("line", options.line);
+	message.AddInt32("column", options.column);
+	message.AddBool("goTo", options.goTo);
+}
+
+
+void ReadRevealFields(const BMessage &message, ShowOptions &options)
+{
+	options.line = message.GetInt32("line", 0);
+	options.column = message.GetInt32("column", 0);
+	options.goTo = message.GetBool("goTo", false);
+}
+
+
 StudioApp &StudioApp::Get()
 {
 	return *static_cast<StudioApp*>(be_app);
@@ -70,7 +86,7 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 	BReference<Workspace::Document> document = fRegistry.Open(locator);
 	fWatcher->Update();
 	BMessage reveal(kMsgReveal);
-	reveal.AddInt32("line", options.line);
+	AddRevealFields(reveal, options);
 	if (!options.newView) {
 		BAutolock lock(fWindowLock);
 		for (const WindowEntry &entry : fWindows) {
@@ -308,7 +324,7 @@ void StudioApp::ShowFollowing(const Workspace::Locator &requested, const ShowOpt
 	}
 	if (sameDocument) {
 		BMessage reveal(kMsgReveal);
-		reveal.AddInt32("line", options.line);
+		AddRevealFields(reveal, options);
 		target.SendMessage(&reveal);
 		return;
 	}
@@ -320,7 +336,7 @@ void StudioApp::ShowFollowing(const Workspace::Locator &requested, const ShowOpt
 		open.AddBool("newView", true);
 		open.AddInt32("session", options.session);
 		open.AddInt32("coverage", options.coverage);
-		open.AddInt32("line", options.line);
+		AddRevealFields(open, options);
 		target.SendMessage(&open);
 		return;
 	}
@@ -547,12 +563,15 @@ void StudioApp::ArgvReceived(int32 argc, char **argv)
 }
 
 
-// Files opened with the application (Tracker, BRoster::Launch()). Optional
-// "be:line" (int32, 1-based) is revealed, as for other editors.
+// Files opened with the application (Tracker, BRoster::Launch(), /bin/open
+// as Terminal does for "file:line:column"). With "be:line" and optional
+// "be:column" (int32, 1-based) the caret goes there, as for other editors.
 void StudioApp::RefsReceived(BMessage *message)
 {
 	ShowOptions options;
 	options.line = message->GetInt32("be:line", 0);
+	options.column = message->GetInt32("be:column", 0);
+	options.goTo = options.line > 0;
 	entry_ref ref;
 	for (int32 i = 0; message->FindRef("refs", i, &ref) == B_OK; i++) {
 		// Symbolic links are opened as their targets' files.
@@ -587,7 +606,7 @@ void StudioApp::MessageReceived(BMessage *message)
 				options.newView = message->GetBool("newView", false);
 				options.session = message->GetInt32("session", 0);
 				options.coverage = message->GetInt32("coverage", 0);
-				options.line = message->GetInt32("line", 0);
+				ReadRevealFields(*message, options);
 				ShowDocument(*locator, nullptr, options);
 			}
 			break;
@@ -665,6 +684,8 @@ void StudioApp::MessageReceived(BMessage *message)
 		case DiffKit::kMsgCodeEditOpenGitFile: {
 			ShowOptions options;
 			options.line = message->GetInt32("line", 0);
+			options.column = message->GetInt32("column", 0);
+			options.goTo = options.line > 0;
 			ShowDocument(Workspace::Locator::GitCommit(message->GetString("repository", ""),
 				message->GetString("commit", ""), message->GetString("path", "")), nullptr, options);
 			break;

@@ -20,6 +20,9 @@ class OutlineView;
 namespace Studio {
 
 
+struct ShowOptions;
+
+
 // A window with one view of a document.
 class SourceWindow: public BWindow {
 private:
@@ -74,7 +77,7 @@ private:
 	void Follow(int32 session, int32 coverage);
 	void GoToUncovered(bool forward);
 	BMessenger SessionMessenger() const;
-	void Reveal(int32 line);
+	void Reveal(const ShowOptions &options);
 
 public:
 	SourceWindow(Workspace::Document *document, BRect frame, int32 session, int32 coverage);

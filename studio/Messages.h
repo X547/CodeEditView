@@ -11,7 +11,8 @@ namespace Studio {
 // Optional: "newView" (bool), "session" (int32: the session the new window
 // follows), "line" (int32, 1-based: revealed).
 constexpr uint32 kMsgOpenLocator = 'CSol';
-// To a source window: "line" (int32, 1-based) to reveal; activates it.
+// To a source window: activates it; "line" (int32, 1-based) to reveal, or
+// with "goTo" (bool) to move the caret to, with "column" (int32, 1-based).
 constexpr uint32 kMsgReveal = 'CSrv';
 // "session" (int32): to the application, from a session's control window;
 // to the source windows after the session closed.

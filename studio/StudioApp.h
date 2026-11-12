@@ -53,7 +53,16 @@ struct ShowOptions {
 	int32 coverage {};
 	// 1-based; 0 for none.
 	int32 line {};
+	int32 column {};
+	// The caret moves to line and column, as with "Go to line"; otherwise
+	// the line is only revealed (as a debugger's execution line).
+	bool goTo {};
 };
+
+
+// The fields of kMsgReveal (and kMsgOpenLocator) for the options, and back.
+void AddRevealFields(BMessage &message, const ShowOptions &options);
+void ReadRevealFields(const BMessage &message, ShowOptions &options);
 
 
 // The CodeEdit application: documents shared by its windows, one window

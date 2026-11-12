@@ -51,6 +51,13 @@ static constexpr float kMaxAutoScrollSpeed = 20000;
 static constexpr float kDragThreshold = 2;
 
 
+// Gap lines of decorations and the lines of folded regions.
+static float GapLineThickness(float lineHeight)
+{
+	return std::max(1.0f, roundf(lineHeight / 12));
+}
+
+
 namespace CodeEdit {
 
 
@@ -647,7 +654,7 @@ void CodeEditView::DrawRow(
 		if (gap.line != data.line || (gap.bottom ? !data.lastRow : data.subRow != 0)) {
 			continue;
 		}
-		const float thickness = std::max(1.0f, roundf(fLineHeight / 12));
+		const float thickness = GapLineThickness(fLineHeight);
 		const float y = gap.bottom ? bottom - thickness + 1 : top;
 		SetHighColor(gap.color);
 		FillRect(BRect(updateRect.left, y, updateRect.right, y + thickness - 1));
@@ -752,6 +759,12 @@ void CodeEditView::DrawRow(
 
 	const float caretWidth = std::max(1.0f, roundf(fLineHeight / 16));
 	if (data.lastRow && std::binary_search(context.foldedHeaders.begin(), context.foldedHeaders.end(), data.line)) {
+		// A line where the folded lines would be, as the gap lines of
+		// decorations (insertions and deletions in diffs), so that hidden
+		// text is not missed.
+		const float thickness = GapLineThickness(fLineHeight);
+		SetHighColor(context.placeholder);
+		FillRect(BRect(updateRect.left, bottom - thickness + 1, updateRect.right, bottom));
 		// Placeholder for the folded lines after the header text.
 		const float left = (data.DisplayColumn(data.text.size()) + 1) * fCellWidth;
 		const BRect box(left, top + 1, left + kFoldPlaceholderCells * fCellWidth - 1, bottom - 1);

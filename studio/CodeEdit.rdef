@@ -1,6 +1,7 @@
-// Resources of the CodeEdit application: its signature, launch behavior and
-// the file types it opens (Tracker's "Open with" and preferred
-// application). Added to the installed executable by the install script.
+// Resources of the CodeEdit application: its signature, launch behavior,
+// the file types it opens (Tracker's "Open with" and preferred application)
+// and the icons of the tool bar. Added to the built executable and again to
+// the installed one by the install script.
 
 resource app_signature "application/x-vnd.CodeEdit";
 
@@ -37,3 +38,15 @@ resource file_types message {
 	// Any other text.
 	"types" = "text"
 };
+
+// Tool bar icons, from the ToolBar demo. Loaded by name.
+resource(101, "new") #'VICN' import "icons/new.hvif";
+resource(102, "open") #'VICN' import "icons/open.hvif";
+resource(103, "save") #'VICN' import "icons/save.hvif";
+resource(104, "functions") #'VICN' import "icons/functions.hvif";
+resource(105, "headers") #'VICN' import "icons/headers.hvif";
+resource(106, "find") #'VICN' import "icons/find.hvif";
+resource(107, "find-again") #'VICN' import "icons/find-again.hvif";
+resource(108, "lock") #'VICN' import "icons/lock.hvif";
+resource(109, "documents") #'VICN' import "icons/documents.hvif";
+resource(110, "outline") #'VICN' import "icons/outline.hvif";

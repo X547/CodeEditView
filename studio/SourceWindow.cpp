@@ -1,29 +1,38 @@
 #include "Ask.h"
 #include "SourceWindow.h"
 
+#include <sys/stat.h>
+
 #include <algorithm>
 #include <iterator>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <Alert.h>
 #include <Application.h>
 #include <Beep.h>
+#include <Directory.h>
 #include <Entry.h>
 #include <FilePanel.h>
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
 #include <Path.h>
+#include <PathFinder.h>
+#include <Roster.h>
 #include <ScrollBar.h>
 #include <ScrollView.h>
 #include <SplitView.h>
+#include <StringList.h>
 #include <StringView.h>
 
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
 
+#include "CodeEditLink.h"
 #include "Common.h"
 #include "Coverage.h"
 #include "CoverageMessages.h"
@@ -36,6 +45,7 @@
 #include "OutlineView.h"
 #include "StartSessionWindow.h"
 #include "StudioApp.h"
+#include "ToolBar.h"
 #include "WindowHelpers.h"
 
 
@@ -65,6 +75,15 @@ static constexpr uint32 kMsgPreviousUncovered = 'SWpu';
 static constexpr uint32 kMsgNewSession = 'SWns';
 static constexpr uint32 kMsgToggleBreakpoint = 'SWtb';
 static constexpr uint32 kMsgToggleBreakpointEnabled = 'SWte';
+// From the tool bar.
+static constexpr uint32 kMsgToggleLocked = 'SWtl';
+// "start", "end" (uint64): selects the name of a definition.
+static constexpr uint32 kMsgSelectDefinition = 'SWsd';
+// "name" (string), "system" (bool: written in angle brackets): opens the
+// header of an include directive.
+static constexpr uint32 kMsgOpenInclude = 'SWoi';
+// Of the drop-down menus of the tool bar.
+static constexpr int32 kRecentDocumentCount = 10;
 
 // Commands forwarded to the session followed.
 static constexpr uint32 kSessionCommands[] = {
@@ -161,8 +180,9 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	fSplitView = new BSplitView(B_HORIZONTAL, 0);
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
+		.Add(CreateToolBar())
 		.AddGroup(B_VERTICAL, 0)
-			// The frames of the panes overlap the menu bar and window borders.
+			// The frames of the panes overlap the tool bar and window borders.
 			.SetInsets(-1, -1, -1, 0)
 			.Add(fSplitView)
 		.End()
@@ -171,6 +191,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.SetInsets(B_USE_SMALL_SPACING, 2, B_V_SCROLL_BAR_WIDTH + 2, 2)
 			.Add(fStatus)
 		.End();
+	SetKeyMenuBar(menuBar);
 
 	fSplitView->AddChild(new BScrollView("outlineScroll", fOutline, 0, false, true, B_PLAIN_BORDER), 1);
 	fSplitView->AddChild(new CodeEditScrollView("pane", fEditView), 4);
@@ -277,12 +298,28 @@ BMenu *SourceWindow::CreateCoverageMenu()
 }
 
 
+static void ClearMenu(BMenu *menu)
+{
+	while (BMenuItem *item = menu->RemoveItem(static_cast<int32>(0))) {
+		delete item;
+	}
+}
+
+
+// A separator unless the menu is empty or ends with one.
+static void AddSeparator(BMenu *menu)
+{
+	const int32 count = menu->CountItems();
+	if (count > 0 && dynamic_cast<BSeparatorItem *>(menu->ItemAt(count - 1)) == nullptr) {
+		menu->AddSeparatorItem();
+	}
+}
+
+
 // The runs to follow, and the commands enabled with a run.
 void SourceWindow::UpdateCoverageMenu()
 {
-	while (BMenuItem *item = fCoverageRunMenu->RemoveItem(static_cast<int32>(0))) {
-		delete item;
-	}
+	ClearMenu(fCoverageRunMenu);
 	BMessage *none = new BMessage(kMsgFollowCoverage);
 	none->AddInt32("coverage", 0);
 	BMenuItem *noneItem = new BMenuItem("None", none);
@@ -305,6 +342,270 @@ void SourceWindow::UpdateCoverageMenu()
 			item->SetEnabled(following);
 		}
 	}
+}
+
+
+// Like the tool bar of Pe: files, definitions and includes, search, and
+// the state of the window.
+BMenuBar *SourceWindow::CreateToolBar()
+{
+	ToolBar *toolBar = new ToolBar("toolBar");
+	fOpenMenu = new BMenu("Open");
+	fFunctionsMenu = new BMenu("Functions");
+	fHeadersMenu = new BMenu("Headers");
+	fSaveButton = new IconMenuItem("save", "Save", new BMessage(kMsgSave));
+	fLockButton = new IconMenuItem("lock", "Prevent editing", new BMessage(kMsgToggleLocked));
+	fOutlineButton = new IconMenuItem("outline", "Outline", new BMessage(kMsgToggleOutline));
+
+	toolBar->AddItem(new IconMenuItem("new", "New", new BMessage(kMsgNewDocument)));
+	toolBar->AddItem(new IconMenuItem("open", "Open", fOpenMenu));
+	toolBar->AddItem(fSaveButton);
+	toolBar->AddSeparatorItem();
+	toolBar->AddItem(new IconMenuItem("functions", "Definitions", fFunctionsMenu));
+	toolBar->AddItem(new IconMenuItem("headers", "Included files", fHeadersMenu));
+	toolBar->AddSeparatorItem();
+	toolBar->AddItem(new IconMenuItem("find", "Find", new BMessage(FindKit::kMsgFind)));
+	toolBar->AddItem(new IconMenuItem("find-again", "Find again", new BMessage(FindKit::kMsgFindAgain)));
+	toolBar->AddSeparatorItem();
+	toolBar->AddItem(fLockButton);
+	toolBar->AddItem(new IconMenuItem("documents", "Documents", new BMessage(kMsgShowDocuments)));
+	toolBar->AddItem(fOutlineButton);
+	toolBar->SetMenusBeginning([this]() {
+		FillToolBarMenus();
+	});
+	return toolBar;
+}
+
+
+void SourceWindow::UpdateToolBar()
+{
+	const DocumentStatus status = fDocument->Status();
+	const bool ready = status.state == DocumentState::Ready && !status.saving;
+	fSaveButton->SetEnabled(ready && !fDocument->IsReadOnly());
+	fLockButton->SetPressed(fLocked);
+	fOutlineButton->SetPressed(fOutlineItem->IsMarked());
+}
+
+
+void SourceWindow::FillToolBarMenus()
+{
+	FillOpenMenu();
+	FillFunctionsMenu();
+	FillHeadersMenu();
+}
+
+
+// The open commands and the files opened last.
+void SourceWindow::FillOpenMenu()
+{
+	ClearMenu(fOpenMenu);
+	fOpenMenu->AddItem(new BMenuItem("Open" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenFile)));
+	fOpenMenu->AddItem(new BMenuItem("Open from Git" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenGit)));
+	fOpenMenu->AddItem(new BMenuItem("Open location" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenLocation)));
+
+	BMessage recent;
+	be_roster->GetRecentDocuments(&recent, kRecentDocumentCount, nullptr, DiffKit::kCodeEditSignature);
+	fOpenMenu->AddSeparatorItem();
+	entry_ref ref;
+	for (int32 i = 0; recent.FindRef("refs", i, &ref) == B_OK; i++) {
+		BPath path(&ref);
+		if (path.InitCheck() != B_OK) {
+			continue;
+		}
+		BMessage *open = new BMessage(B_REFS_RECEIVED);
+		open->AddRef("refs", &ref);
+		fOpenMenu->AddItem(new BMenuItem(path.Path(), open));
+	}
+	// The separator ends the menu without recent files.
+	const int32 count = fOpenMenu->CountItems();
+	if (dynamic_cast<BSeparatorItem *>(fOpenMenu->ItemAt(count - 1)) != nullptr) {
+		delete fOpenMenu->RemoveItem(count - 1);
+	}
+	fOpenMenu->SetTargetForItems(this);
+}
+
+
+// Sections start a group with their name; members of types are indented.
+static void AddDefinitions(BMenu *menu, const std::vector<CodeEdit::OutlineItem> &items, int32 depth)
+{
+	for (const CodeEdit::OutlineItem &item : items) {
+		switch (item.kind) {
+			case CodeEdit::OutlineKind::Separator:
+				AddSeparator(menu);
+				break;
+			case CodeEdit::OutlineKind::Section: {
+				AddSeparator(menu);
+				BMenuItem *title = new BMenuItem(item.label.c_str(), nullptr);
+				title->SetEnabled(false);
+				menu->AddItem(title);
+				AddDefinitions(menu, item.children, depth);
+				break;
+			}
+			case CodeEdit::OutlineKind::Namespace:
+				AddDefinitions(menu, item.children, depth);
+				break;
+			default: {
+				BMessage *select = new BMessage(kMsgSelectDefinition);
+				select->AddUInt64("start", item.nameStart);
+				select->AddUInt64("end", item.nameEnd);
+				const std::string label = std::string(depth * 4, ' ') + item.label;
+				menu->AddItem(new BMenuItem(label.c_str(), select));
+				AddDefinitions(menu, item.children, depth + 1);
+				break;
+			}
+		}
+	}
+}
+
+
+void SourceWindow::FillFunctionsMenu()
+{
+	ClearMenu(fFunctionsMenu);
+	AddDefinitions(fFunctionsMenu, fEditView->Outline(), 0);
+	const int32 count = fFunctionsMenu->CountItems();
+	if (count > 0 && dynamic_cast<BSeparatorItem *>(fFunctionsMenu->ItemAt(count - 1)) != nullptr) {
+		delete fFunctionsMenu->RemoveItem(count - 1);
+	}
+	if (fFunctionsMenu->CountItems() == 0) {
+		BMenuItem *none = new BMenuItem("No definitions", nullptr);
+		none->SetEnabled(false);
+		fFunctionsMenu->AddItem(none);
+	}
+	fFunctionsMenu->SetTargetForItems(this);
+}
+
+
+struct Include {
+	std::string name;
+	// Written in angle brackets.
+	bool system;
+};
+
+
+// The files named by "#include" directives, in order, each once.
+static std::vector<Include> FindIncludes(CodeEdit::TextModel &model)
+{
+	std::string text;
+	{
+		CodeEdit::ModelLock lock(model);
+		text = model.Text().ToString();
+	}
+	std::vector<Include> includes;
+	std::string_view rest(text);
+	while (!rest.empty()) {
+		const size_t lineEnd = rest.find('\n');
+		const std::string_view line = rest.substr(0, lineEnd);
+		rest = lineEnd == std::string_view::npos ? std::string_view() : rest.substr(lineEnd + 1);
+
+		size_t i = line.find_first_not_of(" \t");
+		if (i == std::string_view::npos || line[i] != '#') {
+			continue;
+		}
+		i = line.find_first_not_of(" \t", i + 1);
+		if (i == std::string_view::npos || line.substr(i, 7) != "include") {
+			continue;
+		}
+		i = line.find_first_not_of(" \t", i + 7);
+		if (i == std::string_view::npos || (line[i] != '<' && line[i] != '"')) {
+			continue;
+		}
+		const bool system = line[i] == '<';
+		const size_t end = line.find(system ? '>' : '"', i + 1);
+		if (end == std::string_view::npos || end == i + 1) {
+			continue;
+		}
+		Include include {std::string(line.substr(i + 1, end - i - 1)), system};
+		const bool known = std::any_of(includes.begin(), includes.end(), [&include](const Include &other) {
+			return other.name == include.name && other.system == include.system;
+		});
+		if (!known) {
+			includes.push_back(std::move(include));
+		}
+	}
+	return includes;
+}
+
+
+void SourceWindow::FillHeadersMenu()
+{
+	ClearMenu(fHeadersMenu);
+	for (const Include &include : FindIncludes(*fDocument->Model())) {
+		BMessage *open = new BMessage(kMsgOpenInclude);
+		open->AddString("name", include.name.c_str());
+		open->AddBool("system", include.system);
+		fHeadersMenu->AddItem(new BMenuItem(include.name.c_str(), open));
+	}
+	if (fHeadersMenu->CountItems() == 0) {
+		BMenuItem *none = new BMenuItem("No included files", nullptr);
+		none->SetEnabled(false);
+		fHeadersMenu->AddItem(none);
+	}
+	fHeadersMenu->SetTargetForItems(this);
+}
+
+
+// The system header directories: each with its "posix" and "os"
+// directories and the kits in "os".
+static const std::vector<std::string> &HeaderDirectories()
+{
+	static const std::vector<std::string> directories = [] {
+		std::vector<std::string> result;
+		BStringList bases;
+		BPathFinder::FindPaths(B_FIND_PATH_HEADERS_DIRECTORY, nullptr, B_FIND_PATH_EXISTING_ONLY, bases);
+		for (int32 i = 0; i < bases.CountStrings(); i++) {
+			const std::string base = bases.StringAt(i).String();
+			result.push_back(base);
+			result.push_back(base + "/posix");
+			result.push_back(base + "/os");
+			BDirectory os((base + "/os").c_str());
+			BEntry entry;
+			while (os.GetNextEntry(&entry) == B_OK) {
+				BPath path;
+				if (entry.IsDirectory() && entry.GetPath(&path) == B_OK) {
+					result.push_back(path.Path());
+				}
+			}
+		}
+		return result;
+	}();
+	return directories;
+}
+
+
+// A name in quotes is looked up beside the document first, one in angle
+// brackets last.
+void SourceWindow::OpenInclude(BMessage *message)
+{
+	const std::string name = message->GetString("name", "");
+	const bool system = message->GetBool("system", false);
+	const Locator &locator = fDocument->GetLocator();
+	const std::string own = locator.Kind() == LocatorKind::File ? locator.Parent().Path() : std::string();
+
+	std::vector<std::string> directories;
+	if (!system && !own.empty()) {
+		directories.push_back(own);
+	}
+	const std::vector<std::string> &headers = HeaderDirectories();
+	directories.insert(directories.end(), headers.begin(), headers.end());
+	if (system && !own.empty()) {
+		directories.push_back(own);
+	}
+	for (const std::string &directory : directories) {
+		const std::string path = directory + "/" + name;
+		struct stat info;
+		if (stat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode)) {
+			StudioApp::Get().ShowDocument(Locator::File(path), this);
+			return;
+		}
+	}
+	beep();
+}
+
+
+void SourceWindow::ToggleLocked()
+{
+	fLocked = !fLocked;
+	UpdateStatus();
 }
 
 
@@ -487,6 +788,7 @@ void SourceWindow::ToggleOutline()
 	const bool visible = !fOutlineItem->IsMarked();
 	fOutlineItem->SetMarked(visible);
 	fSplitView->SetItemCollapsed(0, !visible);
+	UpdateToolBar();
 	ScheduleOutlineRefresh();
 }
 
@@ -556,11 +858,12 @@ void SourceWindow::UpdateStatus()
 	fStatus->SetToolTip(text.c_str());
 
 	CodeEdit::EditorSettings settings = fEditView->Settings();
-	const bool readOnly = fDocument->IsReadOnly() || status.state != DocumentState::Ready;
+	const bool readOnly = fLocked || fDocument->IsReadOnly() || status.state != DocumentState::Ready;
 	if (settings.readOnly != readOnly) {
 		settings.readOnly = readOnly;
 		fEditView->SetSettings(settings);
 	}
+	UpdateToolBar();
 }
 
 
@@ -792,6 +1095,20 @@ void SourceWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgRefreshOutline:
 			RefreshOutline();
+			break;
+		case kMsgToggleLocked:
+			ToggleLocked();
+			break;
+		case kMsgSelectDefinition: {
+			const size_t start = message->GetUInt64("start", 0);
+			const size_t end = message->GetUInt64("end", start);
+			fEditView->SetSelection({start, end});
+			fEditView->ScrollToSelection();
+			fEditView->MakeFocus(true);
+			break;
+		}
+		case kMsgOpenInclude:
+			OpenInclude(message);
 			break;
 		case kMsgOutlineSelected:
 			JumpToOutlineItem(false);

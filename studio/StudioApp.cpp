@@ -9,6 +9,7 @@
 #include <Entry.h>
 #include <FilePanel.h>
 #include <Path.h>
+#include <Roster.h>
 #include <WindowStack.h>
 
 #include "CodeEditLink.h"
@@ -84,6 +85,11 @@ void StudioApp::ShowDocument(const Workspace::Locator &locator, BWindow *origin,
 {
 	BReference<Workspace::Document> document = fRegistry.Open(locator);
 	fWatcher->Update();
+	// For the Open menu of the tool bar.
+	entry_ref ref;
+	if (locator.Kind() == Workspace::LocatorKind::File && get_ref_for_path(locator.Path().c_str(), &ref) == B_OK) {
+		be_roster->AddToRecentDocuments(&ref, kAppSignature);
+	}
 	BMessage reveal(kMsgReveal);
 	AddRevealFields(reveal, options);
 	if (!options.newView) {

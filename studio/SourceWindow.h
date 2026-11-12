@@ -10,6 +10,7 @@
 
 class BFilePanel;
 class BMenu;
+class BMenuBar;
 class BMenuItem;
 class BSplitView;
 class BStringView;
@@ -20,6 +21,7 @@ class OutlineView;
 namespace Studio {
 
 
+class IconMenuItem;
 struct ShowOptions;
 
 
@@ -41,6 +43,16 @@ private:
 	BMenu *fSessionMenu {};
 	BMenu *fCoverageMenu {};
 	BMenu *fCoverageRunMenu {};
+	// Of the tool bar: the drop-down menus, filled when shown, and the
+	// buttons with a state.
+	BMenu *fOpenMenu {};
+	BMenu *fFunctionsMenu {};
+	BMenu *fHeadersMenu {};
+	IconMenuItem *fSaveButton {};
+	IconMenuItem *fLockButton {};
+	IconMenuItem *fOutlineButton {};
+	// Editing is turned off from the tool bar.
+	bool fLocked {};
 	BFilePanel *fOpenPanel {};
 	BFilePanel *fSavePanel {};
 	// Close when the save started by QuitRequested() finishes.
@@ -74,6 +86,14 @@ private:
 	void UpdateDebugMenu();
 	BMenu *CreateCoverageMenu();
 	void UpdateCoverageMenu();
+	BMenuBar *CreateToolBar();
+	void UpdateToolBar();
+	void FillToolBarMenus();
+	void FillOpenMenu();
+	void FillFunctionsMenu();
+	void FillHeadersMenu();
+	void OpenInclude(BMessage *message);
+	void ToggleLocked();
 	void Follow(int32 session, int32 coverage);
 	void GoToUncovered(bool forward);
 	BMessenger SessionMessenger() const;

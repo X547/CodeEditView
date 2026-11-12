@@ -3,7 +3,9 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include "WordMotion.h"
 #include "model/DecorationMapping.h"
@@ -1830,11 +1832,28 @@ void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t first
 		static_cast<uint32_t>(text.LineStart(firstLine)),
 		static_cast<uint32_t>(text.LineEnd(lastLine))
 	);
-	ts_query_cursor_exec(cursor, syntax->GetLanguage().Folds(), ts_tree_root_node(syntax->Tree()));
+	const TSQuery *query = syntax->GetLanguage().Folds();
+	ts_query_cursor_exec(cursor, query, ts_tree_root_node(syntax->Tree()));
 	TSQueryMatch match;
-	uint32_t captureIndex;
-	while (ts_query_cursor_next_capture(cursor, &match, &captureIndex)) {
-		const TSNode node = match.captures[captureIndex].node;
+	while (ts_query_cursor_next_match(cursor, &match)) {
+		// "fold" is the folded node; "fold.end" its closing part, such as
+		// "endif()", which stays visible when it starts the last line.
+		std::optional<TSNode> folded;
+		std::optional<TSNode> closing;
+		for (uint16_t i = 0; i < match.capture_count; i++) {
+			uint32_t length = 0;
+			const char *name = ts_query_capture_name_for_id(query, match.captures[i].index, &length);
+			const std::string_view captureName(name, length);
+			if (captureName == "fold") {
+				folded = match.captures[i].node;
+			} else if (captureName == "fold.end") {
+				closing = match.captures[i].node;
+			}
+		}
+		if (!folded.has_value()) {
+			continue;
+		}
+		const TSNode node = *folded;
 		const size_t start = ts_node_start_byte(node);
 		const size_t end = ts_node_end_byte(node);
 		if (end <= start) {
@@ -1846,20 +1865,27 @@ void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t first
 		}
 		const size_t endLine = text.LineOfOffset(end - 1);
 		size_t last = endLine;
-		// A closing keyword or bracket starting the last line stays visible:
-		// "}", "fi", also "END Name".
+		// A closing part starting the last line stays visible: the
+		// "fold.end" node, otherwise a closing keyword or bracket: "}",
+		// "fi", also "END Name".
 		const size_t lineStart = FirstNonBlank(endLine);
-		for (uint32_t i = ts_node_child_count(node); i > 0; i--) {
-			const TSNode child = ts_node_child(node, i - 1);
-			const size_t childStart = ts_node_start_byte(child);
-			if (childStart < lineStart) {
-				break;
+		if (closing.has_value()) {
+			if (ts_node_start_byte(*closing) == lineStart) {
+				last = endLine - 1;
 			}
-			if (childStart == lineStart) {
-				if (!ts_node_is_named(child)) {
-					last = endLine - 1;
+		} else {
+			for (uint32_t i = ts_node_child_count(node); i > 0; i--) {
+				const TSNode child = ts_node_child(node, i - 1);
+				const size_t childStart = ts_node_start_byte(child);
+				if (childStart < lineStart) {
+					break;
 				}
-				break;
+				if (childStart == lineStart) {
+					if (!ts_node_is_named(child)) {
+						last = endLine - 1;
+					}
+					break;
+				}
 			}
 		}
 		if (last > header) {

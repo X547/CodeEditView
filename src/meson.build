@@ -38,6 +38,24 @@ highlightQueries = [
 		output: 'ComponentPascalHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kComponentPascalHighlights', '@INPUT@']
 	),
+	custom_target(
+		'python-highlights',
+		input: files('syntax/queries/python-highlights.scm'),
+		output: 'PythonHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kPythonHighlights', '@INPUT@']
+	),
+	custom_target(
+		'make-highlights',
+		input: files('syntax/queries/make-highlights.scm'),
+		output: 'MakeHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kMakeHighlights', '@INPUT@']
+	),
+	custom_target(
+		'cmake-highlights',
+		input: files('syntax/queries/cmake-highlights.scm'),
+		output: 'CMakeHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kCMakeHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -75,7 +93,7 @@ codeEditViewLib = shared_library(
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
 	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep,
-		treeSitterComponentPascalDep],
+		treeSitterComponentPascalDep, treeSitterPythonDep, treeSitterMakeDep, treeSitterCMakeDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

@@ -35,11 +35,11 @@ The view handles `B_CUT`, `B_COPY`, `B_PASTE`, `B_SELECT_ALL`, `B_UNDO` and
 `B_REDO` messages, so menu items can target it directly.
 
 Syntax highlighting is enabled per document; C, C++, shell (sh and Bash),
-Meson, Jam and Component Pascal are built in:
+Meson, Jam, Component Pascal, Python, Make and CMake are built in:
 
 ```cpp
 CodeEdit::ModelLock lock(*model);
-model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp", "shell", "meson", "jam", "componentpascal" or nullptr
+model->SetLanguage(CodeEdit::LanguageForPath(path));   // "c", "cpp", "python" etc. or nullptr
 ```
 
 Parsing runs incrementally in a background thread. Colors come from a

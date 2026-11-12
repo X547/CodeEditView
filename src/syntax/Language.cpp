@@ -12,10 +12,13 @@
 #include "support/Assert.h"
 
 #include "CHighlights.inc"
+#include "CMakeHighlights.inc"
 #include "ComponentPascalHighlights.inc"
 #include "CppHighlights.inc"
 #include "JamHighlights.inc"
+#include "MakeHighlights.inc"
 #include "MesonHighlights.inc"
+#include "PythonHighlights.inc"
 #include "ShellHighlights.inc"
 
 
@@ -25,6 +28,9 @@ extern "C" const TSLanguage *tree_sitter_bash();
 extern "C" const TSLanguage *tree_sitter_meson();
 extern "C" const TSLanguage *tree_sitter_jam();
 extern "C" const TSLanguage *tree_sitter_componentpascal();
+extern "C" const TSLanguage *tree_sitter_python();
+extern "C" const TSLanguage *tree_sitter_make();
+extern "C" const TSLanguage *tree_sitter_cmake();
 
 
 namespace CodeEdit {
@@ -62,6 +68,21 @@ static constexpr const char *kComponentPascalNavigation = R"scm(
 (module) @definition
 (procedure_declaration) @definition
 (type_declaration) @definition
+)scm";
+
+static constexpr const char *kPythonNavigation = R"scm(
+(class_definition) @definition
+(function_definition) @definition
+)scm";
+
+static constexpr const char *kMakeNavigation = R"scm(
+(rule) @definition
+(define_directive) @definition
+)scm";
+
+static constexpr const char *kCMakeNavigation = R"scm(
+(function_def) @definition
+(macro_def) @definition
 )scm";
 
 
@@ -143,6 +164,51 @@ static constexpr const char *kComponentPascalFolds = R"scm(
 (comment) @fold
 )scm";
 
+// "fold.end" marks a closing part that stays visible when it starts the last
+// line.
+static constexpr const char *kPythonFolds = R"scm(
+(function_definition) @fold
+(class_definition) @fold
+(if_statement) @fold
+(elif_clause) @fold
+(else_clause) @fold
+(for_statement) @fold
+(while_statement) @fold
+(try_statement) @fold
+(except_clause) @fold
+(finally_clause) @fold
+(with_statement) @fold
+(match_statement) @fold
+(case_clause) @fold
+(argument_list) @fold
+(parameters) @fold
+(list) @fold
+(dictionary) @fold
+(set) @fold
+(tuple) @fold
+(parenthesized_expression) @fold
+(import_from_statement) @fold
+(string (string_end) @fold.end) @fold
+)scm";
+
+static constexpr const char *kMakeFolds = R"scm(
+(rule) @fold
+(conditional) @fold
+(define_directive) @fold
+)scm";
+
+static constexpr const char *kCMakeFolds = R"scm(
+(if_condition (endif_command) @fold.end) @fold
+(foreach_loop (endforeach_command) @fold.end) @fold
+(while_loop (endwhile_command) @fold.end) @fold
+(function_def (endfunction_command) @fold.end) @fold
+(macro_def (endmacro_command) @fold.end) @fold
+(block_def (endblock_command) @fold.end) @fold
+(normal_command) @fold
+(bracket_comment) @fold
+(bracket_argument) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
@@ -156,22 +222,27 @@ struct FileName {
 
 // Headers are treated as C++, which is a superset for highlighting purposes.
 static constexpr FileExtension kFileExtensions[] = {
-	{"c",   "c"},
-	{"cpp", "cpp"},
-	{"cc",  "cpp"},
-	{"cxx", "cpp"},
-	{"c++", "cpp"},
-	{"h",   "cpp"},
-	{"hh",  "cpp"},
-	{"hpp", "cpp"},
-	{"hxx", "cpp"},
-	{"h++", "cpp"},
-	{"sh",   "shell"},
-	{"bash", "shell"},
-	{"ksh",  "shell"},
-	{"zsh",  "shell"},
-	{"jam",  "jam"},
-	{"cp",   "componentpascal"},
+	{"c",     "c"},
+	{"cpp",   "cpp"},
+	{"cc",    "cpp"},
+	{"cxx",   "cpp"},
+	{"c++",   "cpp"},
+	{"h",     "cpp"},
+	{"hh",    "cpp"},
+	{"hpp",   "cpp"},
+	{"hxx",   "cpp"},
+	{"h++",   "cpp"},
+	{"sh",    "shell"},
+	{"bash",  "shell"},
+	{"ksh",   "shell"},
+	{"zsh",   "shell"},
+	{"jam",   "jam"},
+	{"cp",    "componentpascal"},
+	{"py",    "python"},
+	{"pyi",   "python"},
+	{"mk",    "make"},
+	{"mak",   "make"},
+	{"cmake", "cmake"},
 };
 
 // Files known by their whole name, compared case-sensitively.
@@ -190,6 +261,11 @@ static constexpr FileName kFileNames[] = {
 	{"Jamfile",              "jam"},
 	{"Jamrules",             "jam"},
 	{"Jambase",              "jam"},
+	{"Makefile",             "make"},
+	{"makefile",             "make"},
+	{"GNUmakefile",          "make"},
+	{"makefile-engine",      "make"},
+	{"CMakeLists.txt",       "cmake"},
 };
 
 // The Jam rules of the Haiku build have no extension.
@@ -310,7 +386,12 @@ const std::vector<const Language*> &Language::All()
 	static const Language sJam("jam", tree_sitter_jam(), kJamHighlights, kJamNavigation, kJamFolds);
 	static const Language sComponentPascal("componentpascal", tree_sitter_componentpascal(),
 		kComponentPascalHighlights, kComponentPascalNavigation, kComponentPascalFolds);
-	static const std::vector<const Language*> sAll = {&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal};
+	static const Language sPython("python", tree_sitter_python(), kPythonHighlights, kPythonNavigation, kPythonFolds);
+	static const Language sMake("make", tree_sitter_make(), kMakeHighlights, kMakeNavigation, kMakeFolds);
+	static const Language sCMake("cmake", tree_sitter_cmake(), kCMakeHighlights, kCMakeNavigation, kCMakeFolds);
+	static const std::vector<const Language*> sAll = {
+		&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal, &sPython, &sMake, &sCMake
+	};
 	return sAll;
 }
 

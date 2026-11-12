@@ -170,6 +170,44 @@ TEST_CASE("fold candidates of other languages")
 	);
 	EditorCore componentPascalCore(componentPascal);
 	CHECK(componentPascalCore.FoldCandidates(0, 8) == std::vector<FoldRange> {{1, 5}, {3, 4}});
+
+	// The closing quotes of a docstring stay visible.
+	BReference<TextModel> python = MakeModel(
+		"class A:\n"
+		"    def f(self):\n"
+		"        \"\"\"Doc\n"
+		"        more\n"
+		"        \"\"\"\n"
+		"        return 1\n",
+		"python"
+	);
+	EditorCore pythonCore(python);
+	CHECK(pythonCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{0, 5}, {1, 5}, {2, 3}});
+
+	// endif() and endfunction() stay visible.
+	BReference<TextModel> cmake = MakeModel(
+		"function(f)\n"
+		"  if(X)\n"
+		"    message(a\n"
+		"      b)\n"
+		"  endif()\n"
+		"endfunction()\n",
+		"cmake"
+	);
+	EditorCore cmakeCore(cmake);
+	CHECK(cmakeCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{0, 4}, {1, 3}, {2, 3}});
+
+	BReference<TextModel> make = MakeModel(
+		"ifdef X\n"
+		"Y = 1\n"
+		"endif\n"
+		"all: a\n"
+		"\tcc a\n"
+		"\tcc b\n",
+		"make"
+	);
+	EditorCore makeCore(make);
+	CHECK(makeCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{0, 1}, {3, 5}});
 }
 
 

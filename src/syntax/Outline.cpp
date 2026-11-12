@@ -97,9 +97,33 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 	TSNode name = ChildByField(node, "name");
 	const char *anonymous = nullptr;
 	if (type == "function_definition" && !ts_node_is_null(name)) {
-		// A shell function, named directly.
+		// A shell or Python function, named directly.
 		item.kind = OutlineKind::Function;
-		item.label = Compact(NodeText(name, text) + "()");
+		const TSNode parameters = ChildByField(node, "parameters");
+		item.label = Compact(NodeText(name, text)
+			+ (ts_node_is_null(parameters) ? std::string("()") : NodeText(parameters, text)));
+	} else if (type == "class_definition") {
+		// Python
+		item.kind = OutlineKind::Class;
+	} else if (type == "function_def" || type == "macro_def") {
+		// CMake: the first argument of function() or macro().
+		item.kind = OutlineKind::Function;
+		const TSNode command = ts_node_named_child(node, 0);
+		const TSNode arguments = ts_node_is_null(command) ? command : ts_node_named_child(command, 1);
+		if (ts_node_is_null(arguments) || NodeType(arguments) != "argument_list") {
+			return std::nullopt;
+		}
+		name = ts_node_named_child(arguments, 0);
+	} else if (type == "rule") {
+		// Make: the targets.
+		item.kind = OutlineKind::Function;
+		name = ts_node_named_child(node, 0);
+		if (ts_node_is_null(name) || NodeType(name) != "targets") {
+			return std::nullopt;
+		}
+	} else if (type == "define_directive") {
+		// Make
+		item.kind = OutlineKind::Function;
 	} else if (type == "function_definition") {
 		item.kind = OutlineKind::Function;
 		const std::optional<TSNode> declarator = FunctionDeclarator(node);

@@ -101,6 +101,9 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::find(languages.begin(), languages.end(), "meson") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "jam") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "componentpascal") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "python") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "make") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "cmake") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -126,7 +129,15 @@ TEST_CASE("languages and capture styles")
 	CHECK(LanguageForPath("mybuild/jam/Rules") == nullptr);
 	CHECK(std::string_view(LanguageForPath("Obx/Mod/Hello0.cp")) == "componentpascal");
 	CHECK(LanguageForPath("Obx/Mod/Hello0.Mod") == nullptr);
-	CHECK(LanguageForPath("Makefile") == nullptr);
+	CHECK(std::string_view(LanguageForPath("tools/embed_text.py")) == "python");
+	CHECK(std::string_view(LanguageForPath("src/Makefile")) == "make");
+	CHECK(std::string_view(LanguageForPath("GNUmakefile")) == "make");
+	CHECK(std::string_view(LanguageForPath("rules.mk")) == "make");
+	CHECK(std::string_view(LanguageForPath("/boot/system/develop/etc/makefile-engine")) == "make");
+	CHECK(std::string_view(LanguageForPath("src/CMakeLists.txt")) == "cmake");
+	CHECK(std::string_view(LanguageForPath("FindFoo.cmake")) == "cmake");
+	CHECK(LanguageForPath("cmakelists.txt") == nullptr);
+	CHECK(LanguageForPath("README") == nullptr);
 	CHECK(LanguageForPath("x.build") == nullptr);
 	CHECK(LanguageForPath("notes.txt") == nullptr);
 	CHECK(LanguageForPath(".gitignore") == nullptr);
@@ -367,6 +378,151 @@ TEST_CASE("component pascal highlighting")
 	CHECK(StyleAt(core, 8, 8) == HighlightStyle::Punctuation);
 	// Text after the module.
 	CHECK(StyleAt(core, 9, 0) == HighlightStyle::Comment);
+}
+
+
+TEST_CASE("python highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"import os\n"
+		"# note\n"
+		"class Point(Base):\n"
+		"    def norm(self, x: int = 1) -> float:\n"
+		"        return f\"{x} \\n\" if x is not None else 0x1F\n"
+		"print(len(os.sep))\n",
+		"python"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 7) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 6) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 2, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 12) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 4) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 8) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 13) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 20) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 22) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 3, 26) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 3, 28) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 3, 31) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 3, 34) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 8) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 15) == HighlightStyle::String);
+	// Interpolations in f-strings are code.
+	CHECK(StyleAt(core, 4, 17) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 18) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 20) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 21) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 4, 23) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 25) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 30) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 33) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 37) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 42) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 47) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 5, 0) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 6) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 10) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 13) == HighlightStyle::Default);
+}
+
+
+TEST_CASE("make highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"CC := gcc\n"
+		"# note\n"
+		"all: main.o $(OBJS)\n"
+		"\t@$(CC) -o $@ $(dir $(file)) $(file)\n"
+		"ifeq ($(OS),Haiku)\n"
+		"LIBS += -lbe\n"
+		"endif\n"
+		".PHONY: all\n",
+		"make"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 0, 3) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 0, 6) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 2, 3) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 5) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 2, 12) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 2, 14) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 2, 18) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 1) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 3, 2) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 4) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 8) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 11) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 14) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 16) == HighlightStyle::Function);
+	// $(file) is a variable, not a call of the file function.
+	CHECK(StyleAt(core, 3, 20) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 22) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 27) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 29) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 31) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 35) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 5) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 6) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 12) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 0) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 5) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 8) == HighlightStyle::Default);
+}
+
+
+TEST_CASE("cmake highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"cmake_minimum_required(VERSION 3.10)\n"
+		"# note\n"
+		"function(add_thing name)\n"
+		"  if(NOT TARGET ${name} AND ON)\n"
+		"    message(STATUS \"x ${name}\\n\")\n"
+		"    return()\n"
+		"  endif()\n"
+		"endfunction()\n"
+		"#[[ block ]]\n",
+		"cmake"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 0, 22) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 0, 23) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 0, 31) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 8) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 9) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 2, 19) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 2) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 5) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 9) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 16) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 18) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 22) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 24) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 28) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 4) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 12) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 19) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 22) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 4, 29) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 4, 31) == HighlightStyle::String);
+	CHECK(StyleAt(core, 5, 4) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 6, 2) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 7, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 8, 0) == HighlightStyle::Comment);
 }
 
 

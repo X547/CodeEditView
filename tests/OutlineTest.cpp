@@ -296,6 +296,58 @@ TEST_CASE("outline of a component pascal module")
 }
 
 
+TEST_CASE("outline of python, cmake and make")
+{
+	EditorCore python(MakeModel(
+		"class A(B):\n"
+		"    def f(self, x):\n"
+		"        pass\n"
+		"def g():\n"
+		"    pass\n",
+		"python"
+	));
+	const std::vector<OutlineItem> pythonOutline = python.Outline();
+	REQUIRE(pythonOutline.size() == 2);
+	CHECK(pythonOutline[0].kind == OutlineKind::Class);
+	CHECK(pythonOutline[0].label == "A");
+	REQUIRE(pythonOutline[0].children.size() == 1);
+	CHECK(pythonOutline[0].children[0].kind == OutlineKind::Function);
+	CHECK(pythonOutline[0].children[0].label == "f(self, x)");
+	CHECK(pythonOutline[1].label == "g()");
+
+	const std::string_view cmakeText =
+		"function(add_thing name)\n"
+		"endfunction()\n"
+		"macro(m)\n"
+		"endmacro()\n";
+	EditorCore cmake(MakeModel(cmakeText, "cmake"));
+	const std::vector<OutlineItem> cmakeOutline = cmake.Outline();
+	REQUIRE(cmakeOutline.size() == 2);
+	CHECK(cmakeOutline[0].kind == OutlineKind::Function);
+	CHECK(cmakeOutline[0].label == "add_thing");
+	CHECK(cmakeOutline[0].nameStart == cmakeText.find("add_thing"));
+	CHECK(cmakeOutline[1].label == "m");
+
+	EditorCore make(MakeModel(
+		"CC = gcc\n"
+		"all: a b\n"
+		"\tcc\n"
+		"%.o: %.c\n"
+		"\tcc\n"
+		"define RULE\n"
+		"x\n"
+		"endef\n",
+		"make"
+	));
+	const std::vector<OutlineItem> makeOutline = make.Outline();
+	REQUIRE(makeOutline.size() == 3);
+	CHECK(makeOutline[0].kind == OutlineKind::Function);
+	CHECK(makeOutline[0].label == "all");
+	CHECK(makeOutline[1].label == "%.o");
+	CHECK(makeOutline[2].label == "RULE");
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

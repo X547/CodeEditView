@@ -88,6 +88,8 @@ private:
 	bool fInitialized {};
 	bool fStartSent {};
 	bool fConfigured {};
+	// Breakpoints wait until attaching finished (see Start()).
+	bool fBreakpointsHeld {};
 	std::map<int64_t, std::pair<std::string, ResponseHandler>> fPending;
 	std::vector<BMessenger> fWatchers;
 

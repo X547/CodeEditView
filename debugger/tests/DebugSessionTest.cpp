@@ -19,6 +19,9 @@
 #include "Protocol.h"
 
 
+extern char **environ;
+
+
 namespace Debugger {
 
 
@@ -205,6 +208,98 @@ TEST_CASE("debug session with GDB")
 		CHECK(sessionMarks->Marks(0, model.Text().NewlineCount()).empty());
 		CHECK(model.SharedMarks().Marks(0, model.Text().NewlineCount()).size() == 1);
 	}
+
+	session->Lock();
+	session->Quit();
+	collector->Lock();
+	collector->Quit();
+}
+
+
+// The session's output, for failures.
+static std::string Outputs(NoticeCollector &collector)
+{
+	BAutolock lock(&collector);
+	std::string text;
+	for (const BMessage &message : collector.notices) {
+		if (message.what == kNoticeOutput) {
+			text += message.GetString("text", "");
+		} else if (message.what == kNoticeState) {
+			text += std::string("[state] ") + message.GetString("text", "") + "\n";
+		}
+	}
+	return text;
+}
+
+
+TEST_CASE("breakpoints set before attaching")
+{
+	const char *program = getenv("DEBUGGER_SAMPLE");
+	const char *source = getenv("DEBUGGER_SAMPLE_SOURCE");
+	if (program == nullptr || source == nullptr || system("gdb --version > /dev/null 2>&1") != 0) {
+		SKIP("GDB or the sample program is not available");
+	}
+
+	// The program runs on its own first.
+	const char *arguments[] = {program, nullptr};
+	const thread_id team = load_image(1, arguments, const_cast<const char**>(environ));
+	REQUIRE(team >= 0);
+	resume_thread(team);
+	snooze(500000);
+
+	Workspace::DocumentRegistry registry;
+	DebugSession *session = new DebugSession(registry, 1);
+	session->Run();
+	NoticeCollector *collector = new NoticeCollector();
+	collector->Run();
+
+	const BReference<Workspace::Document> document = registry.Open(Workspace::Locator::File(source));
+	registry.WaitIdle();
+	REQUIRE(document->Status().state == Workspace::DocumentState::Ready);
+	const std::string path = document->GetLocator().Path();
+	CodeEdit::TextModel &model = *document->Model();
+	int32 breakLine = 0;
+	{
+		CodeEdit::ModelLock lock(model);
+		const size_t offset = model.Text().ToString().find("const int area = Area(square);");
+		REQUIRE(offset != std::string::npos);
+		const size_t line = model.Text().LineOfOffset(offset);
+		model.SharedMarks().AddMark(CodeEdit::kMarkBreakpoint, line);
+		breakLine = static_cast<int32>(line + 1);
+	}
+	const BReference<CodeEdit::MarkSet> sessionMarks = session->MarkSetFor(&model);
+
+	BMessage watch(kMsgWatch);
+	watch.AddMessenger("target", BMessenger(collector));
+	BMessenger(session).SendMessage(&watch);
+
+	BMessage attach(kMsgAttach);
+	attach.AddInt32("team", team);
+	BMessenger(session).SendMessage(&attach);
+
+	// Attaching stops the program; it goes on with the breakpoint set, and
+	// passes the line once a second.
+	const std::optional<size_t> attached = collector->WaitFor(0, [](const BMessage &message) {
+		return IsState(message, SessionState::Stopped);
+	});
+	INFO(Outputs(*collector));
+	REQUIRE(attached.has_value());
+	CHECK(collector->WaitFor(0, [](const BMessage &message) {
+		return message.what == kNoticeBreakpoints && message.GetBool("verified", false);
+	}).has_value());
+	BMessenger(session).SendMessage(kMsgContinue);
+	const std::optional<size_t> stopped = collector->WaitFor(*attached + 1, [&](const BMessage &message) {
+		return IsStackAt(message, path, breakLine);
+	});
+	INFO(Outputs(*collector));
+	CHECK(stopped.has_value());
+
+	const size_t mark = collector->notices.size();
+	BMessenger(session).SendMessage(kMsgStop);
+	CHECK(collector->WaitFor(mark, [](const BMessage &message) {
+		return IsState(message, SessionState::Idle);
+	}).has_value());
+	kill_team(team);
 
 	session->Lock();
 	session->Quit();

@@ -226,6 +226,15 @@ void DebugSession::Start(const std::string &command, JsonValue arguments, std::v
 	fInitialized = false;
 	fStartSent = false;
 	fConfigured = false;
+	// Workaround for a bug of GDB on Haiku (17.2): haiku_nat_target::attach
+	// does not disable breakpoints until the main executable is relocated
+	// (create_inferior does). A breakpoint that exists while GDB attaches
+	// resolves to its offset in the executable file, inserting it there
+	// fails, and the error leaves post_create_inferior before the
+	// inferior_created observer relocates the executable: later breakpoints
+	// get file addresses too, and the stop is not reported. Breakpoints set
+	// after the attach are right, so they are sent once it finished.
+	fBreakpointsHeld = fAttached;
 	SetState(SessionState::Starting, status);
 
 	JsonValue initialize;
@@ -244,6 +253,11 @@ void DebugSession::Start(const std::string &command, JsonValue arguments, std::v
 		Request(command, arguments, [this](const JsonValue &startResponse) {
 			if (!startResponse["success"].AsBool()) {
 				End();
+				return;
+			}
+			if (fBreakpointsHeld) {
+				fBreakpointsHeld = false;
+				SyncBreakpoints(true);
 			}
 		});
 		fStartSent = true;
@@ -558,7 +572,7 @@ std::vector<int32> DebugSession::EnabledBreakpointLines(CodeEdit::TextModel &mod
 void DebugSession::SyncBreakpoints(bool force)
 {
 	for (auto &[locator, watched] : fDocuments) {
-		if (!fConfigured || fClient == nullptr) {
+		if (!fConfigured || fClient == nullptr || fBreakpointsHeld) {
 			break;
 		}
 		std::vector<int32> lines = EnabledBreakpointLines(*watched.model);

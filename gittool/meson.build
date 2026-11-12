@@ -29,7 +29,7 @@ executable(
 		'GitToolApp.cpp',
 		'HistoryWindow.cpp',
 		'MainWindow.cpp',
-		'NetworkTask.cpp',
+		'NetworkReporter.cpp',
 		'StatsLoader.cpp',
 		'StepEditor.cpp',
 	),

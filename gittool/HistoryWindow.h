@@ -9,7 +9,6 @@
 
 #include <Window.h>
 
-#include "BackgroundLoader.h"
 #include "HistoryEdit.h"
 #include "Snapshot.h"
 #include "StatsLoader.h"
@@ -57,7 +56,6 @@ private:
 		std::optional<Snapshot> snapshot;
 		std::map<std::string, std::vector<std::string>> labels;
 	};
-	std::unique_ptr<DiffKit::BackgroundLoader<Loaded>> fLoader;
 	// Asked for when opening; done once the first history is shown.
 	bool fPendingEdit {};
 	// Closing asks about pending edits without blocking.
@@ -87,7 +85,7 @@ private:
 	// snapshot and labels too.
 	void ShowHistoryOf(const std::string &spec, bool withSnapshot = false);
 	void LoadHistory(const std::string &spec, bool withSnapshot);
-	void HistoryLoaded();
+	void HistoryLoaded(Loaded loaded);
 	void FillList();
 	void UpdateControls();
 	std::vector<size_t> SelectedSteps() const;

@@ -886,7 +886,7 @@ PlanDialog::PlanDialog(const Plan &plan, git_repository *repository, std::shared
 
 	BButton *cancel = new BButton(canRun ? "Cancel" : "Close", new BMessage(kMsgDialogCancel));
 	if (canRun) {
-		fRun = new BButton(plan.network ? "Run in background" : "Run", new BMessage(kMsgDialogOk));
+		fRun = new BButton("Run", new BMessage(kMsgDialogOk));
 	}
 	layout->AddItem(ButtonRow(cancel, fRun));
 	if (fRun != nullptr) {

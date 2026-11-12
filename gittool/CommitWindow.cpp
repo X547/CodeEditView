@@ -15,6 +15,7 @@
 #include "DiffView.h"
 #include "Dialogs.h"
 #include "Messages.h"
+#include "Progress.h"
 
 
 namespace GitTool {
@@ -26,6 +27,7 @@ using DiffKit::TextSide;
 
 static constexpr uint32 kMsgOpenInCodeEdit = 'CWoc';
 static constexpr uint32 kMsgOpenParentInCodeEdit = 'CWop';
+static constexpr uint32 kMsgLoadChanges = 'CWlc';
 
 
 static std::string SignatureText(const Signature &signature)
@@ -53,6 +55,7 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 		feel,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS
 	),
+	fRepositoryPath(repositoryPath),
 	fRepository(OpenRepository(repositoryPath)),
 	fDetails(ReadCommitDetails(fRepository.get(), id))
 {
@@ -110,7 +113,8 @@ CommitWindow::CommitWindow(const std::string &repositoryPath, const git_oid &id,
 		.End();
 
 	ShowHeader();
-	LoadChanges();
+	// Once the window is shown.
+	PostMessage(kMsgLoadChanges);
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
@@ -150,13 +154,42 @@ void CommitWindow::LoadChanges()
 {
 	fDiffView->SetModels(nullptr, nullptr, std::string());
 	fSides.clear();
+	fChanges.clear();
 	fChangeView->SetSections({});
-	try {
-		fChanges = CommitChanges(fRepository.get(), fDetails.id, fParent);
-	} catch (const std::exception &e) {
-		fChanges.clear();
-		DiffKit::ShowError(e.what());
+	const uint64 request = ++fLoadRequest;
+	const std::string path = fRepositoryPath;
+	const git_oid id = fDetails.id;
+	const size_t parent = fParent;
+	std::shared_ptr<std::vector<FileChange>> changes = std::make_shared<std::vector<FileChange>>();
+	const std::function<void()> work = [path, id, parent, changes]() {
+		RepositoryPtr repository = OpenRepository(path);
+		*changes = CommitChanges(repository.get(), id, parent);
+	};
+	const std::function<void(const std::string &error)> done = [this, request, changes](const std::string &error) {
+		if (request != fLoadRequest) {
+			return;
+		}
+		if (!error.empty()) {
+			DiffKit::ShowError(error.c_str());
+		}
+		ShowChanges(std::move(*changes));
+	};
+	if (Feel() == B_NORMAL_WINDOW_FEEL) {
+		DiffKit::RunWithProgress(this, "Reading the changes", [work](DiffKit::Progress &progress) {
+			(void)progress;
+			work();
+		}, done);
+	} else {
+		fDiffView->SetLabel(0, "");
+		fDiffView->SetLabel(1, "Reading the changes" B_UTF8_ELLIPSIS);
+		DiffKit::RunInBackground(this, work, done);
 	}
+}
+
+
+void CommitWindow::ShowChanges(std::vector<FileChange> changes)
+{
+	fChanges = std::move(changes);
 	GitDiff::ChangeSection section;
 	for (size_t i = 0; i < fChanges.size(); i++) {
 		const FileChange &change = fChanges[i];
@@ -298,6 +331,9 @@ void CommitWindow::MessageReceived(BMessage *message)
 			}
 			break;
 		}
+		case kMsgLoadChanges:
+			LoadChanges();
+			break;
 		default:
 			BWindow::MessageReceived(message);
 			break;

@@ -37,6 +37,7 @@ using DiffKit::ShowError;
 
 
 static constexpr size_t kHistoryLimit = 1000;
+static constexpr uint32 kMsgLoadFirst = 'GThF';
 
 
 enum {
@@ -401,7 +402,6 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fRepository(OpenRepository(repositoryPath)),
 	fStats(std::make_unique<StatsLoader>(repositoryPath, BMessenger(this)))
 {
-	fLoader = std::make_unique<DiffKit::BackgroundLoader<Loaded>>(BMessenger(this), kMsgHistoryLoaded);
 	fRefField = new BMenuField("refs", "History of:", RefMenu(fSnapshot, spec));
 	fSpecField = new BTextControl("spec", nullptr, spec.c_str(), nullptr);
 	BButton *show = new BButton("Show", new BMessage(kMsgHistoryOf));
@@ -464,7 +464,9 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	// The snapshot says whether spec is a branch, so edit mode waits for it.
 	fPendingEdit = edit;
 	fPendingOnto = onto;
-	ShowHistoryOf(spec, true);
+	// Read once the window is shown.
+	fSpec = spec;
+	PostMessage(kMsgLoadFirst);
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
 }
 
@@ -500,46 +502,45 @@ void HistoryWindow::LoadHistory(const std::string &spec, bool withSnapshot)
 	fStatus->SetText("Reading the history" B_UTF8_ELLIPSIS);
 	fEditMode->SetEnabled(false);
 	const std::string path = fRepositoryPath;
-	fLoader->Load([path, spec, withSnapshot]() {
-		RepositoryPtr repository = OpenRepository(path);
-		Loaded loaded;
-		loaded.spec = spec;
-		if (withSnapshot) {
-			loaded.snapshot = Snapshot::Load(repository.get());
-			loaded.labels = ReferenceLabels(repository.get());
-		}
-		try {
-			loaded.commits = History(repository.get(), ResolveCommit(repository.get(), spec), kHistoryLimit);
-		} catch (const std::exception &e) {
-			loaded.historyError = e.what();
-		}
-		return loaded;
-	});
+	std::shared_ptr<Loaded> loaded = std::make_shared<Loaded>();
+	loaded->spec = spec;
+	DiffKit::RunWithProgress(this, "Reading the history of " + spec,
+		[path, spec, withSnapshot, loaded](DiffKit::Progress &progress) {
+			(void)progress;
+			RepositoryPtr repository = OpenRepository(path);
+			if (withSnapshot) {
+				loaded->snapshot = Snapshot::Load(repository.get());
+				loaded->labels = ReferenceLabels(repository.get());
+			}
+			try {
+				loaded->commits = History(repository.get(), ResolveCommit(repository.get(), spec), kHistoryLimit);
+			} catch (const std::exception &e) {
+				loaded->historyError = e.what();
+			}
+		}, [this, loaded](const std::string &error) {
+			if (!error.empty()) {
+				fStatus->SetText(error.c_str());
+				return;
+			}
+			HistoryLoaded(std::move(*loaded));
+		});
 }
 
 
-void HistoryWindow::HistoryLoaded()
+void HistoryWindow::HistoryLoaded(Loaded loaded)
 {
-	std::string error;
-	std::optional<Loaded> loaded = fLoader->Take(error);
-	if (!loaded.has_value()) {
-		if (!error.empty()) {
-			fStatus->SetText(error.c_str());
-		}
+	if (loaded.snapshot.has_value()) {
+		fSnapshot = std::move(*loaded.snapshot);
+		fLabels = std::move(loaded.labels);
+		FillRefMenu(fRefField->Menu(), fSnapshot, loaded.spec);
+	}
+	if (loaded.spec != fSpec) {
 		return;
 	}
-	if (loaded->snapshot.has_value()) {
-		fSnapshot = std::move(*loaded->snapshot);
-		fLabels = std::move(loaded->labels);
-		FillRefMenu(fRefField->Menu(), fSnapshot, loaded->spec);
-	}
-	if (loaded->spec != fSpec) {
-		return;
-	}
-	fCommits = std::move(loaded->commits);
+	fCommits = std::move(loaded.commits);
 	FillList();
-	if (!loaded->historyError.empty()) {
-		fStatus->SetText(loaded->historyError.c_str());
+	if (!loaded.historyError.empty()) {
+		fStatus->SetText(loaded.historyError.c_str());
 	}
 	const bool edit = fPendingEdit;
 	const std::string onto = fPendingOnto;
@@ -1239,8 +1240,8 @@ void HistoryWindow::MessageReceived(BMessage *message)
 		case kMsgStatsReady:
 			StatsReady(message);
 			break;
-		case kMsgHistoryLoaded:
-			HistoryLoaded();
+		case kMsgLoadFirst:
+			ShowHistoryOf(fSpec, true);
 			break;
 		case kMsgDragCommits:
 			Dropped(message);

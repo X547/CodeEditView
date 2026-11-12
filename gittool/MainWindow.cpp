@@ -54,6 +54,7 @@ static constexpr bigtime_t kRefreshDelay = 300000;
 static constexpr size_t kTagLimit = 1000;
 
 static constexpr uint32 kMsgSnapshotLoaded = 'GTSL';
+static constexpr uint32 kMsgLoadFirst = 'GTLF';
 static constexpr uint32 kMsgTagFilter = 'GTtf';
 
 
@@ -484,8 +485,6 @@ MainWindow::MainWindow(RepositoryPtr repository):
 	BScrollView *categoryScroll = new BScrollView("categoryScroll", fCategories, 0, false, false);
 	fStatus = new BStringView("status", "");
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
-	fCancelButton = new BButton("Cancel", new BMessage(kMsgCancelNetwork));
-	fCancelButton->SetEnabled(false);
 
 	// A split view ignores preferred sizes: it divides its space by the
 	// weights (limited by the minimum sizes), so the weights are the initial
@@ -506,14 +505,12 @@ MainWindow::MainWindow(RepositoryPtr repository):
 				.Add(categoryScroll, 130)
 				.Add(rightSplit, 790)
 			.End()
-			.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
-				.Add(fStatus)
-				.Add(fCancelButton)
-			.End()
+			.Add(fStatus)
 		.End();
 
 	Watch();
-	Refresh();
+	// Once the window is shown.
+	PostMessage(kMsgLoadFirst);
 	fCategories->Select(0);
 	UpdateTitle();
 	MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN);
@@ -607,8 +604,36 @@ void MainWindow::SnapshotLoaded()
 		}
 		return;
 	}
-	const uint64 request = loaded->first;
-	Snapshot &snapshot = loaded->second;
+	ShowSnapshot(loaded->first, std::move(loaded->second));
+}
+
+
+void MainWindow::LoadFirst()
+{
+	const uint64 request = ++fRefreshRequest;
+	const std::string path = fRepositoryPath;
+	std::shared_ptr<Snapshot> loaded = std::make_shared<Snapshot>();
+	DiffKit::RunWithProgress(this, "Reading the repository", [path, loaded](DiffKit::Progress &progress) {
+		(void)progress;
+		RepositoryPtr repository = OpenRepository(path);
+		*loaded = Snapshot::Load(repository.get());
+	}, [this, request, loaded](const std::string &error) {
+		if (!error.empty()) {
+			AppendLog("Cannot read the repository: " + error);
+			ShowError(error.c_str());
+			return;
+		}
+		ShowSnapshot(request, std::move(*loaded));
+	});
+}
+
+
+void MainWindow::ShowSnapshot(uint64 request, Snapshot snapshot)
+{
+	if (request < fShownRequest) {
+		return;
+	}
+	fShownRequest = request;
 	// Unchanged tags keep their details, and their rows are not rebuilt.
 	const bool sameTags = fLoaded && SameTags(fSnapshot.tags, snapshot.tags);
 	if (sameTags) {
@@ -1093,32 +1118,33 @@ void MainWindow::RunPlan(const Plan &plan, Resolution resolution, const BMessage
 }
 
 
-void MainWindow::StartNetwork(const std::string &status, NetworkTask::Work work, const BMessage &done)
+void MainWindow::StartNetwork(const std::string &status, NetworkWork work, const BMessage &done)
 {
-	if (fTask != nullptr) {
-		ShowError("Another network operation is running; wait for it or cancel it first");
-		return;
-	}
 	BMessage message(done);
 	if (!message.HasString("title")) {
 		message.AddString("title", status.c_str());
 	}
-	fTask = std::make_unique<NetworkTask>(BMessenger(this), fRepositoryPath, std::move(work), message);
 	fStatus->SetText((status + B_UTF8_ELLIPSIS).c_str());
-	fCancelButton->SetEnabled(true);
 	AppendLog(status);
-	fTask->Start();
+	fNetworkRunning = true;
+	const std::string path = fRepositoryPath;
+	const BMessenger logTarget(this);
+	std::shared_ptr<std::vector<std::string>> report = std::make_shared<std::vector<std::string>>();
+	DiffKit::RunWithProgress(this, status, [path, logTarget, work = std::move(work), report](DiffKit::Progress &progress) {
+		NetworkReporter reporter(progress, logTarget);
+		RepositoryPtr repository = OpenRepository(path);
+		work(repository.get(), reporter, *report);
+	}, [this, message, report](const std::string &error) {
+		fNetworkRunning = false;
+		BMessage finished(message);
+		finished.AddString("error", error.c_str());
+		NetworkDone(&finished, *report);
+	}, true);
 }
 
 
-void MainWindow::NetworkDone(BMessage *message)
+void MainWindow::NetworkDone(BMessage *message, const std::vector<std::string> &report)
 {
-	std::vector<std::string> report;
-	if (fTask != nullptr) {
-		report = fTask->Report();
-		fTask.reset();
-	}
-	fCancelButton->SetEnabled(false);
 	const std::string title = message->GetString("title", "");
 	const std::string error = message->GetString("error", "");
 	if (!error.empty()) {
@@ -2231,6 +2257,9 @@ void MainWindow::MessageReceived(BMessage *message)
 		case kMsgSnapshotLoaded:
 			SnapshotLoaded();
 			break;
+		case kMsgLoadFirst:
+			LoadFirst();
+			break;
 		case kMsgTagFilter:
 			if (fTagFilter != nullptr && fTagFilterText != fTagFilter->Text()) {
 				fTagFilterText = fTagFilter->Text();
@@ -2263,20 +2292,8 @@ void MainWindow::MessageReceived(BMessage *message)
 		case kMsgAction:
 			RunAction(static_cast<Action>(message->GetInt32("action", 0)));
 			break;
-		case kMsgCancelNetwork:
-			if (fTask != nullptr) {
-				fTask->Cancel();
-				fStatus->SetText("Cancelling" B_UTF8_ELLIPSIS);
-			}
-			break;
-		case kMsgNetworkProgress:
-			fStatus->SetText(message->GetString("text", ""));
-			break;
 		case kMsgNetworkLog:
 			AppendLog(message->GetString("text", ""));
-			break;
-		case kMsgNetworkDone:
-			NetworkDone(message);
 			break;
 		default:
 			BWindow::MessageReceived(message);
@@ -2299,7 +2316,7 @@ void MainWindow::WindowActivated(bool active)
 // there.
 bool MainWindow::QuitRequested()
 {
-	if (fTask != nullptr && !fCloseConfirmed) {
+	if (fNetworkRunning && !fCloseConfirmed) {
 		if (!fAskingClose) {
 			fAskingClose = true;
 			// The application asks its windows from its own thread.
@@ -2322,10 +2339,7 @@ bool MainWindow::QuitRequested()
 		}
 		return false;
 	}
-	if (fTask != nullptr) {
-		fTask->Cancel();
-		fTask.reset();
-	}
+	// Closing the window closes the progress dialog, which cancels the work.
 	BMessage closed(kMsgMainWindowClosed);
 	closed.AddString("path", fRepositoryPath.c_str());
 	be_app->PostMessage(&closed);

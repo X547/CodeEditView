@@ -48,6 +48,9 @@ private:
 
 public:
 	ProgressDialog(const std::string &title, bool cancellable);
+	// Closed before the work ends (by its owner closing): the work is told
+	// to stop.
+	~ProgressDialog() override;
 
 	const std::shared_ptr<Progress> &GetProgress() const {return fProgress;}
 
@@ -86,6 +89,12 @@ ProgressDialog::ProgressDialog(const std::string &title, bool cancellable):
 }
 
 
+ProgressDialog::~ProgressDialog()
+{
+	fProgress->fCancelled = true;
+}
+
+
 void ProgressDialog::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
@@ -113,6 +122,27 @@ void ProgressDialog::MessageReceived(BMessage *message)
 
 //#pragma mark - RunWithProgress
 
+// Runs work on a thread of its own, then sends answer to owner with
+// "error".
+static void StartWork(BWindow *owner, std::function<void()> work, BMessage answer)
+{
+	const BMessenger ownerMessenger(owner);
+	std::thread([work = std::move(work), answer = std::move(answer), ownerMessenger]() mutable {
+		std::string error;
+		try {
+			work();
+		} catch (const std::exception &e) {
+			error = e.what();
+			if (error.empty()) {
+				error = "Failed";
+			}
+		}
+		answer.AddString("error", error.c_str());
+		ownerMessenger.SendMessage(&answer);
+	}).detach();
+}
+
+
 void RunWithProgress(
 	BWindow *owner,
 	const std::string &title,
@@ -135,21 +165,22 @@ void RunWithProgress(
 	dialog->ResizeToPreferred();
 	PlaceOver(dialog, owner->Frame());
 	dialog->Show();
+	StartWork(owner, [progress, work = std::move(work)]() {
+		work(*progress);
+	}, std::move(answer));
+}
 
-	const BMessenger ownerMessenger(owner);
-	std::thread([progress, work = std::move(work), answer = std::move(answer), ownerMessenger]() mutable {
-		std::string error;
-		try {
-			work(*progress);
-		} catch (const std::exception &e) {
-			error = e.what();
-			if (error.empty()) {
-				error = "Failed";
-			}
-		}
-		answer.AddString("error", error.c_str());
-		ownerMessenger.SendMessage(&answer);
-	}).detach();
+
+void RunInBackground(
+	BWindow *owner,
+	std::function<void()> work,
+	std::function<void(const std::string &error)> done
+)
+{
+	BMessage answer = AnswerMessage(owner, [done = std::move(done)](BMessage *message) {
+		done(message->GetString("error", ""));
+	});
+	StartWork(owner, std::move(work), std::move(answer));
 }
 
 

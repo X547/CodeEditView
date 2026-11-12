@@ -18,12 +18,11 @@ constexpr uint32 kMsgObjectInvoked = 'GToi';
 constexpr uint32 kMsgContextMenu = 'GTcm';
 // "action" (int32): Action.
 constexpr uint32 kMsgAction = 'GTac';
-constexpr uint32 kMsgCancelNetwork = 'GTcn';
 
-// Network task to the main window. "text" (string).
-constexpr uint32 kMsgNetworkProgress = 'GTnp';
+// Network work to the main window: a log line, "text" (string).
 constexpr uint32 kMsgNetworkLog = 'GTnl';
-// "error" (string, empty on success); the fields of the follow-up message.
+// The end of network work: "error" (string, empty on success) and the
+// fields of the follow-up.
 constexpr uint32 kMsgNetworkDone = 'GTnd';
 
 // Dialogs.
@@ -43,9 +42,6 @@ constexpr uint32 kMsgShowCommit = 'GTsh';
 // Commit window.
 // "parent" (int32).
 constexpr uint32 kMsgSetParent = 'GTsp';
-
-// History window: a history read on a thread.
-constexpr uint32 kMsgHistoryLoaded = 'GThl';
 
 // History window.
 constexpr uint32 kMsgEditMode = 'GTem';

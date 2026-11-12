@@ -14,7 +14,7 @@
 #include "BackgroundLoader.h"
 #include "Dialogs.h"
 #include "Operations.h"
-#include "NetworkTask.h"
+#include "NetworkReporter.h"
 #include "Plan.h"
 #include "Snapshot.h"
 
@@ -70,6 +70,8 @@ private:
 	// waiting for a refresh runs once a snapshot of its request arrives.
 	std::unique_ptr<DiffKit::BackgroundLoader<std::pair<uint64, Snapshot>>> fSnapshotLoader;
 	uint64 fRefreshRequest {};
+	// The request of the snapshot shown: older ones are not shown.
+	uint64 fShownRequest {};
 	std::vector<std::pair<uint64, std::function<void()>>> fAfterRefresh;
 	BTextControl *fTagFilter {};
 	// Closing during a network operation asks without blocking.
@@ -82,11 +84,11 @@ private:
 	BTextView *fDetails {};
 	BTextView *fLog {};
 	BStringView *fStatus {};
-	BButton *fCancelButton {};
 	BGroupView *fButtons {};
 	BMenu *fActionsMenu {};
 
-	std::unique_ptr<NetworkTask> fTask;
+	// A network operation runs (under its progress dialog).
+	bool fNetworkRunning {};
 	std::unique_ptr<BMessageRunner> fRefreshRunner;
 	std::vector<node_ref> fWatched;
 	std::map<std::string, BMessenger> fDiffWindows;
@@ -96,7 +98,10 @@ private:
 	// Reads the repository again on a thread; the window is updated when the
 	// snapshot arrives.
 	void Refresh();
+	// The first snapshot is read under a progress dialog.
+	void LoadFirst();
 	void SnapshotLoaded();
+	void ShowSnapshot(uint64 request, Snapshot snapshot);
 	// Runs work once the snapshot of the latest refresh is shown.
 	void AfterRefresh(std::function<void()> work);
 	void ScheduleRefresh();
@@ -126,10 +131,10 @@ private:
 	void RunTagAction(Action action);
 	void ObjectInvoked();
 
-	// Previews a plan in a dialog and runs it if the user agrees; network
-	// plans run in the background and send done (kMsgNetworkDone with its
-	// follow-up) when they end. then runs once the snapshot after a local
-	// plan is shown.
+	// Previews a plan in a dialog and runs it if the user agrees, under a
+	// progress dialog; network plans then run done (kMsgNetworkDone with its
+	// follow-up) through NetworkDone(). then runs once the snapshot after a
+	// local plan is shown.
 	void Execute(const Plan &plan, std::function<void()> then = nullptr);
 	void Execute(const Plan &plan, const BMessage &done);
 	void RunPlan(const Plan &plan, Resolution resolution, const BMessage &done, std::function<void()> then);
@@ -146,8 +151,13 @@ private:
 	void UploadForReview(const BranchInfo &branch);
 	void DownloadChange(const RemoteInfo &remote);
 	void DownloadChange(const RemoteInfo &remote, const Form &form);
-	void StartNetwork(const std::string &status, NetworkTask::Work work, const BMessage &done);
-	void NetworkDone(BMessage *message);
+	// Report lines are shown to the user when the work finishes.
+	using NetworkWork = std::function<void(git_repository *repository, NetworkHandler &handler,
+		std::vector<std::string> &report)>;
+	// Runs work on a thread under a progress dialog; then NetworkDone() gets
+	// done with "error" added.
+	void StartNetwork(const std::string &status, NetworkWork work, const BMessage &done);
+	void NetworkDone(BMessage *message, const std::vector<std::string> &report);
 	void NetworkFollowUp(const BMessage *message, const std::vector<std::string> &report, const std::string &title);
 	void AppendLog(const std::string &text);
 

@@ -11,7 +11,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 folders = ["gittool", "gitdiff", "diffkit", "findkit", "dircompare", "studio", "coverage", "debugger", "src"]
 # Network work runs on its own thread.
-allowed = {"gittool/NetworkTask.cpp", "gittool/Dialogs.cpp"}
+allowed = {"gittool/NetworkReporter.cpp", "gittool/Dialogs.cpp"}
 # Go() without arguments, or Form::Go(...): both wait. Go(invoker) and
 # Go(nullptr) on an alert do not.
 blocking = re.compile(r"(->|\.)Go\(\)|\bform\.Go\(")

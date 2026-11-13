@@ -38,6 +38,9 @@ static constexpr bigtime_t kCaretBlinkInterval = 500000;
 static constexpr float kHorizontalScrollMargin = 4;
 static constexpr uint32 kFoldPlaceholderCells = 3;
 static constexpr size_t kRewrapBatchLines = 2000;
+// Largest value of the vertical scroll bar: its value is a float, exact up to
+// 2^24. A taller text is mapped onto this range.
+static constexpr double kMaxScrollBarValue = 8 * 1024 * 1024;
 
 // Auto-scrolling runs at about 60 Hz; the scroll distance of a tick depends on
 // the elapsed time, so late ticks do not slow it down.
@@ -147,6 +150,55 @@ static BReference<TextModel> ModelReference(TextModel *model)
 }
 
 
+// The target of the vertical scroll bar. A BScrollBar scrolls its target's
+// bounds to its value, which the editor's bounds do not follow (see
+// CodeEditView::fTopRow); hidden, this view passes the value on.
+class ScrollProxy: public BView {
+private:
+	CodeEditView *fEditView;
+
+public:
+	explicit ScrollProxy(CodeEditView *editView):
+		BView(BRect(0, 0, 0, 0), "scrollProxy", B_FOLLOW_NONE, 0),
+		fEditView(editView)
+	{
+		Hide();
+	}
+
+	void ScrollTo(BPoint where) final
+	{
+		BView::ScrollTo(where);
+		fEditView->VerticalScrollBarChanged(Bounds().top);
+	}
+};
+
+
+// Moves the contents of a view up by delta pixels (down if negative); what
+// comes into view is drawn anew.
+static void ShiftContents(BView &view, double delta)
+{
+	const BRect bounds = view.Bounds();
+	const float distance = static_cast<float>(fabs(delta));
+	if (distance > bounds.Height()) {
+		view.Invalidate();
+		return;
+	}
+	if (delta > 0) {
+		view.CopyBits(
+			BRect(bounds.left, bounds.top + distance, bounds.right, bounds.bottom),
+			BRect(bounds.left, bounds.top, bounds.right, bounds.bottom - distance)
+		);
+		view.Invalidate(BRect(bounds.left, bounds.bottom - distance + 1, bounds.right, bounds.bottom));
+	} else {
+		view.CopyBits(
+			BRect(bounds.left, bounds.top, bounds.right, bounds.bottom - distance),
+			BRect(bounds.left, bounds.top + distance, bounds.right, bounds.bottom)
+		);
+		view.Invalidate(BRect(bounds.left, bounds.top, bounds.right, bounds.top + distance - 1));
+	}
+}
+
+
 } // CodeEdit
 
 
@@ -160,6 +212,8 @@ CodeEditView::CodeEditView(const char *name, CodeEdit::TextModel *model):
 	fInputMethod(std::make_unique<CodeEdit::InputMethodState>())
 {
 	SetViewColor(B_TRANSPARENT_COLOR);
+	fScrollProxy = new CodeEdit::ScrollProxy(this);
+	AddChild(fScrollProxy);
 	SetEditorFont(*be_fixed_font);
 	for (const uint32_t kind : {CodeEdit::kMarkBookmark, CodeEdit::kMarkBreakpoint,
 			CodeEdit::kMarkBreakpointDisabled, CodeEdit::kMarkExecLine}) {
@@ -205,7 +259,8 @@ void CodeEditView::SetModel(CodeEdit::TextModel *model)
 	}
 	fCore = std::make_unique<CodeEdit::EditorCore>(CodeEdit::ModelReference(model));
 	fCore->SetSettings(settings);
-	fOriginY = 0;
+	fTopRow = 0;
+	fTopOffset = 0;
 	fNotifiedCaret = SIZE_MAX;
 	if (!attached) {
 		return;
@@ -216,7 +271,7 @@ void CodeEditView::SetModel(CodeEdit::TextModel *model)
 	fCore->TakeDirty();
 	UpdateScrollBars();
 	UpdateWrapColumns();
-	ScrollTo(BPoint(0, 0));
+	BView::ScrollTo(BPoint(0, Bounds().top));
 	Invalidate();
 	if (fGutter != nullptr) {
 		fGutter->Invalidate();
@@ -270,6 +325,7 @@ void CodeEditView::SetEditorFont(const BFont &font)
 	fAscent = ceilf(height.ascent);
 	fLineHeight = fAscent + ceilf(height.descent) + ceilf(height.leading);
 	fCellWidth = font.StringWidth("0");
+	fTopOffset = 0;
 	fGlyphCache.clear();
 
 	if (fGutter != nullptr) {
@@ -363,7 +419,7 @@ void CodeEditView::RevealLine(size_t line)
 	const size_t context = std::min<size_t>(fCore->Settings().contextLines, (page.visibleRows - 1) / 2);
 	if (row < page.topRow + context || row + context >= page.topRow + page.visibleRows) {
 		// Off screen or near an edge: show it a third down the view.
-		ScrollToClamped(bounds.left, RowTop(row) - floorf(page.visibleRows / 3.0f) * fLineHeight);
+		ScrollToDocument(bounds.left, (static_cast<double>(row) - floorf(page.visibleRows / 3.0f)) * fLineHeight);
 	}
 }
 
@@ -443,7 +499,7 @@ float CodeEditView::LineTop(size_t line)
 CodeEdit::LinePosition CodeEditView::LineAtY(float y)
 {
 	const size_t rowCount = fCore->RowCount();
-	const float row = std::max(0.0f, (y - fOriginY) / fLineHeight);
+	const double row = std::max(0.0, (TopY() + y) / fLineHeight);
 	if (row >= rowCount) {
 		return {fCore->LineCount(), 0};
 	}
@@ -453,16 +509,16 @@ CodeEdit::LinePosition CodeEditView::LineAtY(float y)
 		return {fCore->LineCount(), 0};
 	}
 	const size_t lineRows = std::max<size_t>(1, fCore->LineRows(rows.front().line).second);
-	const float fraction = (rows.front().subRow + (row - wholeRow)) / lineRows;
+	const float fraction = static_cast<float>((rows.front().subRow + (row - wholeRow)) / lineRows);
 	return {rows.front().line, std::min(fraction, 1.0f)};
 }
 
 
 void CodeEditView::ScrollLineTo(const CodeEdit::LinePosition &position, float viewY, float left)
 {
-	const float top = LineTop(position.line);
-	const float bottom = LineTop(position.line + 1);
-	ScrollToClamped(left, top + position.fraction * (bottom - top) - viewY);
+	const auto [firstRow, rowCount] = fCore->LineRows(position.line);
+	const double top = static_cast<double>(firstRow) * fLineHeight;
+	ScrollToDocument(left, top + position.fraction * rowCount * fLineHeight - viewY);
 }
 
 
@@ -578,9 +634,6 @@ void CodeEditView::Draw(BRect updateRect)
 	}
 
 	SetHighColor(context.background);
-	if (updateRect.top < fOriginY) {
-		FillRect(BRect(updateRect.left, updateRect.top, updateRect.right, fOriginY - 1));
-	}
 	const float rowsBottom = RowTop(firstRow + rows.size());
 	if (rowsBottom <= updateRect.bottom) {
 		FillRect(BRect(updateRect.left, rowsBottom, updateRect.right, updateRect.bottom));
@@ -855,22 +908,24 @@ void CodeEditView::RestartCaretBlink()
 
 //#pragma mark - Scrolling
 
-size_t CodeEditView::TopRow() const
+float CodeEditView::RowTop(size_t row) const
 {
-	return RowAtY(Bounds().top);
+	return static_cast<float>((static_cast<double>(row) - static_cast<double>(fTopRow)) * fLineHeight - fTopOffset);
 }
 
 
 size_t CodeEditView::RowAtY(float y) const
 {
-	return static_cast<size_t>(std::max(0.0f, floorf((y - fOriginY) / fLineHeight)));
+	const double row = static_cast<double>(fTopRow) + floor((y + fTopOffset) / fLineHeight);
+	return row > 0 ? static_cast<size_t>(row) : 0;
 }
 
 
+// The page starts with the first row fully in view.
 CodeEdit::PageInfo CodeEditView::CurrentPage() const
 {
 	const BRect bounds = Bounds();
-	const size_t topRow = static_cast<size_t>(std::max(0.0f, ceilf((bounds.top - fOriginY) / fLineHeight)));
+	const size_t topRow = fTopOffset > 0 ? fTopRow + 1 : fTopRow;
 	const float visibleHeight = bounds.bottom + 1 - RowTop(topRow);
 	const size_t visibleRows = static_cast<size_t>(std::max(1.0f, floorf(visibleHeight / fLineHeight)));
 	return {topRow, visibleRows};
@@ -914,19 +969,47 @@ void CodeEditView::ScheduleRewrap()
 }
 
 
+BScrollBar *CodeEditView::VerticalScrollBar() const
+{
+	return fScrollProxy->ScrollBar(B_VERTICAL);
+}
+
+
+double CodeEditView::MaxTopY() const
+{
+	const double height = static_cast<double>(fCore->RowCount()) * fLineHeight;
+	return std::max(0.0, height - (Bounds().Height() + 1));
+}
+
+
+// A text taller than the scroll bar can count exactly is mapped onto its
+// range.
+double CodeEditView::ScrollBarScale() const
+{
+	const double maxTop = MaxTopY();
+	return maxTop > kMaxScrollBarValue ? kMaxScrollBarValue / maxTop : 1.0;
+}
+
+
 void CodeEditView::UpdateScrollBars()
 {
 	const BRect bounds = Bounds();
-	const float height = fCore->RowCount() * fLineHeight;
-	const float width = ContentWidth();
-
-	if (BScrollBar *bar = ScrollBar(B_VERTICAL); bar != nullptr) {
+	if (BScrollBar *bar = VerticalScrollBar(); bar != nullptr) {
+		const double height = static_cast<double>(fCore->RowCount()) * fLineHeight;
 		const float visible = bounds.Height() + 1;
-		bar->SetRange(fOriginY, fOriginY + std::max(0.0f, height - visible));
-		bar->SetProportion(height > 0 ? std::min(1.0f, visible / height) : 1.0f);
-		bar->SetSteps(fLineHeight, std::max(fLineHeight, visible - fLineHeight));
+		const double scale = ScrollBarScale();
+		fSettingScrollBar = true;
+		bar->SetRange(0, static_cast<float>(MaxTopY() * scale));
+		bar->SetProportion(height > 0 ? static_cast<float>(std::min(1.0, visible / height)) : 1.0f);
+		bar->SetSteps(
+			static_cast<float>(fLineHeight * scale),
+			static_cast<float>(std::max(fLineHeight, visible - fLineHeight) * scale)
+		);
+		bar->SetValue(static_cast<float>(TopY() * scale));
+		fSettingScrollBar = false;
 	}
 	if (BScrollBar *bar = ScrollBar(B_HORIZONTAL); bar != nullptr) {
+		const float width = ContentWidth();
 		const float visible = bounds.Width() + 1;
 		bar->SetRange(0, std::max(0.0f, width - visible));
 		bar->SetProportion(width > 0 ? std::min(1.0f, visible / width) : 1.0f);
@@ -935,46 +1018,60 @@ void CodeEditView::UpdateScrollBars()
 }
 
 
-BPoint CodeEditView::ClampScrollPosition(float x, float y)
+// The scroll bar was moved by the user, or by the view itself (ignored).
+void CodeEditView::VerticalScrollBarChanged(float value)
 {
-	const BRect bounds = Bounds();
-	const float height = fCore->RowCount() * fLineHeight;
-	const float width = ContentWidth();
-	const float maxX = std::max(0.0f, width - bounds.Width() - 1);
-	const float maxY = std::max(0.0f, height - bounds.Height() - 1);
-	return BPoint(std::clamp(roundf(x), 0.0f, maxX), std::clamp(roundf(y), fOriginY, fOriginY + maxY));
-}
-
-
-void CodeEditView::ScrollToClamped(float x, float y)
-{
-	const BPoint where = ClampScrollPosition(x, y);
-	if (where != Bounds().LeftTop()) {
-		ScrollTo(where);
+	if (fSettingScrollBar || Window() == nullptr) {
+		return;
 	}
+	ScrollToDocument(Bounds().left, value / ScrollBarScale());
 }
 
 
-void CodeEditView::ScrollTo(BPoint where)
+// Moves the pixels still shown and draws the rest, in the view and the
+// gutter. Rows coming into view are wrapped first; that may change rows
+// above the top of the view (the top row then gets another number), never
+// what is shown.
+bool CodeEditView::ScrollVertically(double y)
 {
-	// Rows scrolled into view are wrapped before the visible bits are copied.
-	// If that changed rows above the visible text, the origin moves so the
-	// pixels on screen stay valid, and the target moves with its text.
-	if (fCore->IsWrapping()) {
-		const size_t anchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
-		if (fCore->WrapRows(RowAtY(where.y), CurrentPage().visibleRows + 2)) {
-			const size_t newAnchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
-			const float delta = (static_cast<float>(newAnchorRow) - static_cast<float>(anchorRow)) * fLineHeight;
-			fOriginY -= delta;
-			where.y -= delta;
-			UpdateScrollBars();
+	y = round(std::clamp(y, 0.0, MaxTopY()));
+	if (fCore->IsWrapping() && fCore->WrapRows(static_cast<size_t>(y / fLineHeight), CurrentPage().visibleRows + 2)) {
+		fTopRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
+		y = round(std::clamp(y, 0.0, MaxTopY()));
+	}
+	const double delta = y - TopY();
+	if (delta == 0) {
+		return false;
+	}
+	fTopRow = static_cast<size_t>(y / fLineHeight);
+	fTopOffset = static_cast<float>(y - static_cast<double>(fTopRow) * fLineHeight);
+	fCore->SetScrollAnchor(fCore->RowStartOffset(fTopRow));
+	if (Window() != nullptr) {
+		CodeEdit::ShiftContents(*this, delta);
+		if (fGutter != nullptr) {
+			CodeEdit::ShiftContents(*fGutter, delta);
 		}
 	}
-	BView::ScrollTo(where);
-	if (fGutter != nullptr) {
-		fGutter->ScrollTo(BPoint(0, where.y));
+	UpdateScrollBars();
+	return true;
+}
+
+
+// To x and the document y (pixels from the top of row 0), clamped.
+void CodeEditView::ScrollToDocument(float x, double y)
+{
+	const BRect bounds = Bounds();
+	const float maxX = std::max(0.0f, ContentWidth() - bounds.Width() - 1);
+	x = std::clamp(roundf(x), 0.0f, maxX);
+	bool scrolled = false;
+	if (x != bounds.left) {
+		BView::ScrollTo(BPoint(x, bounds.top));
+		scrolled = true;
 	}
-	fCore->SetScrollAnchor(fCore->RowStartOffset(TopRow()));
+	scrolled = ScrollVertically(y) || scrolled;
+	if (!scrolled) {
+		return;
+	}
 	ViewportChanged(true);
 
 	// Scrolling (e.g. by the mouse wheel) moves the text under a stationary
@@ -992,6 +1089,19 @@ void CodeEditView::ScrollTo(BPoint where)
 		RefreshCursor();
 	}
 	fMouse->inScrollTracking = false;
+}
+
+
+void CodeEditView::ScrollToClamped(float x, float y)
+{
+	ScrollToDocument(x, TopY() + (y - Bounds().top));
+}
+
+
+// As BView::ScrollTo(), where.y in view coordinates comes to the top.
+void CodeEditView::ScrollTo(BPoint where)
+{
+	ScrollToClamped(where.x, where.y);
 }
 
 
@@ -1016,11 +1126,11 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 	const size_t contextRows = keepContext
 		? std::min<size_t>(fCore->Settings().contextLines, (visibleRows - 1) / 2)
 		: 0;
-	const float context = contextRows * fLineHeight;
+	const double context = static_cast<double>(contextRows) * fLineHeight;
 
-	float y = bounds.top;
-	const float caretTop = RowTop(caret.row);
-	const float caretBottom = caretTop + fLineHeight;
+	double y = TopY();
+	const double caretTop = static_cast<double>(caret.row) * fLineHeight;
+	const double caretBottom = caretTop + fLineHeight;
 	if (caretTop - context < y) {
 		y = caretTop - context;
 	} else if (caretBottom + context > y + visibleHeight) {
@@ -1035,7 +1145,7 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 	} else if (caretX + fCellWidth > x + visibleWidth) {
 		x = caretX + fCellWidth + margin - visibleWidth;
 	}
-	ScrollToClamped(x, y);
+	ScrollToDocument(x, y);
 }
 
 
@@ -1051,18 +1161,17 @@ void CodeEditView::ApplyDirty()
 	}
 	const CodeEdit::DirtyRows dirty = fCore->TakeDirty();
 
-	// Keep the text at the top of the view in place when rows are inserted
-	// or removed above it: the origin moves instead of the view, so nothing
-	// on screen changes. Only at the ends of the text the view may have to
-	// scroll; the scroll bar range follows the origin.
+	// Rows inserted or removed above the top of the view change the number
+	// of the top row, not what is shown. Only at the end of the text the view
+	// may have to scroll.
 	const size_t anchorRow = fCore->PositionOfOffset(fCore->ScrollAnchor()).row;
-	const size_t topRow = TopRow();
-	if (anchorRow != topRow) {
-		fOriginY -= (static_cast<float>(anchorRow) - static_cast<float>(topRow)) * fLineHeight;
+	const bool topMoved = anchorRow != fTopRow;
+	if (topMoved) {
+		fTopRow = anchorRow;
 		UpdateScrollBars();
-		ScrollToClamped(Bounds().left, Bounds().top);
 	}
-	if (anchorRow != topRow || dirty.scrollRangeChanged) {
+	ScrollToDocument(Bounds().left, TopY());
+	if (topMoved || dirty.scrollRangeChanged) {
 		ViewportChanged(false);
 	}
 	if (dirty.scrollRangeChanged) {
@@ -1195,10 +1304,12 @@ void CodeEditView::ExecuteCommand(CodeEdit::EditorCommand command, bool extend)
 			scroll(bounds.left, bounds.top + std::max<size_t>(1, page.visibleRows - 1) * fLineHeight);
 			break;
 		case EditorCommand::ScrollToStart:
-			scroll(bounds.left, fOriginY);
+			ScrollToDocument(bounds.left, 0);
+			scrollToCaret = false;
 			break;
 		case EditorCommand::ScrollToEnd:
-			scroll(bounds.left, FLT_MAX);
+			ScrollToDocument(bounds.left, MaxTopY());
+			scrollToCaret = false;
 			break;
 		case EditorCommand::Undo:
 			fCore->Undo();
@@ -1515,6 +1626,9 @@ void CodeEditView::AttachedToWindow()
 {
 	BView::AttachedToWindow();
 	fCore->Attach(BMessenger(this));
+	if (BScrollBar *bar = ScrollBar(B_VERTICAL); bar != nullptr) {
+		bar->SetTarget(fScrollProxy);
+	}
 	// State derived from the caret is otherwise only updated on changes.
 	fCore->UpdateBracketMatch();
 	fCore->TakeDirty();
@@ -1539,6 +1653,8 @@ void CodeEditView::FrameResized(float width, float height)
 	BView::FrameResized(width, height);
 	UpdateWrapColumns();
 	UpdateScrollBars();
+	// A taller view may show past the end of the text.
+	ScrollToDocument(Bounds().left, TopY());
 	ViewportChanged(false);
 }
 
@@ -1610,7 +1726,7 @@ bool CodeEditView::IsPointInSelection(BPoint where)
 	const CodeEdit::Selection selection = fCore->GetSelection();
 	const size_t start = std::min(selection.anchor, selection.caret);
 	const size_t end = std::max(selection.anchor, selection.caret);
-	if (start == end || where.y < fOriginY) {
+	if (start == end || where.y < RowTop(0)) {
 		return false;
 	}
 	const size_t row = RowAtY(where.y);
@@ -1627,7 +1743,7 @@ bool CodeEditView::IsPointInSelection(BPoint where)
 // The header line of the folded line whose placeholder is at the point.
 std::optional<size_t> CodeEditView::FoldPlaceholderAt(BPoint where)
 {
-	if (where.y < fOriginY) {
+	if (where.y < RowTop(0)) {
 		return std::nullopt;
 	}
 	const std::vector<CodeEdit::RowData> rows = fCore->Rows(RowAtY(where.y), 1);
@@ -2086,6 +2202,24 @@ void CodeEditView::MessageReceived(BMessage *message)
 		case kMsgAutoScroll:
 			AutoScrollTick();
 			break;
+		case B_MOUSE_WHEEL_CHANGED: {
+			// As BView does through the scroll bars, but by rows exactly.
+			float dx = message->GetFloat("be:wheel_delta_x", 0);
+			float dy = message->GetFloat("be:wheel_delta_y", 0);
+			if ((modifiers() & B_CONTROL_KEY) != 0) {
+				std::swap(dx, dy);
+			}
+			const bool fast = (modifiers() & B_SHIFT_KEY) != 0;
+			const BRect bounds = Bounds();
+			const float rowStep = fast
+				? std::max<size_t>(1, CurrentPage().visibleRows - 1) * fLineHeight
+				: 3 * fLineHeight;
+			const float columnStep = fast
+				? std::max(fCellWidth, bounds.Width() + 1 - 4 * fCellWidth)
+				: 12 * fCellWidth;
+			ScrollToClamped(bounds.left + dx * columnStep, bounds.top + dy * rowStep);
+			break;
+		}
 		case kMsgRewrap:
 			fRewrapPosted = false;
 			if (fCore->RewrapStep(kRewrapBatchLines)) {

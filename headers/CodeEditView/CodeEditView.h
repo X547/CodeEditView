@@ -22,6 +22,7 @@
 
 
 class BMessageRunner;
+class BScrollBar;
 class CodeEditScrollView;
 
 
@@ -58,6 +59,7 @@ constexpr uint32 kMsgPositionClicked = 'CEpc';
 class EditorCore;
 class GutterView;
 class KeyMap;
+class ScrollProxy;
 struct DrawContext;
 struct InputMethodState;
 struct MouseState;
@@ -88,13 +90,19 @@ private:
 	BMessenger fTarget;
 	size_t fNotifiedCaret = SIZE_MAX;
 	CodeEdit::GutterView *fGutter {};
+	// Target of the vertical scroll bar, which scrolls it by bounds.
+	CodeEdit::ScrollProxy *fScrollProxy {};
 
 	float fCellWidth {};
 	float fLineHeight {};
 	float fAscent {};
-	// Y of the top of row 0. Rows inserted or removed above the visible text
-	// move it instead of scrolling, so the text on screen stays in place.
-	float fOriginY {};
+	// The vertical position: the display row at the top of the view and its
+	// pixels above the view (less than a line). The bounds stay at y 0, so
+	// view coordinates stay small however long the text is. Rows inserted
+	// or removed above the view change fTopRow, not what is shown.
+	size_t fTopRow {};
+	float fTopOffset {};
+	bool fSettingScrollBar {};
 	bool fCaretVisible {};
 	bool fRewrapPosted {};
 	bool fViewportNotifyPosted {};
@@ -102,6 +110,7 @@ private:
 
 	friend class CodeEditScrollView;
 	friend class CodeEdit::GutterView;
+	friend class CodeEdit::ScrollProxy;
 
 	std::pair<float, float> GlyphMetrics(char32_t codePoint, const char *bytes, int32 length);
 	void DrawRow(size_t row, const BRect &updateRect, const CodeEdit::RowData &data, const CodeEdit::DrawContext &context);
@@ -115,13 +124,21 @@ private:
 	float ContentWidth();
 	void UpdateWrapColumns();
 	void ScheduleRewrap();
-	BPoint ClampScrollPosition(float x, float y);
+	BScrollBar *VerticalScrollBar() const;
+	void VerticalScrollBarChanged(float value);
+	double ScrollBarScale() const;
+	// Document y: pixels from the top of row 0.
+	double TopY() const {return static_cast<double>(fTopRow) * fLineHeight + fTopOffset;}
+	double MaxTopY() const;
+	bool ScrollVertically(double y);
+	void ScrollToDocument(float x, double y);
+	// y in view coordinates: the text there comes to the top of the view.
 	void ScrollToClamped(float x, float y);
 	void ScrollToCaret(bool keepContext);
 	bool CaretInContextArea();
 	CodeEdit::PageInfo CurrentPage() const;
-	size_t TopRow() const;
-	float RowTop(size_t row) const {return fOriginY + row * fLineHeight;}
+	size_t TopRow() const {return fTopRow;}
+	float RowTop(size_t row) const;
 	size_t RowAtY(float y) const;
 	size_t OffsetAtPoint(BPoint where);
 	void ExecuteCommand(CodeEdit::EditorCommand command, bool extend);

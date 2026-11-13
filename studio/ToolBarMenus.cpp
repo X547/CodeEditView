@@ -66,14 +66,14 @@ void DefinitionsMenu::AddSeparator(const std::string &label)
 	const bool afterSeparator = !fEntries.empty() && fEntries.back().kind != EntryKind::Definition;
 	if (label.empty()) {
 		if (!fEntries.empty() && !afterSeparator) {
-			fEntries.push_back({EntryKind::Separator, {}, 0, 0});
+			fEntries.push_back({EntryKind::Separator, {}, 0, 0, 0, 0});
 		}
 		return;
 	}
 	if (afterSeparator && fEntries.back().kind == EntryKind::Separator) {
 		fEntries.pop_back();
 	}
-	fEntries.push_back({EntryKind::Section, label, 0, 0});
+	fEntries.push_back({EntryKind::Section, label, 0, 0, 0, 0});
 }
 
 
@@ -95,6 +95,8 @@ void DefinitionsMenu::AddEntries(const std::vector<OutlineItem> &items, int32 de
 				fEntries.push_back({
 					EntryKind::Definition,
 					std::string(depth * 4, ' ') + item.label,
+					item.start,
+					item.end,
 					item.nameStart,
 					item.nameEnd
 				});
@@ -118,7 +120,17 @@ size_t DefinitionsMenu::Prepare()
 		fEntries.pop_back();
 	}
 	if (fEntries.empty()) {
-		fEntries.push_back({EntryKind::Nothing, "No definitions", 0, 0});
+		fEntries.push_back({EntryKind::Nothing, "No definitions", 0, 0, 0, 0});
+	}
+	// Entries are in document order: the last one holding the caret is the
+	// innermost.
+	const size_t caret = fCaret;
+	fCaretEntry = fEntries.size();
+	for (size_t i = 0; i < fEntries.size(); i++) {
+		const Entry &entry = fEntries[i];
+		if (entry.kind == EntryKind::Definition && entry.start <= caret && caret < entry.end) {
+			fCaretEntry = i;
+		}
 	}
 	return fEntries.size();
 }
@@ -143,6 +155,7 @@ BMenuItem *DefinitionsMenu::MakeItem(size_t index)
 			message->AddUInt64("end", entry.nameEnd);
 			BMenuItem *item = new BMenuItem(entry.label.c_str(), message);
 			item->SetTarget(fTarget);
+			item->SetMarked(index == fCaretEntry);
 			return item;
 		}
 	}

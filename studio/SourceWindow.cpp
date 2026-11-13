@@ -921,9 +921,12 @@ void SourceWindow::MessageReceived(BMessage *message)
 			UpdateTitle();
 			ScheduleOutlineRefresh();
 			break;
-		case CodeEdit::kMsgCaretMoved:
-			fOutline->SelectAt(message->GetUInt64("caret", 0));
+		case CodeEdit::kMsgCaretMoved: {
+			const size_t caret = message->GetUInt64("caret", 0);
+			fOutline->SelectAt(caret);
+			fFunctionsMenu->SetCaret(caret);
 			break;
+		}
 		case kMsgToggleOutline:
 			ToggleOutline();
 			break;

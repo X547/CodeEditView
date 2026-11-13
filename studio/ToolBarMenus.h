@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -38,9 +39,10 @@ public:
 
 
 // The definitions of the text in a flat list, members indented; sections
-// ("#pragma mark") are separators with their name, as in Pe. An item sends
-// a copy of the message with "start" and "end" (uint64): the name of the
-// definition.
+// ("#pragma mark") are separators with their name, as in Pe. The innermost
+// definition holding the caret is checked, as the outline selects it. An
+// item sends a copy of the message with "start" and "end" (uint64): the name
+// of the definition.
 class DefinitionsMenu: public ModelMenu {
 private:
 	enum class EntryKind {
@@ -53,13 +55,18 @@ private:
 	struct Entry {
 		EntryKind kind {};
 		std::string label;
+		size_t start {};
+		size_t end {};
 		size_t nameStart {};
 		size_t nameEnd {};
 	};
 
 	BMessage fMessage;
 	BMessenger fTarget;
+	std::atomic<size_t> fCaret {};
 	std::vector<Entry> fEntries;
+	// The entry to check; fEntries.size() for none.
+	size_t fCaretEntry {};
 
 	void AddSeparator(const std::string &label);
 	void AddEntries(const std::vector<CodeEdit::OutlineItem> &items, int32 depth);
@@ -72,6 +79,9 @@ protected:
 public:
 	DefinitionsMenu(const char *name, CodeEdit::TextModel *model, const BMessage &message,
 		const BMessenger &target);
+
+	// May be called from any thread.
+	void SetCaret(size_t caret) {fCaret = caret;}
 };
 
 

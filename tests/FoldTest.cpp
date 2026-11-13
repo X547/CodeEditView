@@ -258,6 +258,37 @@ TEST_CASE("caret movement around folds")
 }
 
 
+TEST_CASE("folds and the selection follow many edits at once")
+{
+	std::string text;
+	for (int i = 0; i < 200; i++) {
+		text += "x" + std::to_string(i) + "\n";
+	}
+	BReference<TextModel> model = MakeModel(text, nullptr);
+	EditorCore core(model);
+	core.Fold({100, 110});
+	// Inside line 150, after its first character.
+	const size_t caret = LineStart(*model, 150) + 1;
+	core.SetSelection({caret, caret});
+	const size_t rows = core.RowCount();
+	{
+		// One undo step of many edits, as replace all makes it; the hidden
+		// lines stay unchanged (editing them unfolds).
+		ModelLock lock(*model);
+		model->BeginGroup(kNoObserver, EditKind::Other, {0, 0});
+		for (size_t line = 200; line-- > 0;) {
+			if (line <= 100 || line > 110) {
+				model->Insert(model->Text().LineStart(line), "y");
+			}
+		}
+		model->EndGroup({0, 0});
+	}
+	CHECK(core.Folds() == std::vector<FoldRange> {{100, 110}});
+	CHECK(core.RowCount() == rows);
+	CHECK(core.GetSelection() == Selection {caret + 141, caret + 141});
+}
+
+
 TEST_CASE("folds follow edits")
 {
 	BReference<TextModel> model = MakeModel(kSample, "cpp");

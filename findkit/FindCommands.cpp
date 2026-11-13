@@ -59,6 +59,15 @@ static std::string SelectedText(CodeEditView *view)
 }
 
 
+// The text as it is now, to search without the model lock.
+static CodeEdit::Rope TextOf(CodeEditView *view)
+{
+	TextModel &model = *view->Model();
+	ModelLock lock(model);
+	return model.Text();
+}
+
+
 // Empty if the pattern is empty or invalid; reported if report is set.
 static std::optional<Searcher> MakeSearcher(const FindSettings &settings, bool report)
 {
@@ -88,10 +97,8 @@ static bool ExecuteFind(CodeEditView *view, const FindSettings &settings, bool b
 	const Selection selection = view->GetSelection();
 	std::optional<Match> match;
 	try {
-		TextModel &model = *view->Model();
-		ModelLock lock(model);
-		const std::string text = model.Text().ToString();
-		match = FindNext(*searcher, text, selection, backward, settings.wrap);
+		const CodeEdit::Rope text = TextOf(view);
+		match = FindNext(*searcher, RopeSource(text), selection, backward, settings.wrap);
 	} catch (const SearchError &error) {
 		ReportError(error.what());
 		return false;
@@ -200,9 +207,8 @@ static bool SelectionIsMatch(CodeEditView *view, const FindSettings &settings)
 	}
 	const Selection selection = view->GetSelection();
 	try {
-		TextModel &model = *view->Model();
-		ModelLock lock(model);
-		return SelectionMatch(*searcher, model.Text().ToString(), selection).has_value();
+		const CodeEdit::Rope text = TextOf(view);
+		return SelectionMatch(*searcher, RopeSource(text), selection).has_value();
 	} catch (const SearchError &error) {
 		return false;
 	}

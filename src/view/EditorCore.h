@@ -223,6 +223,7 @@ private:
 	void ResetFromModel();
 	void Relayout();
 	void ApplyChanges(const ModelChanges &changes);
+	void ApplyManyEdits(const std::vector<EditRecord> &edits);
 	void SyncLocked();
 	void TrimLayoutCache() const;
 	std::string LineText(size_t line) const;

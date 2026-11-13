@@ -18,6 +18,8 @@ namespace CodeEdit {
 
 
 static constexpr size_t kMaxCachedLayouts = 2048;
+// More edits than this in one change are applied by laying out all lines.
+static constexpr size_t kManyEdits = 64;
 
 
 void DirtyRows::Add(size_t from, size_t to)
@@ -237,6 +239,10 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		return;
 	}
 	fDirty.contentsChanged = true;
+	if (changes.edits.size() > kManyEdits) {
+		ApplyManyEdits(changes.edits);
+		return;
+	}
 
 	const Rope &text = fModel->Text();
 	bool foldsRemoved = false;
@@ -300,6 +306,25 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		fDirty.Add(firstRow, endRow > firstRow ? endRow - 1 : firstRow);
 	}
 	fSelection = ClampSelection(fSelection);
+}
+
+
+// Many edits at once (e.g. replace all): what follows offsets is mapped
+// through each edit, then all lines are laid out once, instead of updating
+// the lines of each edit.
+void EditorCore::ApplyManyEdits(const std::vector<EditRecord> &edits)
+{
+	for (const EditRecord &edit : edits) {
+		AdjustFolds(edit);
+		MapDecorations(edit);
+		fSelection = MapSelection(fSelection, edit);
+		fScrollAnchor = edit.MapOffset(fScrollAnchor, Gravity::Left);
+	}
+	Relayout();
+	fSelection = ClampSelection(fSelection);
+	fDirty.AddAll();
+	fDirty.scrollRangeChanged = true;
+	fDirty.marksChanged = true;
 }
 
 

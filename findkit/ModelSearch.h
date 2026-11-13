@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include <CodeEditView/TextModel.h>
@@ -18,6 +19,19 @@ using CodeEdit::Selection;
 using CodeEdit::TextModel;
 
 
+// The text of a model as searched; the rope is read a window at a time.
+class RopeSource: public TextSource {
+private:
+	const CodeEdit::Rope &fText;
+
+public:
+	explicit RopeSource(const CodeEdit::Rope &text);
+
+	size_t Length() const final {return fText.Length();}
+	std::string_view View(size_t offset, size_t length, std::string &buffer) const final;
+};
+
+
 struct ReplaceAllResult {
 	size_t count {};
 	Selection selection;
@@ -29,7 +43,7 @@ struct ReplaceAllResult {
 // selection is skipped, so repeated searches advance.
 std::optional<Match> FindNext(
 	const Searcher &searcher,
-	std::string_view text,
+	const TextSource &text,
 	const Selection &selection,
 	bool backward,
 	bool wrap
@@ -37,7 +51,7 @@ std::optional<Match> FindNext(
 
 // The match covering exactly the selection; an empty selection is never a
 // match (replacing it would insert at the same place again and again).
-std::optional<Match> SelectionMatch(const Searcher &searcher, std::string_view text, const Selection &selection);
+std::optional<Match> SelectionMatch(const Searcher &searcher, const TextSource &text, const Selection &selection);
 
 
 // The model functions lock the model. Edits are one undo step owned by owner

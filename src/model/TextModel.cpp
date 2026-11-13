@@ -17,7 +17,9 @@
 namespace CodeEdit {
 
 
-static constexpr size_t kMaxLogSize = 4096;
+// Edit records observers have not seen; one that falls further behind gets
+// a reset. Large enough for replacing all matches of a search at once.
+static constexpr size_t kMaxLogSize = 256 * 1024;
 static constexpr size_t kIOBufferSize = 64 * 1024;
 static constexpr std::string_view kUtf8Bom = "\xef\xbb\xbf";
 

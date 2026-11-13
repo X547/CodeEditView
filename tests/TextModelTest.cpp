@@ -255,7 +255,8 @@ TEST_CASE("observer falling behind the log gets a reset")
 	CounterHolder counter;
 	ModelLock lock(model);
 	const ObserverId id = model.AddObserver(counter.Messenger());
-	for (int i = 0; i < 5000; i++) {
+	// More than the log holds.
+	for (int i = 0; i < 300000; i++) {
 		model.Insert(0, "x");
 	}
 	const ModelChanges changes = model.Sync(id);

@@ -158,6 +158,100 @@ TEST_CASE("regex replacement expands groups and escapes")
 }
 
 
+static bool Same(const std::optional<Match> &a, const std::optional<Match> &b)
+{
+	if (a.has_value() != b.has_value()) {
+		return false;
+	}
+	return !a.has_value() || (a->offset == b->offset && a->length == b->length && a->groups == b->groups);
+}
+
+
+TEST_CASE("searching through small windows finds what one window finds")
+{
+	std::string text;
+	for (int i = 0; i < 40; i++) {
+		text += "int value" + std::to_string(i) + " = " + std::string(i % 7, 'a') + ";\n\xe3\x81\x82";
+	}
+	text += std::string(100, 'a') + "\nend";
+
+	struct Pattern {
+		const char *pattern;
+		bool regex;
+		bool ignoreCase;
+	};
+	const Pattern patterns[] = {
+		{"value1", false, false},
+		{"VALUE", false, true},
+		{";\n\xe3\x81\x82int", false, false},
+		{"a+", true, false},
+		{"(?<=value)(\\d+) = (a*)", true, false},
+		{"^int", true, false},
+		{"\\d;$", true, false},
+		{"\\bvalue\\d\\b", true, false},
+		{"x*", true, false},
+		{"a{3}(?=;)", true, false},
+		{"=\\s+a+;\\n\\S", true, false},
+	};
+	for (const Pattern &pattern : patterns) {
+		const Searcher searcher(pattern.pattern, pattern.regex, pattern.ignoreCase);
+		const StringSource whole(text);
+		for (const size_t windowSize : {16, 17, 23, 100}) {
+			INFO("pattern " << pattern.pattern << ", window " << windowSize);
+			const StringSource windows(text, windowSize);
+			for (size_t from = 0; from <= text.size() + 1; from += 13) {
+				CHECK(Same(searcher.Find(windows, from), searcher.Find(whole, from)));
+				CHECK(Same(searcher.MatchAt(windows, from), searcher.MatchAt(whole, from)));
+				CHECK(Same(searcher.FindLast(windows, from), searcher.FindLast(whole, from)));
+			}
+			const std::vector<Match> all = searcher.FindAll(whole, 0, text.size());
+			const std::vector<Match> allWindows = searcher.FindAll(windows, 0, text.size());
+			REQUIRE(all.size() == allWindows.size());
+			for (size_t i = 0; i < all.size(); i++) {
+				CHECK(Same(all[i], allWindows[i]));
+			}
+		}
+	}
+}
+
+
+TEST_CASE("windows grow for long matches")
+{
+	const std::string text = "x" + std::string(5000, 'a') + "y";
+	const StringSource windows(text, 16);
+	CHECK(Is(Searcher("a+y", true, false).Find(windows, 0), 1, 5001));
+	CHECK(Is(Searcher("xa+", true, false).MatchAt(windows, 0), 0, 5001));
+	CHECK(Is(Searcher(std::string(3000, 'a') + "y", false, false).Find(windows, 0), 2001, 3001));
+}
+
+
+TEST_CASE("find last goes back through the text")
+{
+	std::string text = "match";
+	text += std::string(100000, '-') + "\n";
+	text += std::string(100000, '.');
+	for (const bool regex : {false, true}) {
+		const Searcher searcher("match", regex, false);
+		const StringSource windows(text, 1000);
+		CHECK(Is(searcher.FindLast(windows, text.size()), 0, 5));
+		CHECK_FALSE(searcher.FindLast(windows, 0).has_value());
+	}
+	// Exact search finds overlapping occurrences.
+	CHECK(Is(Searcher("aa", false, false).FindLast("aaa", 3), 1, 2));
+}
+
+
+TEST_CASE("replacement expands groups from the source")
+{
+	const std::string text = std::string(50, ' ') + "key=value";
+	const Searcher searcher("(\\w+)=(\\w+)", true, false);
+	const StringSource windows(text, 16);
+	const std::optional<Match> match = searcher.Find(windows, 0);
+	REQUIRE(match.has_value());
+	CHECK(searcher.Expand(windows, *match, "$2=$1") == "value=key");
+}
+
+
 TEST_CASE("line endings are normalized to LF")
 {
 	CHECK(NormalizeLineEndings("a\r\nb\rc\n\r") == "a\nb\nc\n\n");

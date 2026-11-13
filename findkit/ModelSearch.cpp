@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -12,11 +13,43 @@ namespace FindKit {
 
 using CodeEdit::EditKind;
 using CodeEdit::ModelLock;
+using CodeEdit::Rope;
 
+
+//#pragma mark - RopeSource
+
+RopeSource::RopeSource(const Rope &text):
+	fText(text)
+{
+}
+
+
+// A range inside one chunk is not copied.
+std::string_view RopeSource::View(size_t offset, size_t length, std::string &buffer) const
+{
+	const std::string_view first = fText.ChunkAt(offset);
+	if (first.size() >= length) {
+		return first.substr(0, length);
+	}
+	buffer.clear();
+	buffer.reserve(length);
+	buffer.append(first);
+	while (buffer.size() < length) {
+		const std::string_view chunk = fText.ChunkAt(offset + buffer.size());
+		if (chunk.empty()) {
+			throw std::out_of_range("RopeSource::View: range out of range");
+		}
+		buffer.append(chunk.substr(0, length - buffer.size()));
+	}
+	return buffer;
+}
+
+
+//#pragma mark - Functions
 
 std::optional<Match> FindNext(
 	const Searcher &searcher,
-	std::string_view text,
+	const TextSource &text,
 	const Selection &selection,
 	bool backward,
 	bool wrap
@@ -28,14 +61,14 @@ std::optional<Match> FindNext(
 	if (backward) {
 		std::optional<Match> match = searcher.FindLast(text, start);
 		if (!match.has_value() && wrap) {
-			match = searcher.FindLast(text, text.size() + 1);
+			match = searcher.FindLast(text, text.Length() + 1);
 		}
 		return match;
 	}
 
 	std::optional<Match> match = searcher.Find(text, end);
 	if (match.has_value() && match->length == 0 && match->offset == start && start == end) {
-		match = end < text.size() ? searcher.Find(text, NextCodePoint(text, end)) : std::nullopt;
+		match = end < text.Length() ? searcher.Find(text, NextCodePoint(text, end)) : std::nullopt;
 	}
 	if (!match.has_value() && wrap) {
 		match = searcher.Find(text, 0);
@@ -44,7 +77,7 @@ std::optional<Match> FindNext(
 }
 
 
-std::optional<Match> SelectionMatch(const Searcher &searcher, std::string_view text, const Selection &selection)
+std::optional<Match> SelectionMatch(const Searcher &searcher, const TextSource &text, const Selection &selection)
 {
 	const size_t start = std::min(selection.anchor, selection.caret);
 	const size_t end = std::max(selection.anchor, selection.caret);
@@ -68,7 +101,7 @@ std::optional<Selection> ReplaceSelection(
 )
 {
 	ModelLock lock(model);
-	const std::string text = model.Text().ToString();
+	const RopeSource text(model.Text());
 	const std::optional<Match> match = SelectionMatch(searcher, text, selection);
 	if (!match.has_value()) {
 		return std::nullopt;
@@ -93,9 +126,9 @@ ReplaceAllResult ReplaceAll(
 )
 {
 	ModelLock lock(model);
-	const std::string text = model.Text().ToString();
+	const RopeSource text(model.Text());
 	size_t from = 0;
-	size_t to = text.size();
+	size_t to = text.Length();
 	if (inSelection) {
 		from = std::min(selection.anchor, selection.caret);
 		to = std::max(selection.anchor, selection.caret);

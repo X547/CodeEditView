@@ -78,6 +78,10 @@ public:
 
 std::string PlaceholderText(const Cluster &cluster);
 
+// Cell width of a line: LineLayout(line, options).Width(), without making the
+// clusters.
+uint32_t LineWidth(std::string_view line, const LayoutOptions &options);
+
 
 // One display row of a wrapped line.
 struct WrapRow {

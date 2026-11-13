@@ -196,7 +196,11 @@ private:
 	Selection fSelection;
 	std::optional<uint32_t> fGoalColumn;
 	size_t fScrollAnchor {};
-	uint32_t fMaxColumns {};
+	// Width of the widest line laid out or measured; grows while lines are
+	// measured in the background, from fMeasureLine on.
+	mutable uint32_t fMaxColumns {};
+	mutable bool fMaxColumnsGrew {};
+	size_t fMeasureLine {};
 	// Wrap width in cells given by the view; 0 until known.
 	uint32_t fWrapColumns {};
 	mutable std::unordered_map<size_t, LineLayout> fLayoutCache;
@@ -224,6 +228,8 @@ private:
 	void Relayout();
 	void ApplyChanges(const ModelChanges &changes);
 	void ApplyManyEdits(const std::vector<EditRecord> &edits);
+	void ShiftLayoutCaches(const EditRecord &edit);
+	bool MeasureLines(size_t maxLines);
 	void SyncLocked();
 	void TrimLayoutCache() const;
 	std::string LineText(size_t line) const;
@@ -294,12 +300,16 @@ public:
 	// Word wrap. The width in cells comes from the view. After a change,
 	// lines are stale until re-wrapped by WrapRows() (the rows about to be
 	// shown), WrapFromScrollAnchor() (count rows from the scroll anchor) or
-	// RewrapStep() (up to maxLines lines in the background; returns whether
-	// stale lines remain). WrapRows() returns whether row counts changed.
+	// RewrapStep(). WrapRows() returns whether row counts changed.
 	void SetWrapColumns(uint32_t columns);
 	bool IsWrapping();
 	bool WrapRows(size_t firstRow, size_t count);
 	void WrapFromScrollAnchor(size_t count);
+	// Layout left for the background after loading or a settings change:
+	// re-wrapping stale lines, and without wrap measuring lines for the
+	// widest one (MaxColumns() grows meanwhile). RewrapStep() does up to
+	// maxLines lines of it and returns whether more is left.
+	bool HasLayoutWork();
 	bool RewrapStep(size_t maxLines);
 
 	// Queries.

@@ -1046,6 +1046,9 @@ void CodeEditView::ApplyDirty()
 	// above it are compensated below.
 	fCore->WrapFromScrollAnchor(CurrentPage().visibleRows + 2);
 	fCore->UpdateBracketMatch();
+	if (fCore->HasLayoutWork()) {
+		ScheduleRewrap();
+	}
 	const CodeEdit::DirtyRows dirty = fCore->TakeDirty();
 
 	// Keep the text at the top of the view in place when rows are inserted

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <CodeEditView/TextModel.h>
 
@@ -86,8 +87,36 @@ TEST_CASE("row index randomized against a vector")
 }
 
 
+TEST_CASE("display map keeps nothing per line until needed")
+{
+	DisplayMap map;
+	map.Reset(1000);
+	CHECK_FALSE(map.IsDense());
+	CHECK(map.RowCount() == 1000);
+	CHECK(map.FirstRowOfLine(7) == 7);
+	CHECK(map.RowAt(5).line == 5);
+	map.SetWrapRows(3, 1);
+	map.SetHiddenLines({});
+	CHECK_FALSE(map.IsDense());
+	CHECK_FALSE(map.HasStaleLines());
+	CHECK_THROWS_AS(map.RowAt(1000), std::out_of_range);
+
+	map.SetWrapRows(3, 2);
+	CHECK(map.IsDense());
+	CHECK(map.RowCount() == 1001);
+	CHECK(map.RowAt(4).line == 3);
+	CHECK(map.RowAt(4).subRow == 1);
+	CHECK(map.FirstRowOfLine(7) == 8);
+
+	map.Reset(10);
+	CHECK_FALSE(map.IsDense());
+	CHECK(map.RowCount() == 10);
+}
+
+
 TEST_CASE("display map follows model edits")
 {
+	const bool dense = GENERATE(false, true);
 	TextModel model;
 	ModelLock lock(model);
 	model.SetText("one\ntwo\nthree\n");
@@ -95,6 +124,11 @@ TEST_CASE("display map follows model edits")
 
 	DisplayMap map;
 	map.Reset(model.Text().LineCount());
+	if (dense) {
+		map.SetWrapRows(0, 2);
+		map.SetWrapRows(0, 1);
+	}
+	CHECK(map.IsDense() == dense);
 
 	std::mt19937 rng(5);
 	const char *const kInserts[] = {"x", "\n", "a\nb", "\n\n\n", ""};

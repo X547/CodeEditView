@@ -97,6 +97,65 @@ static ClusterExtent ExtendCluster(
 }
 
 
+// The cluster starting at pos, at column.
+static Cluster ClusterAt(std::string_view line, size_t pos, uint32_t column, const LayoutOptions &options)
+{
+	const Utf8Char ch = DecodeUtf8(line, pos);
+	Cluster cluster;
+	cluster.offset = static_cast<uint32_t>(pos);
+	cluster.length = ch.length;
+	cluster.column = column;
+	cluster.codePoint = ch.codePoint;
+
+	if (!ch.valid) {
+		cluster.kind = ClusterKind::InvalidByte;
+	} else if (ch.codePoint == '\t') {
+		cluster.kind = ClusterKind::Tab;
+		cluster.width = options.tabWidth - column % options.tabWidth;
+	} else {
+		const CharProperties properties = GetCharProperties(ch.codePoint);
+		if (IsPlaceholderClass(properties.charClass) || ch.codePoint == kZeroWidthJoiner) {
+			cluster.kind = ClusterKind::Placeholder;
+		} else {
+			const ClusterExtent extent = ExtendCluster(line, pos, ch, properties, options);
+			cluster.kind = ClusterKind::Text;
+			cluster.length = static_cast<uint32_t>(extent.end - pos);
+			cluster.width = extent.width;
+		}
+	}
+	if (cluster.kind == ClusterKind::Placeholder || cluster.kind == ClusterKind::InvalidByte) {
+		cluster.width = static_cast<uint32_t>(PlaceholderText(cluster).size());
+	}
+	return cluster;
+}
+
+
+static bool IsPrintableAscii(char ch)
+{
+	return ch >= 0x20 && ch < 0x7f;
+}
+
+
+// A printable ASCII character followed by another ASCII byte is a cluster
+// of one cell; anything else is measured as LineLayout lays it out.
+uint32_t LineWidth(std::string_view line, const LayoutOptions &options)
+{
+	uint32_t column = 0;
+	size_t pos = 0;
+	while (pos < line.size()) {
+		if (IsPrintableAscii(line[pos]) && (pos + 1 == line.size() || static_cast<uint8_t>(line[pos + 1]) < 0x80)) {
+			column++;
+			pos++;
+			continue;
+		}
+		const Cluster cluster = ClusterAt(line, pos, column, options);
+		pos += cluster.length;
+		column += cluster.width;
+	}
+	return column;
+}
+
+
 //#pragma mark - LineLayout
 
 LineLayout::LineLayout(std::string_view line, const LayoutOptions &options)
@@ -109,33 +168,7 @@ LineLayout::LineLayout(std::string_view line, const LayoutOptions &options)
 	uint32_t column = 0;
 	size_t pos = 0;
 	while (pos < line.size()) {
-		const Utf8Char ch = DecodeUtf8(line, pos);
-		Cluster cluster;
-		cluster.offset = static_cast<uint32_t>(pos);
-		cluster.length = ch.length;
-		cluster.column = column;
-		cluster.codePoint = ch.codePoint;
-
-		if (!ch.valid) {
-			cluster.kind = ClusterKind::InvalidByte;
-		} else if (ch.codePoint == '\t') {
-			cluster.kind = ClusterKind::Tab;
-			cluster.width = options.tabWidth - column % options.tabWidth;
-		} else {
-			const CharProperties properties = GetCharProperties(ch.codePoint);
-			if (IsPlaceholderClass(properties.charClass) || ch.codePoint == kZeroWidthJoiner) {
-				cluster.kind = ClusterKind::Placeholder;
-			} else {
-				const ClusterExtent extent = ExtendCluster(line, pos, ch, properties, options);
-				cluster.kind = ClusterKind::Text;
-				cluster.length = static_cast<uint32_t>(extent.end - pos);
-				cluster.width = extent.width;
-			}
-		}
-		if (cluster.kind == ClusterKind::Placeholder || cluster.kind == ClusterKind::InvalidByte) {
-			cluster.width = static_cast<uint32_t>(PlaceholderText(cluster).size());
-		}
-
+		const Cluster cluster = ClusterAt(line, pos, column, options);
 		fClusters.push_back(cluster);
 		pos += cluster.length;
 		column += cluster.width;

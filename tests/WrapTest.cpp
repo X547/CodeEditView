@@ -206,6 +206,10 @@ TEST_CASE("unwrapped lines need no wrap width")
 	CHECK(core.RowCount() == 2);
 	core.SetWrapColumns(10);
 	CHECK(core.IsWrapping());
+	// Lines are wrapped lazily, as after a width change.
+	CHECK(core.HasLayoutWork());
+	while (core.RewrapStep(100)) {
+	}
 	CHECK(core.RowCount() == 3);
 }
 

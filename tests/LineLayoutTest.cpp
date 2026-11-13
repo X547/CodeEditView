@@ -210,4 +210,33 @@ TEST_CASE("wrapping wide characters and narrow widths")
 }
 
 
+TEST_CASE("line width without clusters")
+{
+	const std::string_view lines[] = {
+		"",
+		"plain ascii text",
+		"\ttab\tafter\ttext",
+		"あいう abc",
+		"e\xcc\x81 combining",
+		"1\xef\xb8\x8f\xe2\x83\xa3 keycap",
+		"x\xef\xb8\x8f",
+		"\x01\x7f control",
+		"\xff\xfe invalid",
+		"\xf0\x9f\x87\xaf\xf0\x9f\x87\xb5 flag",
+		"\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9 joined",
+		"a\xe2\x80\x8d",
+		"\xc2\xa7 ambiguous",
+	};
+	for (const uint32_t ambiguousWidth : {1, 2}) {
+		LayoutOptions options;
+		options.tabWidth = 3;
+		options.ambiguousWidth = ambiguousWidth;
+		for (const std::string_view line : lines) {
+			CAPTURE(line);
+			CHECK(LineWidth(line, options) == LineLayout(line, options).Width());
+		}
+	}
+}
+
+
 } // CodeEdit

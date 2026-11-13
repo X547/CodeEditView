@@ -51,6 +51,40 @@ static size_t MoveFrom(EditorCore &core, size_t offset, Movement movement)
 }
 
 
+TEST_CASE("the widest line is measured in the background")
+{
+	std::string text;
+	for (int i = 0; i < 50000; i++) {
+		text += "line " + std::to_string(i) + "\n";
+	}
+	text += std::string(300, 'w') + "\n" + "end";
+	BReference<TextModel> model = MakeModel(text);
+	EditorCore core(model);
+	CHECK(core.RowCount() == 50002);
+	CHECK(core.MaxColumns() < 300);
+	CHECK(core.HasLayoutWork());
+
+	// An edit before the measured lines is measured on its own.
+	core.SetSelection({0, 0});
+	core.InsertText(std::string(400, 'x'));
+	CHECK(core.MaxColumns() == 406);
+
+	while (core.RewrapStep(100)) {
+	}
+	CHECK_FALSE(core.HasLayoutWork());
+	CHECK(core.MaxColumns() == 406);
+
+	// Measuring starts again after a layout change, and finds the widest.
+	EditorSettings settings = core.Settings();
+	settings.tabWidth = 2;
+	core.SetSettings(settings);
+	CHECK(core.HasLayoutWork());
+	while (core.RewrapStep(100)) {
+	}
+	CHECK(core.MaxColumns() == 406);
+}
+
+
 TEST_CASE("character movement")
 {
 	EditorCore core(MakeModel("abc\ndef\néx"));

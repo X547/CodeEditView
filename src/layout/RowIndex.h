@@ -12,11 +12,11 @@ namespace CodeEdit {
 
 // Number of display rows per model line with prefix sums (Fenwick tree,
 // rebuilt lazily after lines are inserted or removed). A line may have zero
-// rows (hidden by a fold).
+// rows (hidden by a fold). There are fewer than 2^32 rows.
 class RowIndex {
 private:
 	std::vector<uint32_t> fRows;
-	mutable std::vector<size_t> fTree;
+	mutable std::vector<uint32_t> fTree;
 	mutable bool fTreeValid {};
 	size_t fTotal {};
 

@@ -18,6 +18,9 @@ namespace CodeEdit {
 
 
 static constexpr size_t kMaxCachedLayouts = 2048;
+// About 12 MiB of clusters; a cache holding more (long lines) is emptied.
+static constexpr size_t kMaxCachedClusters = 512 * 1024;
+static constexpr size_t kMeasureLinesPerWrap = 8;
 // More edits than this in one change are applied by laying out all lines.
 static constexpr size_t kManyEdits = 64;
 
@@ -170,6 +173,15 @@ bool EditorCore::IsWrapping()
 }
 
 
+bool EditorCore::HasLayoutWork()
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return fDisplayMap.HasStaleLines() || (!IsWrappingLocked() && fMeasureLine < fModel->Text().LineCount());
+}
+
+
+// Measuring is cheaper than wrapping: more lines are measured at a time.
 bool EditorCore::RewrapStep(size_t maxLines)
 {
 	ModelLock lock(*fModel);
@@ -181,7 +193,8 @@ bool EditorCore::RewrapStep(size_t maxLines)
 		}
 		RewrapLine(*line);
 	}
-	return fDisplayMap.HasStaleLines();
+	const bool measuring = MeasureLines(kMeasureLinesPerWrap * maxLines);
+	return fDisplayMap.HasStaleLines() || measuring;
 }
 
 
@@ -198,27 +211,97 @@ void EditorCore::ResetFromModel()
 }
 
 
-// Lays out all lines again, keeping folds.
+// Lays out all lines again, keeping folds. Nothing is laid out at once:
+// shown lines are laid out when drawn, the others in the background (see
+// RewrapStep()).
 void EditorCore::Relayout()
 {
 	const Rope &text = fModel->Text();
 	fLayoutCache.clear();
 	fWrapCache.clear();
 	fDisplayMap.Reset(text.LineCount());
-
-	// TODO: computing the widest line lays out the whole text; do it lazily
-	// for large files.
 	fMaxColumns = 0;
-	const bool wrapping = IsWrappingLocked();
-	for (size_t line = 0; line < text.LineCount(); line++) {
-		const LineLayout layout(LineText(line), fLayoutOptions);
-		fMaxColumns = std::max(fMaxColumns, layout.Width());
-		if (wrapping) {
-			fDisplayMap.SetWrapRows(line, static_cast<uint32_t>(ComputeWrap(layout).size()));
-		}
+	fMeasureLine = 0;
+	if (IsWrappingLocked()) {
+		fDisplayMap.MarkAllStale(text.LineOfOffset(std::min(fScrollAnchor, text.Length())));
 	}
-
 	ApplyFolds();
+	fDirty.scrollRangeChanged = true;
+}
+
+
+// Lines are read chunk by chunk; only a line spanning chunks is copied.
+bool EditorCore::MeasureLines(size_t maxLines)
+{
+	const Rope &text = fModel->Text();
+	const size_t lineCount = text.LineCount();
+	if (IsWrappingLocked() || fMeasureLine >= lineCount) {
+		// Wrapped text has no horizontal extent; Relayout() starts again.
+		fMeasureLine = lineCount;
+		return false;
+	}
+	const size_t end = std::min(lineCount, fMeasureLine + maxLines);
+	uint32_t widest = fMaxColumns;
+	size_t pos = text.LineStart(fMeasureLine);
+	std::string spanning;
+	while (fMeasureLine < end) {
+		const std::string_view chunk = text.ChunkAt(pos);
+		const size_t newline = chunk.find('\n');
+		if (newline == std::string_view::npos && !chunk.empty()) {
+			spanning.append(chunk);
+			pos += chunk.size();
+			continue;
+		}
+		std::string_view line = chunk.substr(0, newline);
+		if (!spanning.empty()) {
+			spanning.append(line);
+			line = spanning;
+		}
+		widest = std::max(widest, LineWidth(line, fLayoutOptions));
+		spanning.clear();
+		pos += chunk.empty() ? 0 : newline + 1;
+		fMeasureLine++;
+	}
+	if (widest > fMaxColumns) {
+		fMaxColumns = widest;
+		fDirty.scrollRangeChanged = true;
+	}
+	return fMeasureLine < lineCount;
+}
+
+
+// Cached layouts of edited lines are dropped, the others renumbered.
+void EditorCore::ShiftLayoutCaches(const EditRecord &edit)
+{
+	const size_t first = edit.start.line;
+	const size_t oldLast = edit.oldEnd.line;
+	const size_t newLast = edit.newEnd.line;
+	const auto shift = [&](auto &cache) {
+		if (oldLast == newLast) {
+			for (size_t line = first; line <= oldLast; line++) {
+				cache.erase(line);
+			}
+			return;
+		}
+		std::remove_reference_t<decltype(cache)> shifted;
+		shifted.reserve(cache.size());
+		for (auto &[line, value] : cache) {
+			if (line < first) {
+				shifted.emplace(line, std::move(value));
+			} else if (line > oldLast) {
+				shifted.emplace(line - oldLast + newLast, std::move(value));
+			}
+		}
+		cache = std::move(shifted);
+	};
+	shift(fLayoutCache);
+	shift(fWrapCache);
+
+	if (fMeasureLine > oldLast) {
+		fMeasureLine = fMeasureLine - oldLast + newLast;
+	} else if (fMeasureLine > first) {
+		fMeasureLine = first;
+	}
 }
 
 
@@ -251,6 +334,7 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	std::vector<std::pair<size_t, size_t>> edited;
 	for (const EditRecord &edit : changes.edits) {
 		fDisplayMap.ApplyEdit(edit);
+		ShiftLayoutCaches(edit);
 		foldsRemoved = AdjustFolds(edit) || foldsRemoved;
 		MapDecorations(edit);
 		fSelection = MapSelection(fSelection, edit);
@@ -271,8 +355,6 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		}
 		edited.emplace_back(first, newLast);
 	}
-	fLayoutCache.clear();
-	fWrapCache.clear();
 
 	size_t firstLine = SIZE_MAX;
 	size_t lastLine = 0;
@@ -330,7 +412,11 @@ void EditorCore::ApplyManyEdits(const std::vector<EditRecord> &edits)
 
 void EditorCore::TrimLayoutCache() const
 {
-	if (fLayoutCache.size() > kMaxCachedLayouts) {
+	size_t clusters = 0;
+	for (const auto &[line, layout] : fLayoutCache) {
+		clusters += layout.Clusters().size();
+	}
+	if (fLayoutCache.size() > kMaxCachedLayouts || clusters > kMaxCachedClusters) {
 		fLayoutCache.clear();
 	}
 	if (fWrapCache.size() > kMaxCachedLayouts) {
@@ -353,7 +439,12 @@ const LineLayout &EditorCore::LayoutOfLine(size_t line) const
 	if (it != fLayoutCache.end()) {
 		return it->second;
 	}
-	return fLayoutCache.emplace(line, LineLayout(LineText(line), fLayoutOptions)).first->second;
+	const LineLayout &layout = fLayoutCache.emplace(line, LineLayout(LineText(line), fLayoutOptions)).first->second;
+	if (layout.Width() > fMaxColumns) {
+		fMaxColumns = layout.Width();
+		fMaxColumnsGrew = true;
+	}
+	return layout;
 }
 
 
@@ -2360,6 +2451,10 @@ bool EditorCore::Redo()
 
 DirtyRows EditorCore::TakeDirty()
 {
+	if (fMaxColumnsGrew) {
+		fMaxColumnsGrew = false;
+		fDirty.scrollRangeChanged = true;
+	}
 	const DirtyRows dirty = fDirty;
 	fDirty = {};
 	return dirty;

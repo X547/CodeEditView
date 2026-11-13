@@ -57,7 +57,7 @@ void RowIndex::SetRows(size_t line, uint32_t rows)
 		return;
 	}
 	// Unsigned wrap-around makes the same update work for decreases.
-	const size_t delta = static_cast<size_t>(rows) - oldRows;
+	const uint32_t delta = rows - oldRows;
 	for (size_t i = line + 1; i < fTree.size(); i += i & (~i + 1)) {
 		fTree[i] += delta;
 	}

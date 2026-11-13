@@ -69,6 +69,7 @@ static constexpr uint32 kMsgSaveAsChosen = 'SWac';
 static constexpr uint32 kMsgSaveCopyChosen = 'SWcc';
 static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
+static constexpr uint32 kMsgToggleSticky = 'SWst';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
 static constexpr uint32 kMsgFollowCoverage = 'SWfc';
 static constexpr uint32 kMsgNextUncovered = 'SWnu';
@@ -85,6 +86,8 @@ static constexpr uint32 kMsgSelectDefinition = 'SWsd';
 static constexpr uint32 kMsgOpenInclude = 'SWoi';
 // Of the drop-down menus of the tool bar.
 static constexpr int32 kRecentDocumentCount = 10;
+// Header lines of enclosing scopes kept at the top of the view.
+static constexpr uint32 kStickyLines = 5;
 
 // Commands forwarded to the session followed.
 static constexpr uint32 kSessionCommands[] = {
@@ -121,6 +124,9 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	fStatus(new BStringView("status", ""))
 {
 	fEditView->SetTarget(BMessenger(this));
+	CodeEdit::EditorSettings settings = fEditView->Settings();
+	settings.stickyLines = kStickyLines;
+	fEditView->SetSettings(settings);
 	CodeEdit::MarkStyle frameStyle;
 	frameStyle.shape = CodeEdit::MarkShape::Arrow;
 	frameStyle.color = {60, 170, 80, 255};
@@ -164,6 +170,8 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 		.AddMenu("View")
 			.AddItem("Outline", kMsgToggleOutline, 'L', B_SHIFT_KEY)
 				.GetItem(fOutlineItem)
+			.AddItem("Sticky scopes", kMsgToggleSticky)
+				.GetItem(fStickyItem)
 			.AddSeparator()
 			.AddItem("Erase view (debug)", CodeEdit::kMsgEraseView, 'E', B_SHIFT_KEY)
 		.End()
@@ -199,6 +207,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	fSplitView->AddChild(new BScrollView("outlineScroll", fOutline, 0, false, true, B_PLAIN_BORDER), 1);
 	fSplitView->AddChild(new CodeEditScrollView("pane", fEditView), 4);
 	fOutlineItem->SetMarked(true);
+	fStickyItem->SetMarked(true);
 
 	StudioApp::Get().Registry().AddListener(BMessenger(this));
 	Follow(session, coverage);
@@ -935,6 +944,13 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgRefreshOutline:
 			RefreshOutline();
 			break;
+		case kMsgToggleSticky: {
+			CodeEdit::EditorSettings settings = fEditView->Settings();
+			settings.stickyLines = settings.stickyLines > 0 ? 0 : kStickyLines;
+			fEditView->SetSettings(settings);
+			fStickyItem->SetMarked(settings.stickyLines > 0);
+			break;
+		}
 		case kMsgToggleLocked:
 			ToggleLocked();
 			break;

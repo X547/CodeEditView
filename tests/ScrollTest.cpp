@@ -6,6 +6,7 @@
 
 #include <Application.h>
 #include <Autolock.h>
+#include <OS.h>
 #include <ScrollBar.h>
 #include <Window.h>
 
@@ -28,8 +29,18 @@ static void EnsureApplication()
 }
 
 
-// An editor in a window that is never shown, with a text of kLineCount lines
-// "line N".
+static std::string NumberedLines()
+{
+	std::string text;
+	for (size_t line = 0; line < kLineCount; line++) {
+		text += "line " + std::to_string(line) + "\n";
+	}
+	return text;
+}
+
+
+// An editor in a window that is never shown, by default with a text of
+// kLineCount lines "line N". With a language, the syntax tree is waited for.
 class EditorWindow {
 private:
 	BWindow *fWindow;
@@ -38,17 +49,25 @@ public:
 	CodeEditView *view;
 	BScrollBar *verticalBar;
 
-	EditorWindow()
+	explicit EditorWindow(const std::string &text = NumberedLines(), const char *language = nullptr)
 	{
 		EnsureApplication();
 		BReference<TextModel> model(new TextModel(), true);
+		uint64_t syntaxRevision;
 		{
-			std::string text;
-			for (size_t line = 0; line < kLineCount; line++) {
-				text += "line " + std::to_string(line) + "\n";
-			}
 			ModelLock lock(*model);
 			model->SetText(text);
+			model->SetLanguage(language);
+			syntaxRevision = model->SyntaxRevision();
+		}
+		for (int i = 0; language != nullptr && i < 500; i++) {
+			{
+				ModelLock lock(*model);
+				if (model->SyntaxRevision() > syntaxRevision) {
+					break;
+				}
+			}
+			snooze(10000);
 		}
 		fWindow = new BWindow(BRect(0, 0, 599, 399), "ScrollTest", B_DOCUMENT_WINDOW, 0);
 		view = new CodeEditView("editor", model.Get());
@@ -147,6 +166,29 @@ TEST_CASE("the mouse wheel scrolls by rows")
 	editor.verticalBar->GetRange(&minimum, &maximum);
 	const double maxTop = (kLineCount + 1.0) * view.LineHeight() - (view.Bounds().Height() + 1);
 	CHECK(fabs(editor.verticalBar->Value() - 503.0 * view.LineHeight() * maximum / maxTop) < 1);
+}
+
+
+TEST_CASE("sticky lines show the scope at the top and go to it")
+{
+	std::string text = "void f()\n{\n";
+	for (int i = 0; i < 200; i++) {
+		text += "\tx();\n";
+	}
+	text += "}\n";
+	EditorWindow editor(text, "cpp");
+	BAutolock lock(editor.Window());
+	CodeEditView &view = *editor.view;
+	EditorSettings settings = view.Settings();
+	settings.stickyLines = 5;
+	view.SetSettings(settings);
+
+	view.ScrollLineTo({50, 0}, 0, 0);
+	CHECK(view.LineAtY(0).line == 50);
+	// A click on the sticky line of "void f()" goes to it.
+	view.MouseDown(BPoint(view.Bounds().left + 1, 1));
+	CHECK(view.LineAtY(0).line == 0);
+	CHECK(view.CaretLocation().line == 0);
 }
 
 

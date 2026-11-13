@@ -191,6 +191,22 @@ void GutterView::Draw(BRect updateRect)
 		}
 	}
 
+	// The numbers of the sticky lines, inner ones first as in the view.
+	const std::vector<StickyRow> &sticky = fEditView->fStickyRows;
+	if (!sticky.empty() && updateRect.top < fEditView->fStickyHeight) {
+		for (auto it = sticky.rbegin(); it != sticky.rend(); ++it) {
+			SetHighColor(mix_color(background, text, 28));
+			FillRect(BRect(bounds.left, it->top, bounds.right, it->top + lineHeight - 1));
+			char number[32];
+			snprintf(number, sizeof(number), "%zu", it->line + 1);
+			SetHighColor(numberColor);
+			DrawString(number, BPoint(foldLeft - StringWidth(number), it->top + fEditView->fAscent));
+		}
+		const float bottom = fEditView->fStickyHeight - 1;
+		SetHighColor(mix_color(background, text, 64));
+		StrokeLine(BPoint(bounds.left, bottom), BPoint(bounds.right, bottom));
+	}
+
 	SetHighColor(mix_color(background, text, 48));
 	StrokeLine(BPoint(bounds.right, updateRect.top), BPoint(bounds.right, updateRect.bottom));
 }
@@ -198,6 +214,10 @@ void GutterView::Draw(BRect updateRect)
 
 void GutterView::MouseDown(BPoint where)
 {
+	if (const std::optional<size_t> sticky = fEditView->StickyRowAt(where.y)) {
+		fEditView->GoToStickyLine(*sticky, fEditView->Bounds().left);
+		return;
+	}
 	EditorCore &core = *fEditView->fCore;
 	const size_t row = fEditView->RowAtY(where.y);
 	const std::vector<DisplayRow> rows = core.DisplayRows(row, 1);

@@ -118,6 +118,26 @@ TEST_CASE("fold candidates from the syntax tree")
 }
 
 
+TEST_CASE("sticky scopes of the top of the view")
+{
+	BReference<TextModel> model = MakeModel(kSample, "cpp");
+	EditorCore core(model);
+	CHECK(core.EnclosingScopes(4, 5) == std::vector<FoldRange> {{1, 5}, {3, 4}});
+	CHECK(core.EnclosingScopes(4, 1) == std::vector<FoldRange> {{1, 5}});
+	CHECK(core.EnclosingScopes(1, 5).empty());
+
+	// The function's bracket is on its own line: its line before is shown.
+	CHECK(core.StickyScopes(0, 5).empty());
+	CHECK(core.StickyScopes(2, 5) == std::vector<FoldRange> {{0, 5}});
+	CHECK(core.StickyScopes(3, 5) == std::vector<FoldRange> {{0, 5}, {3, 4}});
+	CHECK(core.StickyScopes(3, 1) == std::vector<FoldRange> {{0, 5}});
+	// The if block would take the row of its closing line: it is over.
+	CHECK(core.StickyScopes(4, 5) == std::vector<FoldRange> {{0, 5}});
+	CHECK(core.StickyScopes(6, 5).empty());
+	CHECK(core.StickyScopes(2, 0).empty());
+}
+
+
 TEST_CASE("fold candidates of other languages")
 {
 	// Closing keywords on their own line stay visible.

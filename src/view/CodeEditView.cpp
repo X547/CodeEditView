@@ -174,24 +174,26 @@ public:
 
 
 // Moves what a view shows from sourceTop to its bottom down by distance
-// pixels (up if negative). What comes into view at the bottom is drawn anew;
-// what is left above the moved part is up to the caller.
-static void MoveContents(BView &view, float sourceTop, float distance)
+// pixels (up if negative), below the reserved height at the top. What comes
+// into view at the bottom is drawn anew; what is left above the moved part is
+// up to the caller.
+static void MoveContents(BView &view, float sourceTop, float distance, float reserved)
 {
 	const BRect bounds = view.Bounds();
 	if (distance == 0) {
 		return;
 	}
+	const float clipTop = bounds.top + reserved;
 	float top = sourceTop;
 	float bottom = distance > 0 ? bounds.bottom - distance : bounds.bottom;
 	float targetTop = sourceTop + distance;
-	if (targetTop < bounds.top) {
-		top += bounds.top - targetTop;
-		targetTop = bounds.top;
+	if (targetTop < clipTop) {
+		top += clipTop - targetTop;
+		targetTop = clipTop;
 	}
-	if (top < bounds.top) {
-		targetTop += bounds.top - top;
-		top = bounds.top;
+	if (top < clipTop) {
+		targetTop += clipTop - top;
+		top = clipTop;
 	}
 	if (distance < 0) {
 		view.Invalidate(BRect(bounds.left, std::max(bounds.top, bounds.bottom + distance + 1), bounds.right, bounds.bottom));
@@ -205,28 +207,35 @@ static void MoveContents(BView &view, float sourceTop, float distance)
 }
 
 
-// Moves the contents of a view up by delta pixels (down if negative); what
-// comes into view is drawn anew.
-static void ShiftContents(BView &view, double delta)
+// Moves the contents of a view below the reserved height at the top up by
+// delta pixels (down if negative); what comes into view, and the reserved
+// part, are drawn anew.
+static void ShiftContents(BView &view, double delta, float reserved)
 {
 	const BRect bounds = view.Bounds();
+	const float top = bounds.top + reserved;
+	if (reserved > 0) {
+		view.Invalidate(BRect(bounds.left, bounds.top, bounds.right, std::min(bounds.bottom, top - 1)));
+	}
 	const float distance = static_cast<float>(fabs(delta));
-	if (distance > bounds.Height()) {
-		view.Invalidate();
+	if (distance > bounds.bottom - top) {
+		if (top <= bounds.bottom) {
+			view.Invalidate(BRect(bounds.left, top, bounds.right, bounds.bottom));
+		}
 		return;
 	}
 	if (delta > 0) {
 		view.CopyBits(
-			BRect(bounds.left, bounds.top + distance, bounds.right, bounds.bottom),
-			BRect(bounds.left, bounds.top, bounds.right, bounds.bottom - distance)
+			BRect(bounds.left, top + distance, bounds.right, bounds.bottom),
+			BRect(bounds.left, top, bounds.right, bounds.bottom - distance)
 		);
 		view.Invalidate(BRect(bounds.left, bounds.bottom - distance + 1, bounds.right, bounds.bottom));
 	} else {
 		view.CopyBits(
-			BRect(bounds.left, bounds.top, bounds.right, bounds.bottom - distance),
-			BRect(bounds.left, bounds.top + distance, bounds.right, bounds.bottom)
+			BRect(bounds.left, top, bounds.right, bounds.bottom - distance),
+			BRect(bounds.left, top + distance, bounds.right, bounds.bottom)
 		);
-		view.Invalidate(BRect(bounds.left, bounds.top, bounds.right, bounds.top + distance - 1));
+		view.Invalidate(BRect(bounds.left, top, bounds.right, top + distance - 1));
 	}
 }
 
@@ -293,6 +302,8 @@ void CodeEditView::SetModel(CodeEdit::TextModel *model)
 	fCore->SetSettings(settings);
 	fTopRow = 0;
 	fTopOffset = 0;
+	fStickyRows.clear();
+	fStickyHeight = 0;
 	fNotifiedCaret = SIZE_MAX;
 	if (!attached) {
 		return;
@@ -332,6 +343,7 @@ void CodeEditView::SetSettings(const CodeEdit::EditorSettings &settings)
 	if (Window() != nullptr) {
 		UpdateWrapColumns();
 		ApplyDirty();
+		UpdateStickyRows(true);
 	}
 }
 
@@ -662,7 +674,7 @@ void CodeEditView::Draw(BRect updateRect)
 
 	SetDrawingMode(B_OP_OVER);
 	for (size_t i = 0; i < rows.size(); i++) {
-		DrawRow(firstRow + i, updateRect, rows[i], context);
+		DrawRow(firstRow + i, RowTop(firstRow + i), updateRect, rows[i], context);
 	}
 
 	SetHighColor(context.background);
@@ -670,11 +682,144 @@ void CodeEditView::Draw(BRect updateRect)
 	if (rowsBottom <= updateRect.bottom) {
 		FillRect(BRect(updateRect.left, rowsBottom, updateRect.right, updateRect.bottom));
 	}
+	DrawStickyRows(updateRect, context);
+}
+
+
+// Over the rows: plain text without the caret, the selection or
+// decorations; inner scopes first, so a pushed up line slides below the one
+// before it.
+void CodeEditView::DrawStickyRows(const BRect &updateRect, const CodeEdit::DrawContext &context)
+{
+	using namespace CodeEdit;
+
+	if (fStickyRows.empty() || updateRect.top >= fStickyHeight) {
+		return;
+	}
+	DrawContext plain;
+	plain.background = mix_color(context.background, context.text, 20);
+	plain.text = context.text;
+	plain.currentLine = plain.background;
+	plain.selection = plain.background;
+	plain.placeholder = context.placeholder;
+	plain.bracket = plain.background;
+	plain.caretRow = SIZE_MAX;
+	plain.marginColumn = context.marginColumn;
+	plain.margin = context.margin;
+	for (auto it = fStickyRows.rbegin(); it != fStickyRows.rend(); ++it) {
+		const std::vector<RowData> rows = fCore->Rows(it->row, 1);
+		if (!rows.empty()) {
+			DrawRow(it->row, it->top, updateRect, rows.front(), plain);
+		}
+	}
+	SetHighColor(mix_color(context.background, context.text, 64));
+	StrokeLine(BPoint(updateRect.left, fStickyHeight - 1), BPoint(updateRect.right, fStickyHeight - 1));
+}
+
+
+// At most half the view.
+size_t CodeEditView::MaxStickyLines() const
+{
+	if (fLineHeight <= 0) {
+		return 0;
+	}
+	const size_t visibleRows = static_cast<size_t>(std::max(0.0f, floorf((Bounds().Height() + 1) / fLineHeight)));
+	return std::min<size_t>(fCore->Settings().stickyLines, visibleRows / 2);
+}
+
+
+// A line moves up when the last line of its scope reaches it; one gone
+// above the view is left out.
+std::vector<CodeEdit::StickyRow> CodeEditView::StickyRows()
+{
+	std::vector<CodeEdit::StickyRow> rows;
+	const size_t maxCount = MaxStickyLines();
+	if (maxCount == 0) {
+		return rows;
+	}
+	const std::vector<CodeEdit::FoldRange> scopes = fCore->StickyScopes(fTopRow, maxCount);
+	for (size_t depth = 0; depth < scopes.size(); depth++) {
+		const size_t endRow = fCore->LineRows(scopes[depth].lastLine + 1).first;
+		const float top = std::min(depth * fLineHeight, RowTop(endRow) - fLineHeight);
+		if (top + fLineHeight <= 0) {
+			continue;
+		}
+		rows.push_back({scopes[depth].headerLine, fCore->LineRows(scopes[depth].headerLine).first, top, depth});
+	}
+	return rows;
+}
+
+
+float CodeEditView::StickyHeight(const std::vector<CodeEdit::StickyRow> &rows) const
+{
+	float height = 0;
+	for (const CodeEdit::StickyRow &row : rows) {
+		height = std::max(height, row.top + fLineHeight);
+	}
+	return height;
+}
+
+
+// The sticky lines for the position now; their part of the view is drawn
+// again when they changed, or always with force.
+void CodeEditView::UpdateStickyRows(bool force)
+{
+	std::vector<CodeEdit::StickyRow> rows = StickyRows();
+	const float height = StickyHeight(rows);
+	if (Window() != nullptr && (force || rows != fStickyRows)) {
+		InvalidateTop(std::max(height, fStickyHeight));
+	}
+	fStickyRows = std::move(rows);
+	fStickyHeight = height;
+}
+
+
+// The top of the view and of the gutter.
+void CodeEditView::InvalidateTop(float height)
+{
+	if (height <= 0) {
+		return;
+	}
+	for (BView *view : {static_cast<BView*>(this), static_cast<BView*>(fGutter)}) {
+		if (view != nullptr) {
+			const BRect bounds = view->Bounds();
+			view->Invalidate(BRect(bounds.left, bounds.top, bounds.right, std::min(bounds.bottom, bounds.top + height - 1)));
+		}
+	}
+}
+
+
+// The sticky line at y; the outer one where a pushed up line is below it.
+std::optional<size_t> CodeEditView::StickyRowAt(float y) const
+{
+	if (y < 0 || y >= fStickyHeight) {
+		return std::nullopt;
+	}
+	for (size_t i = 0; i < fStickyRows.size(); i++) {
+		if (y >= fStickyRows[i].top && y < fStickyRows[i].top + fLineHeight) {
+			return i;
+		}
+	}
+	return std::nullopt;
+}
+
+
+// The header line comes right below the sticky lines of its outer scopes,
+// with the caret at x.
+void CodeEditView::GoToStickyLine(size_t index, float x)
+{
+	const CodeEdit::StickyRow sticky = fStickyRows.at(index);
+	const size_t offset = fCore->OffsetAt(sticky.row, x / fCellWidth);
+	fCore->SetSelection({offset, offset});
+	ScrollToDocument(Bounds().left, (static_cast<double>(sticky.row) - static_cast<double>(sticky.depth)) * fLineHeight);
+	ApplyDirty();
+	RestartCaretBlink();
 }
 
 
 void CodeEditView::DrawRow(
 	size_t row,
+	float top,
 	const BRect &updateRect,
 	const CodeEdit::RowData &data,
 	const CodeEdit::DrawContext &context
@@ -682,7 +827,6 @@ void CodeEditView::DrawRow(
 {
 	using namespace CodeEdit;
 
-	const float top = RowTop(row);
 	const float bottom = top + fLineHeight - 1;
 	const float baseline = top + fAscent;
 	const bool isCaretRow = row == context.caretRow;
@@ -940,7 +1084,7 @@ void CodeEditView::MoveRows(const CodeEdit::RowShift &shift, bool topMoved)
 	if (sourceTop > bounds.bottom && RowTop(shift.from) > bounds.bottom) {
 		return;
 	}
-	CodeEdit::MoveContents(*this, sourceTop, distance);
+	CodeEdit::MoveContents(*this, sourceTop, distance, fStickyHeight);
 	if (fGutter == nullptr) {
 		return;
 	}
@@ -952,7 +1096,7 @@ void CodeEditView::MoveRows(const CodeEdit::RowShift &shift, bool topMoved)
 			fGutter->Invalidate(BRect(gutterBounds.left, top, gutterBounds.right, gutterBounds.bottom));
 		}
 	} else {
-		CodeEdit::MoveContents(*fGutter, sourceTop, distance);
+		CodeEdit::MoveContents(*fGutter, sourceTop, distance, fStickyHeight);
 	}
 }
 
@@ -1136,12 +1280,17 @@ bool CodeEditView::ScrollVertically(double y)
 	fTopRow = static_cast<size_t>(y / fLineHeight);
 	fTopOffset = static_cast<float>(y - static_cast<double>(fTopRow) * fLineHeight);
 	fCore->SetScrollAnchor(fCore->RowStartOffset(fTopRow));
+	std::vector<CodeEdit::StickyRow> sticky = StickyRows();
+	const float stickyHeight = StickyHeight(sticky);
 	if (Window() != nullptr) {
-		CodeEdit::ShiftContents(*this, delta);
+		const float reserved = std::max(fStickyHeight, stickyHeight);
+		CodeEdit::ShiftContents(*this, delta, reserved);
 		if (fGutter != nullptr) {
-			CodeEdit::ShiftContents(*fGutter, delta);
+			CodeEdit::ShiftContents(*fGutter, delta, reserved);
 		}
 	}
+	fStickyRows = std::move(sticky);
+	fStickyHeight = stickyHeight;
 	UpdateScrollBars();
 	return true;
 }
@@ -1218,11 +1367,19 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 		: 0;
 	const double context = static_cast<double>(contextRows) * fLineHeight;
 
+	double sticky = 0;
+	if (const size_t maxSticky = MaxStickyLines(); maxSticky > 0) {
+		const std::vector<CodeEdit::DisplayRow> rows = fCore->DisplayRows(caret.row, 1);
+		if (!rows.empty()) {
+			sticky = static_cast<double>(fCore->EnclosingScopes(rows.front().line, maxSticky).size()) * fLineHeight;
+		}
+	}
+
 	double y = TopY();
 	const double caretTop = static_cast<double>(caret.row) * fLineHeight;
 	const double caretBottom = caretTop + fLineHeight;
-	if (caretTop - context < y) {
-		y = caretTop - context;
+	if (caretTop - context - sticky < y) {
+		y = caretTop - context - sticky;
 	} else if (caretBottom + context > y + visibleHeight) {
 		y = caretBottom + context - visibleHeight;
 	}
@@ -1283,6 +1440,7 @@ void CodeEditView::ApplyDirty()
 	if (dirty.marksChanged && fGutter != nullptr) {
 		fGutter->Invalidate();
 	}
+	UpdateStickyRows(dirty.contentsChanged || dirty.marksChanged);
 	if (fScrollView != nullptr) {
 		fScrollView->CaretChanged();
 	}
@@ -1729,6 +1887,7 @@ void CodeEditView::AttachedToWindow()
 	fCore->TakeDirty();
 	UpdateScrollBars();
 	UpdateWrapColumns();
+	UpdateStickyRows(true);
 }
 
 
@@ -1750,6 +1909,7 @@ void CodeEditView::FrameResized(float width, float height)
 	UpdateScrollBars();
 	// A taller view may show past the end of the text.
 	ScrollToDocument(Bounds().left, TopY());
+	UpdateStickyRows(false);
 	ViewportChanged(false);
 }
 
@@ -1859,7 +2019,8 @@ void CodeEditView::UpdateCursor(BPoint where)
 	static const BCursor sIBeamCursor(B_CURSOR_ID_I_BEAM);
 	static const BCursor sArrowCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
 
-	const bool arrow = IsPointInSelection(where) || FoldPlaceholderAt(where).has_value();
+	const bool arrow = StickyRowAt(where.y).has_value() || IsPointInSelection(where)
+		|| FoldPlaceholderAt(where).has_value();
 	if (fMouse->arrowCursor == arrow) {
 		return;
 	}
@@ -1875,6 +2036,10 @@ void CodeEditView::MouseDown(BPoint where)
 	CommitInputMethod();
 
 	MakeFocus(true);
+	if (const std::optional<size_t> sticky = StickyRowAt(where.y)) {
+		GoToStickyLine(*sticky, where.x);
+		return;
+	}
 	BMessage *message = Window()->CurrentMessage();
 	const uint32 modifiers = message != nullptr ? message->GetInt32("modifiers", 0) : ::modifiers();
 	const uint32 buttons = message != nullptr
@@ -2040,6 +2205,9 @@ BPoint CodeEditView::AutoScrollPressure(BPoint where) const
 			std::min(1.5f * fLineHeight, bounds.Height() / 4)
 		);
 	}
+
+	// Lines under the sticky lines are not shown.
+	inner.top = std::max(inner.top, std::min(bounds.top + fStickyHeight, inner.bottom));
 
 	BPoint pressure(0, 0);
 	if (where.x < inner.left) {

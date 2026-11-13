@@ -2054,6 +2054,80 @@ std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t
 }
 
 
+std::vector<FoldRange> EditorCore::EnclosingScopesLocked(size_t line, size_t maxCount)
+{
+	std::vector<FoldRange> scopes;
+	if (maxCount == 0 || line > fModel->Text().NewlineCount()) {
+		return scopes;
+	}
+	for (const FoldRange &candidate : FoldCandidatesLocked(line, line, false)) {
+		if (candidate.headerLine < line && candidate.lastLine >= line) {
+			scopes.push_back(candidate);
+		}
+	}
+	if (scopes.size() > maxCount) {
+		scopes.resize(maxCount);
+	}
+	return scopes;
+}
+
+
+std::vector<FoldRange> EditorCore::EnclosingScopes(size_t line, size_t maxCount)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	return EnclosingScopesLocked(line, maxCount);
+}
+
+
+// The sticky line of a scope: its header line, or the line before a header
+// holding only the opening bracket (a function or block with the bracket on
+// its own line).
+size_t EditorCore::StickyHeaderLine(size_t headerLine) const
+{
+	if (headerLine == 0) {
+		return headerLine;
+	}
+	const Rope &text = fModel->Text();
+	const size_t start = text.LineStart(headerLine);
+	const std::string line = text.Substring(start, std::min<size_t>(text.LineEnd(headerLine) - start, 64));
+	const size_t first = line.find_first_not_of(" \t");
+	const size_t last = line.find_last_not_of(" \t");
+	return first != std::string::npos && first == last && line[first] == '{' ? headerLine - 1 : headerLine;
+}
+
+
+// Outer scopes come first, each taking the next row at the top of the view:
+// a scope sticks when its header is above its row and its lines reach that
+// row. headerLine of each is the line to show (StickyHeaderLine()).
+std::vector<FoldRange> EditorCore::StickyScopes(size_t topRow, size_t maxCount)
+{
+	ModelLock lock(*fModel);
+	Prepare();
+	std::vector<FoldRange> scopes;
+	const size_t rowCount = fDisplayMap.RowCount();
+	if (maxCount == 0 || topRow >= rowCount) {
+		return scopes;
+	}
+	const size_t firstLine = RowAtLocked(topRow).line;
+	const size_t lastLine = RowAtLocked(std::min(rowCount - 1, topRow + maxCount)).line;
+	for (const FoldRange &candidate : FoldCandidatesLocked(firstLine, lastLine, false)) {
+		if (scopes.size() == maxCount) {
+			break;
+		}
+		const size_t slot = topRow + scopes.size();
+		const size_t headerRow = fDisplayMap.FirstRowOfLine(candidate.headerLine);
+		const size_t endRow = fDisplayMap.FirstRowOfLine(candidate.lastLine + 1);
+		if (headerRow < slot && endRow > slot) {
+			FoldRange scope = candidate;
+			scope.headerLine = StickyHeaderLine(candidate.headerLine);
+			scopes.push_back(scope);
+		}
+	}
+	return scopes;
+}
+
+
 void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
 	bool headersInRange, std::vector<FoldRange> &candidates)
 {

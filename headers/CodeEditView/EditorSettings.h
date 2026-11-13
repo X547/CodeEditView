@@ -38,6 +38,10 @@ struct EditorSettings {
 	// broken, e.g. the subject line of a commit message.
 	uint32_t hardWrapColumn = 0;
 	uint32_t hardWrapFirstLine = 0;
+	// Header lines of the scopes holding the top of the view stay at the top
+	// (sticky scroll); at most this many, 0 for none. The scopes are those
+	// that can be folded.
+	uint32_t stickyLines = 0;
 
 	bool operator==(const EditorSettings &other) const = default;
 };

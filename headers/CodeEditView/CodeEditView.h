@@ -59,6 +59,19 @@ constexpr uint32 kMsgViewportChanged = 'CEvc';
 constexpr uint32 kMsgPositionClicked = 'CEpc';
 
 
+// A header line stuck to the top of the view (EditorSettings::stickyLines):
+// its first row drawn at top, which is pushed up as its scope ends. depth is
+// the number of sticky lines of outer scopes.
+struct StickyRow {
+	size_t line {};
+	size_t row {};
+	float top {};
+	size_t depth {};
+
+	bool operator==(const StickyRow &other) const = default;
+};
+
+
 class EditorCore;
 class GutterView;
 class KeyMap;
@@ -106,6 +119,9 @@ private:
 	// or removed above the view change fTopRow, not what is shown.
 	size_t fTopRow {};
 	float fTopOffset {};
+	// The sticky lines shown and the height they cover.
+	std::vector<CodeEdit::StickyRow> fStickyRows;
+	float fStickyHeight {};
 	bool fSettingScrollBar {};
 	bool fCaretVisible {};
 	bool fRewrapPosted {};
@@ -117,7 +133,21 @@ private:
 	friend class CodeEdit::ScrollProxy;
 
 	std::pair<float, float> GlyphMetrics(char32_t codePoint, const char *bytes, int32 length);
-	void DrawRow(size_t row, const BRect &updateRect, const CodeEdit::RowData &data, const CodeEdit::DrawContext &context);
+	void DrawRow(
+		size_t row,
+		float top,
+		const BRect &updateRect,
+		const CodeEdit::RowData &data,
+		const CodeEdit::DrawContext &context
+	);
+	void DrawStickyRows(const BRect &updateRect, const CodeEdit::DrawContext &context);
+	size_t MaxStickyLines() const;
+	std::vector<CodeEdit::StickyRow> StickyRows();
+	float StickyHeight(const std::vector<CodeEdit::StickyRow> &rows) const;
+	void UpdateStickyRows(bool force);
+	void InvalidateTop(float height);
+	std::optional<size_t> StickyRowAt(float y) const;
+	void GoToStickyLine(size_t index, float x);
 	void ApplyDirty();
 	void InvalidateRows(size_t first, size_t last);
 	void MoveRows(const CodeEdit::RowShift &shift, bool topMoved);

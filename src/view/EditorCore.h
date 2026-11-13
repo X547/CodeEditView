@@ -288,6 +288,8 @@ private:
 	size_t FirstNonBlank(size_t line) const;
 	uint32_t IndentSize() const;
 	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange);
+	std::vector<FoldRange> EnclosingScopesLocked(size_t line, size_t maxCount);
+	size_t StickyHeaderLine(size_t headerLine) const;
 	void AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
 		bool headersInRange, std::vector<FoldRange> &candidates);
 	bool IsFoldedLocked(size_t headerLine) const;
@@ -393,6 +395,12 @@ public:
 	// Folding. Candidates come from the syntax tree; folds of any line range
 	// can also be added manually.
 	std::vector<FoldRange> FoldCandidates(size_t firstLine, size_t lastLine);
+	// Scopes (fold candidates) holding the line with their header line above
+	// it, outermost first; the outermost maxCount.
+	std::vector<FoldRange> EnclosingScopes(size_t line, size_t maxCount);
+	// The scopes whose header lines stick to the top of a view with topRow
+	// at its top, outermost first; headerLine is the line to show.
+	std::vector<FoldRange> StickyScopes(size_t topRow, size_t maxCount);
 	std::vector<FoldMarker> FoldMarkers(size_t firstLine, size_t lastLine);
 	std::vector<FoldRange> Folds();
 	bool IsFolded(size_t headerLine);

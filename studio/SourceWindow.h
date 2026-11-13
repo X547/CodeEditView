@@ -37,6 +37,7 @@ private:
 	BSplitView *fSplitView {};
 	OutlineView *fOutline {};
 	BMenuItem *fOutlineItem {};
+	BMenuItem *fStickyItem {};
 	bool fOutlineRefreshPending {};
 	// The debug session and coverage run followed; 0 for none.
 	int32 fSession {};

@@ -132,22 +132,28 @@ std::string FormatSize(const EntryInfo &info)
 	return text;
 }
 
-
-std::string FormatTime(const EntryInfo &info)
-{
-	if (info.type == EntryType::None || info.type == EntryType::Unreadable) {
-		return std::string();
-	}
-	struct tm local;
-	const time_t seconds = info.modified.tv_sec;
-	if (localtime_r(&seconds, &local) == nullptr) {
-		return std::string();
-	}
-	char text[32];
-	strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local);
-	return text;
 }
 
+
+// localtime_r() is slow for many rows; the text is the same for a minute.
+const std::string &DirTreeView::FormatTime(const EntryInfo &info)
+{
+	static const std::string kNoTime;
+	if (info.type == EntryType::None || info.type == EntryType::Unreadable) {
+		return kNoTime;
+	}
+	const time_t seconds = info.modified.tv_sec;
+	const time_t minute = seconds >= 0 ? seconds / 60 : (seconds - 59) / 60;
+	const auto cached = fTimeTexts.find(minute);
+	if (cached != fTimeTexts.end()) {
+		return cached->second;
+	}
+	struct tm local;
+	char text[32] = "";
+	if (localtime_r(&seconds, &local) != nullptr) {
+		strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local);
+	}
+	return fTimeTexts[minute] = text;
 }
 
 
@@ -194,16 +200,6 @@ BRow *DirTreeView::CreateRow(const Node &node)
 }
 
 
-BRow *DirTreeView::ParentRow(const Node &node) const
-{
-	if (node.parent == nullptr || node.parent->parent == nullptr) {
-		return nullptr;
-	}
-	const auto it = fRows.find(node.parent);
-	return it != fRows.end() ? it->second : nullptr;
-}
-
-
 // Expands a directory unless the user collapsed it; directories on one
 // side only start collapsed.
 void DirTreeView::ExpandDefault(const Node &node)
@@ -224,49 +220,19 @@ void DirTreeView::ExpandDefault(const Node &node)
 }
 
 
-void DirTreeView::AddChildRows(const Node &parent)
-{
-	BRow *parentRow = nullptr;
-	if (parent.parent != nullptr) {
-		const auto it = fRows.find(&parent);
-		if (it == fRows.end()) {
-			return;
-		}
-		parentRow = it->second;
-	}
-	for (const std::unique_ptr<Node> &child : parent.children) {
-		if (IsVisible(*child) && fRows.count(child.get()) == 0) {
-			AddRow(CreateRow(*child), parentRow);
-		}
-	}
-	ExpandDefault(parent);
-}
-
-
-void DirTreeView::AddSubtree(const Node &node, BRow *parentRow)
-{
-	if (!IsVisible(node)) {
-		return;
-	}
-	BRow *row = CreateRow(node);
-	AddRow(row, parentRow);
-	for (const std::unique_ptr<Node> &child : node.children) {
-		AddSubtree(*child, row);
-	}
-	ExpandDefault(node);
-}
-
-
-void DirTreeView::RemoveSubtree(const Node &node)
+// Depth first; directories with rows inside go to directories.
+void DirTreeView::AddContentRows(const Node &node, BRow *row, std::vector<const Node*> &directories)
 {
 	for (const std::unique_ptr<Node> &child : node.children) {
-		RemoveSubtree(*child);
-	}
-	const auto it = fRows.find(&node);
-	if (it != fRows.end()) {
-		RemoveRow(it->second);
-		delete it->second;
-		fRows.erase(it);
+		if (!IsVisible(*child)) {
+			continue;
+		}
+		BRow *childRow = CreateRow(*child);
+		AddRow(childRow, row);
+		if (!child->children.empty()) {
+			directories.push_back(child.get());
+			AddContentRows(*child, childRow, directories);
+		}
 	}
 }
 
@@ -289,38 +255,10 @@ void DirTreeView::SetShowIdentical(bool show)
 }
 
 
-void DirTreeView::Update(const std::vector<Node*> &added, const std::vector<Node*> &changed)
-{
-	if (fComparison == nullptr) {
-		return;
-	}
-	// The entries of a directory come together, so rows are added per
-	// parent in the order of the nodes.
-	std::set<const Node*> parents;
-	for (const Node *node : added) {
-		if (node->parent != nullptr && parents.insert(node->parent).second) {
-			AddChildRows(*node->parent);
-		}
-	}
-	for (const Node *node : changed) {
-		if (node->parent == nullptr) {
-			continue;
-		}
-		const auto it = fRows.find(node);
-		if (it == fRows.end()) {
-			if (IsVisible(*node) && (node->parent->parent == nullptr || fRows.count(node->parent) != 0)) {
-				AddSubtree(*node, ParentRow(*node));
-			}
-		} else if (!IsVisible(*node)) {
-			RemoveSubtree(*node);
-		} else {
-			SetFields(it->second, *node);
-			UpdateRow(it->second);
-		}
-	}
-}
-
-
+// BColumnListView walks all rows of expanded directories, from the top, for
+// every row it adds and every directory it expands; with many rows that is
+// slow. So the rows go in while the top level directories are collapsed, and
+// the directories are expanded last, the top level ones from the bottom.
 void DirTreeView::Rebuild()
 {
 	const std::optional<std::string> selected = SelectedPath();
@@ -329,8 +267,37 @@ void DirTreeView::Rebuild()
 	if (fComparison == nullptr) {
 		return;
 	}
+	std::vector<const Node*> topDirectories;
+	BList directoryRows;
+	BList fileRows;
 	for (const std::unique_ptr<Node> &child : fComparison->Root().children) {
-		AddSubtree(*child, nullptr);
+		if (!IsVisible(*child)) {
+			continue;
+		}
+		if (child->IsDirectory()) {
+			topDirectories.push_back(child.get());
+			directoryRows.AddItem(CreateRow(*child));
+		} else {
+			fileRows.AddItem(CreateRow(*child));
+		}
+	}
+	// Directories come first.
+	AddRows(&directoryRows, -1, nullptr);
+	std::vector<const Node*> innerDirectories;
+	for (const Node *directory : topDirectories) {
+		AddContentRows(*directory, fRows[directory], innerDirectories);
+	}
+	AddRows(&fileRows, -1, nullptr);
+
+	for (const Node *directory : innerDirectories) {
+		ExpandDefault(*directory);
+	}
+	if (!topDirectories.empty()) {
+		// Expanding looks for the focus row too.
+		SetFocusRow(fRows[topDirectories.front()], false);
+	}
+	for (auto it = topDirectories.rbegin(); it != topDirectories.rend(); ++it) {
+		ExpandDefault(**it);
 	}
 	if (selected.has_value()) {
 		SelectPath(*selected);

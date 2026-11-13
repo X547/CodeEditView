@@ -40,9 +40,10 @@ private:
 	bool fFileMode {};
 	ScanOptions fOptions;
 	std::unique_ptr<Comparison> fComparison;
-	std::unique_ptr<ScanThread> fScan;
-	// The entry to select again once a new scan reports it.
-	std::optional<std::string> fReselect;
+	// A scan runs under a progress dialog.
+	bool fScanning {};
+	// A scan completed: the comparison is of the roots.
+	bool fScanned {};
 	DirTreeView *fTree {};
 	DiffKit::DiffView *fDiffView {};
 	// Loaded file pairs by relative path; kept while shown or modified.
@@ -60,7 +61,15 @@ private:
 	BMenuBar *CreateMenuBar();
 	std::string FullPath(int pane, const std::string &path) const;
 	void StartScan();
-	void TakeScanResults();
+	// Compares two roots on a thread of its own under a progress dialog;
+	// they and the options become the window's when it completes.
+	void StartScan(const std::string &left, const std::string &right, const ScanOptions &options);
+	void ShowComparison(
+		const std::string &left,
+		const std::string &right,
+		const ScanOptions &options,
+		std::unique_ptr<Comparison> comparison
+	);
 	void Recheck(const std::string &path);
 	FilePair *PairFor(const std::string &path);
 	void ShowSelected();

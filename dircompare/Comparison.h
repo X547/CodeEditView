@@ -1,5 +1,9 @@
 #pragma once
 
+#include <sys/types.h>
+
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -72,6 +76,31 @@ public:
 	// changed. A directory whose contents were not reported yet is Pending.
 	std::vector<Node*> UpdateStatuses();
 };
+
+
+// How far BuildComparison got.
+struct BuildProgress {
+	size_t entries {};
+	// File pairs whose contents are compared, and their size (one side).
+	size_t filesToCompare {};
+	size_t filesCompared {};
+	off_t bytesToCompare {};
+	off_t bytesCompared {};
+	// All entries are listed; contents are being compared.
+	bool comparingContents {};
+};
+
+
+// Scans two roots (Scan) into a complete comparison with updated statuses;
+// null if cancelled. report is called on the calling thread after each step
+// of the scan. Throws FileError if a root cannot be read.
+std::unique_ptr<Comparison> BuildComparison(
+	const std::string &leftRoot,
+	const std::string &rightRoot,
+	const ScanOptions &options,
+	const std::atomic<bool> &cancel,
+	const std::function<void(const BuildProgress &progress)> &report
+);
 
 
 } // DirCompare

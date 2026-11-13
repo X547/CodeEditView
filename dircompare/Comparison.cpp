@@ -178,4 +178,71 @@ std::vector<Node*> Comparison::UpdateStatuses()
 }
 
 
+//#pragma mark - BuildComparison
+
+namespace {
+
+class BuildingSink: public ScanSink {
+private:
+	Comparison &fComparison;
+	BuildProgress fProgress;
+	const std::function<void(const BuildProgress &progress)> &fReport;
+
+public:
+	BuildingSink(Comparison &comparison, const std::function<void(const BuildProgress &progress)> &report):
+		fComparison(comparison),
+		fReport(report)
+	{
+	}
+
+	void EntriesFound(std::vector<ScanEntry> entries) override
+	{
+		for (const ScanEntry &entry : entries) {
+			if (entry.status == EntryStatus::Pending) {
+				fProgress.filesToCompare++;
+				fProgress.bytesToCompare += entry.sides[0].size;
+			}
+		}
+		fProgress.entries += entries.size();
+		fComparison.AddEntries(entries);
+		fReport(fProgress);
+	}
+
+	void StatusesChanged(std::vector<StatusChange> changes) override
+	{
+		for (const StatusChange &change : changes) {
+			const Node *node = fComparison.Find(change.first);
+			if (node != nullptr && !node->IsDirectory() && node->own == EntryStatus::Pending) {
+				fProgress.comparingContents = true;
+				fProgress.filesCompared++;
+				fProgress.bytesCompared += node->sides[0].size;
+			}
+		}
+		fComparison.ApplyChanges(changes);
+		fReport(fProgress);
+	}
+};
+
+}
+
+
+std::unique_ptr<Comparison> BuildComparison(
+	const std::string &leftRoot,
+	const std::string &rightRoot,
+	const ScanOptions &options,
+	const std::atomic<bool> &cancel,
+	const std::function<void(const BuildProgress &progress)> &report
+)
+{
+	std::unique_ptr<Comparison> comparison = std::make_unique<Comparison>();
+	BuildingSink sink(*comparison, report);
+	if (!Scan(leftRoot, rightRoot, options, sink, cancel)) {
+		return nullptr;
+	}
+	comparison->SetComplete();
+	comparison->UpdateStatuses();
+	return comparison;
+}
+
+
 } // DirCompare

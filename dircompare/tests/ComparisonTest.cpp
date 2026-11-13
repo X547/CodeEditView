@@ -1,9 +1,12 @@
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "Comparison.h"
+#include "TempDirectory.h"
 
 
 namespace DirCompare {
@@ -95,6 +98,46 @@ TEST_CASE("comparison tree")
 	CHECK(ChildNames(root) == std::vector<std::string> {"only.txt"});
 	CHECK(comparison.Find("z") == nullptr);
 	CHECK(root.shown == EntryStatus::Different);
+}
+
+
+TEST_CASE("building a comparison")
+{
+	TempDirectory left;
+	TempDirectory right;
+	left.Write("a.txt", "abc\n");
+	right.Write("a.txt", "abd\n");
+	left.Write("same.txt", "same\n");
+	right.Write("same.txt", "same\n");
+	left.Write("dir/b.txt", "b\n");
+
+	std::vector<BuildProgress> reports;
+	const auto report = [&reports](const BuildProgress &progress) {
+		reports.push_back(progress);
+	};
+	const std::atomic<bool> cancel(false);
+	std::unique_ptr<Comparison> comparison = BuildComparison(left.Path(), right.Path(), ScanOptions(), cancel, report);
+	REQUIRE(comparison != nullptr);
+	CHECK(comparison->IsComplete());
+	CHECK(comparison->Find("a.txt")->shown == EntryStatus::Different);
+	CHECK(comparison->Find("same.txt")->shown == EntryStatus::Same);
+	CHECK(comparison->Find("dir")->shown == EntryStatus::LeftOnly);
+	CHECK(comparison->Find("dir/b.txt")->shown == EntryStatus::LeftOnly);
+	CHECK(comparison->Root().shown == EntryStatus::Different);
+
+	REQUIRE_FALSE(reports.empty());
+	const BuildProgress &last = reports.back();
+	CHECK(last.entries == 4);
+	CHECK(last.filesToCompare == 2);
+	CHECK(last.filesCompared == 2);
+	CHECK(last.bytesToCompare == 9);
+	CHECK(last.bytesCompared == 9);
+	CHECK(last.comparingContents);
+	CHECK_FALSE(reports.front().comparingContents);
+
+	const std::atomic<bool> cancelled(true);
+	CHECK(BuildComparison(left.Path(), right.Path(), ScanOptions(), cancelled, report) == nullptr);
+	CHECK_THROWS(BuildComparison(left / "missing", right.Path(), ScanOptions(), cancel, report));
 }
 
 

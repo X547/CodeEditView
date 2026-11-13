@@ -6,7 +6,6 @@
 
 #include <chrono>
 #include <deque>
-#include <exception>
 #include <optional>
 #include <set>
 
@@ -154,83 +153,6 @@ bool Scan(const std::string &leftRoot, const std::string &rightRoot, const ScanO
 		sink.StatusesChanged(std::move(changes));
 	}
 	return true;
-}
-
-
-ScanThread::ScanThread(const std::string &leftRoot, const std::string &rightRoot, const ScanOptions &options,
-	const BMessenger &target):
-	fTarget(target)
-{
-	fThread = std::thread([this, leftRoot, rightRoot, options]() {
-		std::string error;
-		try {
-			Scan(leftRoot, rightRoot, options, *this, fCancel);
-		} catch (const std::exception &e) {
-			error = e.what();
-		}
-		{
-			std::lock_guard<std::mutex> lock(fLock);
-			fResults.finished = true;
-			fResults.error = error;
-		}
-		Notify();
-	});
-}
-
-
-ScanThread::~ScanThread()
-{
-	fCancel = true;
-	fThread.join();
-}
-
-
-void ScanThread::Notify()
-{
-	{
-		std::lock_guard<std::mutex> lock(fLock);
-		if (fNotified) {
-			return;
-		}
-		fNotified = true;
-	}
-	fTarget.SendMessage(kMsgScanProgress);
-}
-
-
-void ScanThread::EntriesFound(std::vector<ScanEntry> entries)
-{
-	{
-		std::lock_guard<std::mutex> lock(fLock);
-		for (ScanEntry &entry : entries) {
-			fResults.entries.push_back(std::move(entry));
-		}
-	}
-	Notify();
-}
-
-
-void ScanThread::StatusesChanged(std::vector<StatusChange> changes)
-{
-	{
-		std::lock_guard<std::mutex> lock(fLock);
-		for (StatusChange &change : changes) {
-			fResults.changes.push_back(std::move(change));
-		}
-	}
-	Notify();
-}
-
-
-ScanThread::Results ScanThread::TakeResults()
-{
-	std::lock_guard<std::mutex> lock(fLock);
-	Results results = std::move(fResults);
-	fResults = Results();
-	// A finished scan stays finished.
-	fResults.finished = results.finished;
-	fNotified = false;
-	return results;
 }
 
 

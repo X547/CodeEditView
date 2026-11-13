@@ -6,6 +6,7 @@
 #include <Path.h>
 
 #include <DiffView.h>
+#include <FreezeWatchdog.h>
 #include <Git.h>
 
 #include "Compare.h"
@@ -42,6 +43,7 @@ public:
 DirCompareApp::DirCompareApp():
 	BApplication(kAppSignature)
 {
+	DiffKit::StartFreezeWatchdog("CodeEditDirCompare");
 }
 
 

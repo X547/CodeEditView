@@ -4,7 +4,9 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
+#include <memory>
 
 #include <Alert.h>
 #include <Application.h>
@@ -20,6 +22,7 @@
 #include <CodeEditView/CodeEditView.h>
 
 #include <DiffView.h>
+#include <Progress.h>
 
 #include "DirTreeView.h"
 #include "FileOps.h"
@@ -35,6 +38,8 @@ using DiffKit::ShowError;
 
 
 static const char *kSideNames[] = {"left", "right"};
+// How often the progress dialog follows a scan.
+static constexpr std::chrono::milliseconds kProgressInterval(100);
 
 
 static std::string Leaf(const std::string &path)
@@ -124,7 +129,10 @@ CompareWindow::CompareWindow(const std::string &left, const std::string &right):
 		splitView->SetInsets(0, -1, 0, 0);
 		splitView->AddChild(fTree, 2);
 		splitView->AddChild(fDiffView, 3);
-		StartScan();
+		fComparison = std::make_unique<Comparison>();
+		fTree->SetComparison(fComparison.get());
+		// Once shown: the progress dialog goes over the window.
+		PostMessage(kMsgRefresh);
 	}
 	UpdateTitle();
 }
@@ -132,7 +140,6 @@ CompareWindow::CompareWindow(const std::string &left, const std::string &right):
 
 CompareWindow::~CompareWindow()
 {
-	fScan.reset();
 	if (fTree != nullptr) {
 		fTree->SetComparison(nullptr);
 	}
@@ -229,47 +236,88 @@ std::string CompareWindow::FullPath(int pane, const std::string &path) const
 }
 
 
-void CompareWindow::StartScan()
+static std::string ScanProgressText(const BuildProgress &progress)
 {
-	if (fFileMode) {
-		return;
+	if (!progress.comparingContents) {
+		return "Listing the entries: " + std::to_string(progress.entries) + " found";
 	}
-	if (!fReselect.has_value()) {
-		fReselect = fTree->SelectedPath();
-	}
-	fScan.reset();
-	fTree->SetComparison(nullptr);
-	fComparison = std::make_unique<Comparison>();
-	fTree->SetComparison(fComparison.get());
-	fScan = std::make_unique<ScanThread>(fRoots[0], fRoots[1], fOptions, BMessenger(this));
-	UpdateTitle();
+	const int percent = progress.bytesToCompare > 0
+		? static_cast<int>(progress.bytesCompared * 100 / progress.bytesToCompare)
+		: 100;
+	return "Comparing the contents: " + std::to_string(progress.filesCompared) + " of "
+		+ std::to_string(progress.filesToCompare) + " files (" + std::to_string(percent) + "%)";
 }
 
 
-void CompareWindow::TakeScanResults()
+void CompareWindow::StartScan()
 {
-	if (fScan == nullptr) {
+	StartScan(fRoots[0], fRoots[1], fOptions);
+}
+
+
+void CompareWindow::StartScan(const std::string &left, const std::string &right, const ScanOptions &options)
+{
+	if (fFileMode || fScanning) {
 		return;
 	}
-	ScanThread::Results results = fScan->TakeResults();
-	const std::vector<Node*> added = fComparison->AddEntries(results.entries);
-	fComparison->ApplyChanges(results.changes);
-	if (results.finished) {
-		fComparison->SetComplete();
+	fScanning = true;
+	const std::shared_ptr<std::unique_ptr<Comparison>> built = std::make_shared<std::unique_ptr<Comparison>>();
+	DiffKit::RunWithProgress(this, "Comparing " + Leaf(left) + " and " + Leaf(right),
+		[left, right, options, built](DiffKit::Progress &progress) {
+			std::chrono::steady_clock::time_point lastReport;
+			*built = BuildComparison(left, right, options, progress.CancelFlag(),
+				[&progress, &lastReport](const BuildProgress &state) {
+					const auto now = std::chrono::steady_clock::now();
+					if (now - lastReport < kProgressInterval) {
+						return;
+					}
+					lastReport = now;
+					progress.SetText(ScanProgressText(state));
+				});
+		}, [this, left, right, options, built](const std::string &error) {
+			fScanning = false;
+			if (!error.empty()) {
+				ShowError(error.c_str());
+				return;
+			}
+			if (*built != nullptr) {
+				ShowComparison(left, right, options, std::move(*built));
+				return;
+			}
+			// Cancelled: the first comparison leaves nothing to show.
+			if (!fScanned) {
+				PostMessage(B_QUIT_REQUESTED);
+			}
+		}, true);
+}
+
+
+void CompareWindow::ShowComparison(
+	const std::string &left,
+	const std::string &right,
+	const ScanOptions &options,
+	std::unique_ptr<Comparison> comparison
+)
+{
+	const std::optional<std::string> selected = fTree->SelectedPath();
+	if (left != fRoots[0] || right != fRoots[1]) {
+		// The loaded pairs are of the other roots.
+		ShowPair(nullptr, "");
+		fPairs.clear();
+		fRoots[0] = left;
+		fRoots[1] = right;
 	}
-	const std::vector<Node*> changed = fComparison->UpdateStatuses();
-	fTree->Update(added, changed);
-	if (fReselect.has_value() && fTree->SelectPath(*fReselect)) {
-		fReselect.reset();
+	fOptions = options;
+	fIgnoreVcsItem->SetMarked(fOptions.ignoreVcs);
+	fTree->SetComparison(nullptr);
+	fComparison = std::move(comparison);
+	fTree->SetComparison(fComparison.get());
+	fScanned = true;
+	if (selected.has_value()) {
+		fTree->SelectPath(*selected);
 	}
-	if (results.finished) {
-		fScan.reset();
-		fReselect.reset();
-		UpdateTitle();
-		if (!results.error.empty()) {
-			ShowError(results.error.c_str());
-		}
-	}
+	ShowSelected();
+	UpdateTitle();
 }
 
 
@@ -279,8 +327,7 @@ void CompareWindow::Recheck(const std::string &path)
 	if (fFileMode) {
 		return;
 	}
-	// A running scan would report the old state; the root is all of it.
-	if (fScan != nullptr || path.empty()) {
+	if (path.empty()) {
 		StartScan();
 		return;
 	}
@@ -384,11 +431,7 @@ void CompareWindow::UpdateDiffState()
 
 void CompareWindow::UpdateTitle()
 {
-	std::string title = Leaf(fRoots[0]) + " ↔ " + Leaf(fRoots[1]);
-	if (fScan != nullptr) {
-		title += " — comparing" B_UTF8_ELLIPSIS;
-	}
-	SetTitle(title.c_str());
+	SetTitle((Leaf(fRoots[0]) + " ↔ " + Leaf(fRoots[1])).c_str());
 }
 
 
@@ -636,17 +679,17 @@ void CompareWindow::SwapSides()
 
 void CompareWindow::SwapSidesNow()
 {
+	if (!fFileMode) {
+		StartScan(fRoots[1], fRoots[0], fOptions);
+		return;
+	}
 	std::swap(fRoots[0], fRoots[1]);
 	ShowPair(nullptr, "");
 	fPairs.clear();
-	if (fFileMode) {
-		BReference<FilePair> pair(new FilePair(fRoots[0], fRoots[1]), true);
-		pair->Load();
-		fPairs[""] = pair;
-		ShowPair(pair.Get(), "");
-	} else {
-		StartScan();
-	}
+	BReference<FilePair> pair(new FilePair(fRoots[0], fRoots[1]), true);
+	pair->Load();
+	fPairs[""] = pair;
+	ShowPair(pair.Get(), "");
 	UpdateTitle();
 }
 
@@ -709,9 +752,6 @@ void CompareWindow::MessageReceived(BMessage *message)
 		case kMsgQuitApplication:
 			be_app->PostMessage(B_QUIT_REQUESTED);
 			break;
-		case kMsgScanProgress:
-			TakeScanResults();
-			break;
 		case kMsgEntrySelected:
 		case kMsgEntryInvoked:
 			ShowSelected();
@@ -767,11 +807,12 @@ void CompareWindow::MessageReceived(BMessage *message)
 			fShowIdenticalItem->SetMarked(!fShowIdenticalItem->IsMarked());
 			fTree->SetShowIdentical(fShowIdenticalItem->IsMarked());
 			break;
-		case kMsgToggleIgnoreVcs:
-			fIgnoreVcsItem->SetMarked(!fIgnoreVcsItem->IsMarked());
-			fOptions.ignoreVcs = fIgnoreVcsItem->IsMarked();
-			StartScan();
+		case kMsgToggleIgnoreVcs: {
+			ScanOptions options = fOptions;
+			options.ignoreVcs = !options.ignoreVcs;
+			StartScan(fRoots[0], fRoots[1], options);
 			break;
+		}
 		case kMsgToggleSyncScrolling:
 			fSyncScrollingItem->SetMarked(!fSyncScrollingItem->IsMarked());
 			fDiffView->SetSyncScrolling(fSyncScrollingItem->IsMarked());

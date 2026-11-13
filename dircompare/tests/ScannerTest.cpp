@@ -1,10 +1,8 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <chrono>
 #include <map>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -161,37 +159,6 @@ TEST_CASE("scanning two trees")
 	CHECK_FALSE(Scan(left.Path(), right.Path(), ScanOptions(), cancelledSink, cancelled));
 
 	CHECK_THROWS(Scan(left / "missing", right.Path(), ScanOptions(), sink, cancel));
-}
-
-
-TEST_CASE("scanning on a thread")
-{
-	TempDirectory left;
-	TempDirectory right;
-	left.Write("a.txt", "abc\n");
-	right.Write("a.txt", "abd\n");
-	left.Write("dir/b.txt", "b\n");
-
-	ScanThread thread(left.Path(), right.Path(), ScanOptions(), BMessenger());
-	std::map<std::string, EntryStatus> statuses;
-	bool finished = false;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (!finished && std::chrono::steady_clock::now() < deadline) {
-		ScanThread::Results results = thread.TakeResults();
-		for (const ScanEntry &entry : results.entries) {
-			statuses[entry.path] = entry.status;
-		}
-		for (const StatusChange &change : results.changes) {
-			statuses[change.first] = change.second;
-		}
-		CHECK(results.error.empty());
-		finished = results.finished;
-		std::this_thread::sleep_for(std::chrono::milliseconds(5));
-	}
-	REQUIRE(finished);
-	CHECK(statuses["a.txt"] == EntryStatus::Different);
-	CHECK(statuses["dir"] == EntryStatus::LeftOnly);
-	CHECK(statuses["dir/b.txt"] == EntryStatus::LeftOnly);
 }
 
 

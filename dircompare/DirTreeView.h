@@ -1,8 +1,9 @@
 #pragma once
 
+#include <time.h>
+
 #include <map>
 #include <optional>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,15 +27,15 @@ private:
 	// Directories the user expanded (true) or collapsed (false).
 	std::map<std::string, bool> fToggled;
 	bool fExpanding {};
+	// Modification times as shown, by minute since the epoch.
+	std::unordered_map<time_t, std::string> fTimeTexts;
 
 	bool IsVisible(const Node &node) const;
+	const std::string &FormatTime(const EntryInfo &info);
 	BRow *CreateRow(const Node &node);
 	void SetFields(BRow *row, const Node &node);
-	void AddChildRows(const Node &parent);
-	void AddSubtree(const Node &node, BRow *parentRow);
+	void AddContentRows(const Node &node, BRow *row, std::vector<const Node*> &directories);
 	void ExpandDefault(const Node &node);
-	void RemoveSubtree(const Node &node);
-	BRow *ParentRow(const Node &node) const;
 
 public:
 	DirTreeView();
@@ -43,9 +44,6 @@ public:
 	void SetComparison(Comparison *comparison);
 	void SetShowIdentical(bool show);
 
-	// Follows the comparison after scan results: rows for new nodes, and
-	// changed statuses (rows of entries that became identical go).
-	void Update(const std::vector<Node*> &added, const std::vector<Node*> &changed);
 	// Recreates all rows, e.g. after nodes were replaced; keeps the
 	// selection.
 	void Rebuild();

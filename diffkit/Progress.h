@@ -32,6 +32,8 @@ public:
 	// The user asked to cancel; the work stops when it sees this (by
 	// returning or throwing).
 	bool Cancelled() const {return fCancelled;}
+	// For work that polls a flag of its own.
+	const std::atomic<bool> &CancelFlag() const {return fCancelled;}
 };
 
 

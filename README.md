@@ -182,8 +182,10 @@ like Meld. Without arguments, or with File > New comparison, it asks for
 the two paths. The tree lists the entries that differ: different, left
 only, right only, or of different types; View > Show identical files lists
 all. Directories are scanned in the background, then files of the same
-size are compared byte by byte. Version control directories are skipped
-unless View > Ignore version control directories is off.
+size are compared byte by byte, while a progress dialog shows how far it
+got; cancelling it keeps the previous comparison. Version control
+directories are skipped unless View > Ignore version control directories
+is off.
 
 Selecting a file shows a diff in which both sides can be edited. The arrows
 between the panes copy a change to the other side; Cmd+Option+Left/Right

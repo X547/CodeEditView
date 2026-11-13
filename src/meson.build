@@ -67,6 +67,7 @@ codeEditViewSources = files(
 	'model/EditRecord.cpp',
 	'model/Overlays.cpp',
 	'model/Rope.cpp',
+	'model/TextLoader.cpp',
 	'model/TextModel.cpp',
 	'model/UndoStack.cpp',
 	'syntax/Highlighter.cpp',

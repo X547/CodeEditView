@@ -23,30 +23,40 @@ std::string ErrnoMessage(const std::string &what, const std::string &path)
 
 std::optional<std::string> ReadFile(const std::string &path)
 {
+	std::string data;
+	if (!ReadFile(path, [&data](std::string_view chunk) {data.append(chunk);})) {
+		return std::nullopt;
+	}
+	return data;
+}
+
+
+bool ReadFile(const std::string &path, const ChunkSink &sink)
+{
 	const int fd = open(path.c_str(), O_RDONLY);
 	if (fd < 0) {
 		if (errno == ENOENT || errno == ENOTDIR) {
-			return std::nullopt;
+			return false;
 		}
 		throw FileError(ErrnoMessage("Cannot open", path));
 	}
-	std::string data;
-	char buffer[64 * 1024];
+	struct Closer {
+		int fd;
+		~Closer() {close(fd);}
+	} closer {fd};
+
+	std::vector<char> buffer(64 * 1024);
 	for (;;) {
-		const ssize_t size = read(fd, buffer, sizeof(buffer));
+		const ssize_t size = read(fd, buffer.data(), buffer.size());
 		if (size < 0) {
-			const int error = errno;
-			close(fd);
-			errno = error;
 			throw FileError(ErrnoMessage("Cannot read", path));
 		}
 		if (size == 0) {
 			break;
 		}
-		data.append(buffer, size);
+		sink(std::string_view(buffer.data(), size));
 	}
-	close(fd);
-	return data;
+	return true;
 }
 
 
@@ -105,8 +115,18 @@ static std::string FinalPath(const std::string &path)
 }
 
 
-void WriteFile(const std::string &requestedPath, std::string_view data)
+void WriteFile(const std::string &path, std::string_view data)
 {
+	WriteFile(path, [data](const ChunkSink &sink) {
+		sink(data);
+	});
+}
+
+
+// Small pieces are collected into larger writes.
+void WriteFile(const std::string &requestedPath, const ChunkSource &source)
+{
+	static constexpr size_t kBufferSize = 64 * 1024;
 	const std::string path = FinalPath(requestedPath);
 	const size_t slash = path.rfind('/');
 	const std::string directory = slash == std::string::npos ? "." : path.substr(0, slash + 1);
@@ -127,13 +147,39 @@ void WriteFile(const std::string &requestedPath, std::string_view data)
 		throw FileError(ErrnoMessage(what, failedPath));
 	};
 
-	size_t written = 0;
-	while (written < data.size()) {
-		const ssize_t size = write(fd, data.data() + written, data.size() - written);
-		if (size < 0) {
-			fail("Cannot write", tempPath);
+	const auto writeAll = [&](std::string_view data) {
+		size_t written = 0;
+		while (written < data.size()) {
+			const ssize_t size = write(fd, data.data() + written, data.size() - written);
+			if (size < 0) {
+				fail("Cannot write", tempPath);
+			}
+			written += size;
 		}
-		written += size;
+	};
+	std::string buffer;
+	buffer.reserve(kBufferSize);
+	try {
+		source([&](std::string_view chunk) {
+			if (buffer.size() + chunk.size() > kBufferSize) {
+				writeAll(buffer);
+				buffer.clear();
+			}
+			if (chunk.size() >= kBufferSize) {
+				writeAll(chunk);
+			} else {
+				buffer.append(chunk);
+			}
+		});
+		writeAll(buffer);
+	} catch (const FileError &error) {
+		// fail() cleaned up.
+		(void)error;
+		throw;
+	} catch (...) {
+		close(fd);
+		unlink(tempPath.c_str());
+		throw;
 	}
 
 	// mkstemp creates the file with mode 0600.

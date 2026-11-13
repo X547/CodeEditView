@@ -41,39 +41,63 @@ static TextPoint Advance(const TextPoint &start, std::string_view text)
 }
 
 
-// Converts CRLF and lone CR to LF and reports which line ending dominated.
-static std::string NormalizeLineEndings(std::string_view data, LineEnding &dominant)
+static TextPoint EndPoint(const Rope &text)
 {
-	size_t lfCount = 0;
-	size_t crlfCount = 0;
-	size_t crCount = 0;
-	std::string text;
-	text.reserve(data.size());
-	for (size_t i = 0; i < data.size(); i++) {
-		const char ch = data[i];
-		if (ch == '\r') {
-			if (i + 1 < data.size() && data[i + 1] == '\n') {
-				crlfCount++;
-				i++;
-			} else {
-				crCount++;
-			}
-			text += '\n';
-			continue;
-		}
-		if (ch == '\n') {
-			lfCount++;
-		}
-		text += ch;
+	const size_t line = text.NewlineCount();
+	return {line, text.Length() - text.LineStart(line)};
+}
+
+
+//#pragma mark - TextSnapshot
+
+// LF text is passed on as the rope holds it; other line endings go through
+// a buffer.
+void TextSnapshot::Write(const std::function<void(std::string_view data)> &write) const
+{
+	if (hasBom) {
+		write(kUtf8Bom);
+	}
+	std::string_view newline = "\n";
+	switch (lineEnding) {
+		case LineEnding::CRLF:
+			newline = "\r\n";
+			break;
+		case LineEnding::CR:
+			newline = "\r";
+			break;
+		default:
+			break;
 	}
 
-	dominant = LineEnding::LF;
-	if (crlfCount > lfCount && crlfCount >= crCount) {
-		dominant = LineEnding::CRLF;
-	} else if (crCount > lfCount && crCount > crlfCount) {
-		dominant = LineEnding::CR;
+	std::string buffer;
+	if (newline.size() != 1 || newline[0] != '\n') {
+		buffer.reserve(kIOBufferSize + kIOBufferSize / 2);
 	}
-	return text;
+	size_t pos = 0;
+	while (pos < text.Length()) {
+		const std::string_view chunk = text.ChunkAt(pos);
+		pos += chunk.size();
+		if (newline == "\n") {
+			write(chunk);
+			continue;
+		}
+		size_t start = 0;
+		while (start < chunk.size()) {
+			const size_t end = std::min(chunk.find('\n', start), chunk.size());
+			buffer.append(chunk.substr(start, end - start));
+			if (end < chunk.size()) {
+				buffer += newline;
+			}
+			start = end + 1;
+		}
+		if (buffer.size() >= kIOBufferSize) {
+			write(buffer);
+			buffer.clear();
+		}
+	}
+	if (!buffer.empty()) {
+		write(buffer);
+	}
 }
 
 
@@ -280,13 +304,14 @@ void TextModel::Replace(size_t offset, size_t length, std::string_view text)
 void TextModel::SetText(std::string_view text)
 {
 	AssertLocked();
-	ResetText(text);
+	ResetText(Rope(text));
 }
 
 
 // Replaces the whole text without undo; marks keep their line numbers and
-// decorations their lines and columns (clamped).
-void TextModel::ResetText(std::string_view text)
+// decorations their lines and columns (clamped). The old text is not copied,
+// as undo is cleared.
+void TextModel::ResetText(const Rope &text)
 {
 	if (fGroupDepth > 0) {
 		throw std::logic_error("TextModel: text reset inside an edit group");
@@ -301,9 +326,19 @@ void TextModel::ResetText(std::string_view text)
 		decorationPoints.push_back(set->Points(fText));
 	}
 
-	const std::string newText(text);
-	std::string removed;
-	ApplyTextEdit(0, fText.Length(), newText, removed);
+	EditRecord edit;
+	edit.offset = 0;
+	edit.oldLength = fText.Length();
+	edit.newLength = text.Length();
+	edit.oldEnd = EndPoint(fText);
+	edit.newEnd = EndPoint(text);
+	fText = text;
+	edit.revision = ++fRevision;
+	if (fSyntax != nullptr) {
+		fSyntax->TextEdited(edit);
+	}
+	fLog.push_back(edit);
+	TrimLog();
 
 	for (size_t i = 0; i < fMarkSets.size(); i++) {
 		fMarkSets[i]->RestoreLines(fText, markLines[i]);
@@ -535,7 +570,7 @@ void TextModel::OverlaysChanged()
 void TextModel::Load(BPositionIO &stream)
 {
 	AssertLocked();
-	std::string data;
+	TextLoader loader;
 	std::string buffer(kIOBufferSize, '\0');
 	for (;;) {
 		const ssize_t size = stream.Read(buffer.data(), buffer.size());
@@ -545,15 +580,28 @@ void TextModel::Load(BPositionIO &stream)
 		if (size == 0) {
 			break;
 		}
-		data.append(buffer.data(), size);
+		loader.Append(std::string_view(buffer.data(), size));
 	}
+	Load(loader);
+}
 
-	const bool hasBom = data.starts_with(kUtf8Bom);
-	LineEnding lineEnding;
-	const std::string text = NormalizeLineEndings(std::string_view(data).substr(hasBom ? kUtf8Bom.size() : 0), lineEnding);
-	ResetText(text);
-	fLineEnding = lineEnding;
-	fHasBom = hasBom;
+
+void TextModel::Load(TextLoader &loader)
+{
+	AssertLocked();
+	loader.Finish();
+	ResetText(loader.TakeText());
+	fLineEnding = loader.DominantLineEnding();
+	fHasBom = loader.HasBom();
+}
+
+
+void TextModel::Load(const TextSnapshot &snapshot)
+{
+	AssertLocked();
+	ResetText(snapshot.text);
+	fLineEnding = snapshot.lineEnding;
+	fHasBom = snapshot.hasBom;
 }
 
 
@@ -561,42 +609,16 @@ void TextModel::Load(BPositionIO &stream)
 void TextModel::Save(BPositionIO &stream) const
 {
 	AssertLocked();
-	std::string_view newline = "\n";
-	switch (fLineEnding) {
-		case LineEnding::CRLF:
-			newline = "\r\n";
-			break;
-		case LineEnding::CR:
-			newline = "\r";
-			break;
-		default:
-			break;
-	}
+	Snapshot().Write([&stream](std::string_view data) {
+		CheckThrow(stream.WriteExactly(data.data(), data.size()));
+	});
+}
 
-	std::string buffer;
-	buffer.reserve(2 * kIOBufferSize);
-	if (fHasBom) {
-		buffer += kUtf8Bom;
-	}
-	size_t pos = 0;
-	while (pos < fText.Length()) {
-		const std::string_view chunk = fText.ChunkAt(pos);
-		for (const char ch : chunk) {
-			if (ch == '\n') {
-				buffer += newline;
-			} else {
-				buffer += ch;
-			}
-		}
-		pos += chunk.size();
-		if (buffer.size() >= kIOBufferSize) {
-			CheckThrow(stream.WriteExactly(buffer.data(), buffer.size()));
-			buffer.clear();
-		}
-	}
-	if (!buffer.empty()) {
-		CheckThrow(stream.WriteExactly(buffer.data(), buffer.size()));
-	}
+
+TextSnapshot TextModel::Snapshot() const
+{
+	AssertLocked();
+	return TextSnapshot {fText, fLineEnding, fHasBom};
 }
 
 

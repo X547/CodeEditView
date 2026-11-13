@@ -7,6 +7,46 @@
 namespace Workspace {
 
 
+//#pragma mark - Provider
+
+FileData Provider::Read(const Locator &locator)
+{
+	class StringSink: public DataSink {
+	public:
+		std::string data;
+
+		void Restart() final {data.clear();}
+		void Append(std::string_view chunk) final {data.append(chunk);}
+	};
+
+	StringSink sink;
+	const FileInfo info = Read(locator, sink);
+	FileData result;
+	if (info.exists) {
+		result.data = std::move(sink.data);
+	}
+	result.version = info.version;
+	result.mimeType = info.mimeType;
+	return result;
+}
+
+
+std::string Provider::Write(const Locator &locator, std::string_view data, const std::string &expectedVersion,
+	bool overwrite)
+{
+	return Write(
+		locator,
+		[data](const DiffKit::ChunkSink &sink) {
+			sink(data);
+		},
+		expectedVersion,
+		overwrite
+	);
+}
+
+
+//#pragma mark - Providers
+
 Providers &Providers::Default()
 {
 	static Providers *providers = [] {

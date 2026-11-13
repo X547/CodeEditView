@@ -82,7 +82,7 @@ Locator GitProvider::Resolve(const Locator &locator)
 }
 
 
-FileData GitProvider::Read(const Locator &locator)
+FileInfo GitProvider::Read(const Locator &locator, DataSink &sink)
 {
 	if (locator.Path().empty()) {
 		throw ProviderError(locator.DisplayName() + " is a directory");
@@ -94,7 +94,7 @@ FileData GitProvider::Read(const Locator &locator)
 		git_tree_entry *entry = nullptr;
 		const int result = git_tree_entry_bypath(&entry, tree.get(), locator.Path().c_str());
 		if (result == GIT_ENOTFOUND) {
-			return FileData {};
+			return FileInfo {};
 		}
 		Check(result, "Cannot read the tree");
 		DiffKit::TreeEntryPtr entryPtr(entry);
@@ -104,16 +104,22 @@ FileData GitProvider::Read(const Locator &locator)
 		git_blob *blob = nullptr;
 		Check(git_blob_lookup(&blob, repository, git_tree_entry_id(entry)), "Cannot read the file");
 		DiffKit::BlobPtr blobPtr(blob);
-		FileData data;
-		data.data.emplace(static_cast<const char*>(git_blob_rawcontent(blob)), git_blob_rawsize(blob));
-		data.version = OidString(git_tree_entry_id(entry));
-		return data;
+		sink.Append(std::string_view(static_cast<const char*>(git_blob_rawcontent(blob)), git_blob_rawsize(blob)));
+		FileInfo info;
+		info.exists = true;
+		info.version = OidString(git_tree_entry_id(entry));
+		return info;
 	});
 }
 
 
-std::string GitProvider::Write(const Locator &, std::string_view, const std::string &, bool)
+std::string GitProvider::Write(const Locator &locator, const DiffKit::ChunkSource &source,
+	const std::string &expectedVersion, bool overwrite)
 {
+	(void)locator;
+	(void)source;
+	(void)expectedVersion;
+	(void)overwrite;
 	throw ProviderError("Files of a Git commit are read-only");
 }
 

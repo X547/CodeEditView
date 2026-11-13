@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@
 #include <CodeEditView/EditRecord.h>
 #include <CodeEditView/Overlays.h>
 #include <CodeEditView/Rope.h>
+#include <CodeEditView/TextLoader.h>
 
 
 class BPositionIO;
@@ -61,10 +63,15 @@ enum class EditKind {
 };
 
 
-enum class LineEnding {
-	LF,
-	CRLF,
-	CR,
+// The text of a model as saved, taken at one moment. Taking one is cheap (the
+// rope shares its nodes) and it may be used in any thread without the model.
+struct TextSnapshot {
+	Rope text;
+	LineEnding lineEnding = LineEnding::LF;
+	bool hasBom {};
+
+	// Passes the bytes of the file to write in pieces, in order.
+	void Write(const std::function<void(std::string_view data)> &write) const;
 };
 
 
@@ -143,7 +150,7 @@ private:
 	void CheckRange(size_t offset, size_t length) const;
 	EditRecord ApplyTextEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
 	EditRecord ApplyEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
-	void ResetText(std::string_view text);
+	void ResetText(const Rope &text);
 	void OverlaysChanged();
 	void TrimLog();
 	std::vector<Notification> CollectNotifications();
@@ -196,8 +203,14 @@ public:
 
 	// File I/O. Text is stored with LF line endings; the dominant line ending
 	// and a UTF-8 BOM are detected on load and restored on save.
+	// Loading replaces the text without undo, like SetText().
 	void Load(BPositionIO &stream);
+	// Finishes the loader and takes its text.
+	void Load(TextLoader &loader);
+	// Shares the snapshot's text.
+	void Load(const TextSnapshot &snapshot);
 	void Save(BPositionIO &stream) const;
+	TextSnapshot Snapshot() const;
 	LineEnding GetLineEnding() const;
 	void SetLineEnding(LineEnding lineEnding);
 	bool HasBom() const;

@@ -42,21 +42,26 @@ std::string FileProvider::Version(const std::string &path)
 }
 
 
-FileData FileProvider::Read(const Locator &locator)
+FileInfo FileProvider::Read(const Locator &locator, DataSink &sink)
 {
 	const std::string &path = locator.Path();
 	try {
-		FileData result;
+		FileInfo result;
 		// A file replaced while reading gets read again.
 		for (int attempt = 0; attempt < 3; attempt++) {
+			if (attempt > 0) {
+				sink.Restart();
+			}
 			const std::string before = Version(path);
-			result.data = DiffKit::ReadFile(path);
+			result.exists = DiffKit::ReadFile(path, [&sink](std::string_view chunk) {
+				sink.Append(chunk);
+			});
 			result.version = Version(path);
 			if (result.version == before) {
 				break;
 			}
 		}
-		if (!result.data.has_value()) {
+		if (!result.exists) {
 			result.version.clear();
 			return result;
 		}
@@ -73,15 +78,15 @@ FileData FileProvider::Read(const Locator &locator)
 }
 
 
-std::string FileProvider::Write(const Locator &locator, std::string_view data, const std::string &expectedVersion,
-	bool overwrite)
+std::string FileProvider::Write(const Locator &locator, const DiffKit::ChunkSource &source,
+	const std::string &expectedVersion, bool overwrite)
 {
 	const std::string &path = locator.Path();
 	if (!overwrite && Version(path) != expectedVersion) {
 		throw VersionConflict(path + " was changed by another program");
 	}
 	try {
-		DiffKit::WriteFile(path, data);
+		DiffKit::WriteFile(path, source);
 	} catch (const DiffKit::FileError &error) {
 		throw ProviderError(error.what());
 	}

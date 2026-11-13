@@ -12,9 +12,11 @@ class FileProvider: public Provider {
 public:
 	bool IsWritable(const Locator &locator) const override;
 	Locator Resolve(const Locator &locator) override;
-	FileData Read(const Locator &locator) override;
-	std::string Write(const Locator &locator, std::string_view data, const std::string &expectedVersion,
-		bool overwrite) override;
+	using Provider::Read;
+	using Provider::Write;
+	FileInfo Read(const Locator &locator, DataSink &sink) override;
+	std::string Write(const Locator &locator, const DiffKit::ChunkSource &source,
+		const std::string &expectedVersion, bool overwrite) override;
 	std::vector<DirEntry> List(const Locator &directory) override;
 
 	// The version of a local file; empty if it does not exist.

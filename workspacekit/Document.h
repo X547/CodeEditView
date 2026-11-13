@@ -11,6 +11,7 @@
 
 #include <CodeEditView/TextModel.h>
 
+#include "Fingerprint.h"
 #include "JobQueue.h"
 #include "Locator.h"
 #include "Provider.h"
@@ -69,8 +70,9 @@ private:
 	mutable BLocker fLock;
 	DocumentStatus fStatus;
 	std::string fVersion;
-	// Bytes last read or saved.
-	std::optional<std::string> fLoaded;
+	// Of the bytes last read or saved; the model holds the only copy of the
+	// text.
+	std::optional<Fingerprint> fLoaded;
 
 	friend class DocumentRegistry;
 
@@ -102,10 +104,13 @@ private:
 	void Notify(uint32 what, const Document &document, const std::string &error = {}, bool conflict = false);
 	void NotifyMessage(BMessage &message);
 	void Load(const BReference<Document> &document, bool force);
-	void Apply(Document &document, const FileData &file, bool force);
+	bool Apply(Document &document, const FileInfo &file, const Fingerprint &fingerprint, CodeEdit::TextLoader *text,
+		bool binary, bool force);
+	void ApplyWritten(Document &document, const CodeEdit::TextSnapshot &snapshot, const Fingerprint &fingerprint,
+		bool binary, const std::string &version);
 	Locator WritableTarget(const Locator &requested);
 	BReference<Document> Replaced(const Locator &target, bool create);
-	void Replace(const Locator &target, const BReference<Document> &document, std::string data,
+	void Replace(const Locator &target, const BReference<Document> &document, const CodeEdit::TextSnapshot &snapshot,
 		const BMessenger &reply, const BReference<Document> &untitled);
 
 public:

@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <algorithm>
 #include <atomic>
 #include <stdexcept>
 #include <string>
@@ -645,6 +646,109 @@ TEST_CASE("load and save restore line endings and BOM")
 	LoadFromString(model, large);
 	CHECK(model.Text().LineCount() == 50001);
 	CHECK(SaveToString(model) == large);
+}
+
+
+static std::string LoadInPieces(std::string_view data, size_t pieceSize, TextLoader &loader)
+{
+	for (size_t pos = 0; pos < data.size(); pos += pieceSize) {
+		loader.Append(data.substr(pos, pieceSize));
+	}
+	loader.Finish();
+	const Rope text = loader.TakeText();
+	CHECK(text.Validate());
+	return text.ToString();
+}
+
+
+TEST_CASE("text loader gives the same text however the data is split")
+{
+	const std::string samples[] = {
+		"",
+		"\xef\xbb",
+		"\xef\xbb\xbf",
+		"\xef\xbb\xbf" "a\r\nb",
+		"a\r\nb\r\nc\r",
+		"\r\r\n\n\r",
+		"mixed\r\nlines\nhere\r",
+		"\xe3\x81\x82\xe3\x81\x84\r\n\xe3\x81\x86",
+	};
+	for (const std::string &sample : samples) {
+		TextLoader whole;
+		const std::string expected = LoadInPieces(sample, std::max<size_t>(sample.size(), 1), whole);
+		for (size_t pieceSize = 1; pieceSize <= 4; pieceSize++) {
+			TextLoader split;
+			CHECK(LoadInPieces(sample, pieceSize, split) == expected);
+			CHECK(split.HasBom() == whole.HasBom());
+			CHECK(split.DominantLineEnding() == whole.DominantLineEnding());
+			CHECK(split.HasMixedLineEndings() == whole.HasMixedLineEndings());
+		}
+	}
+
+	TextLoader loader;
+	CHECK(LoadInPieces("\xef\xbb\xbf" "a\r\nb\r\n", 2, loader) == "a\nb\n");
+	CHECK(loader.HasBom());
+	CHECK(loader.DominantLineEnding() == LineEnding::CRLF);
+	CHECK_FALSE(loader.HasMixedLineEndings());
+
+	TextLoader mixed;
+	CHECK(LoadInPieces("a\r\nb\nc\r", 3, mixed) == "a\nb\nc\n");
+	CHECK(mixed.HasMixedLineEndings());
+
+	TextLoader large;
+	std::string data;
+	for (int i = 0; i < 20000; i++) {
+		data += "\xe3\x81\x82line\r\n";
+	}
+	std::string expected = data;
+	std::erase(expected, '\r');
+	CHECK(LoadInPieces(data, 4093, large) == expected);
+}
+
+
+TEST_CASE("rope builder makes a valid rope")
+{
+	for (const size_t size : {0, 1, 1023, 1024, 2047, 2048, 5000, 100000}) {
+		std::string text;
+		for (size_t i = 0; i < size; i++) {
+			text += i % 37 == 0 ? '\n' : static_cast<char>('a' + i % 26);
+		}
+		Rope::Builder builder;
+		for (size_t pos = 0; pos < text.size(); pos += 700) {
+			builder.Append(std::string_view(text).substr(pos, 700));
+		}
+		const Rope rope = builder.Build();
+		CHECK(rope.Validate());
+		CHECK(rope.ToString() == text);
+		CHECK(rope.NewlineCount() == static_cast<size_t>(std::count(text.begin(), text.end(), '\n')));
+	}
+}
+
+
+TEST_CASE("snapshots share the text and load into other models")
+{
+	TextModel model;
+	TextSnapshot snapshot;
+	{
+		ModelLock lock(model);
+		LoadFromString(model, "\xef\xbb\xbfone\r\ntwo\r\n");
+		model.Insert(0, "zero\n");
+		snapshot = model.Snapshot();
+		model.Insert(0, "later\n");
+	}
+	std::string written;
+	snapshot.Write([&written](std::string_view data) {
+		written.append(data);
+	});
+	CHECK(written == "\xef\xbb\xbfzero\r\none\r\ntwo\r\n");
+
+	TextModel other;
+	ModelLock lock(other);
+	other.Load(snapshot);
+	CHECK(other.Text().ToString() == "zero\none\ntwo\n");
+	CHECK(other.GetLineEnding() == LineEnding::CRLF);
+	CHECK(other.HasBom());
+	CHECK_FALSE(other.CanUndo());
 }
 
 

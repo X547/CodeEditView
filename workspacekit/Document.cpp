@@ -3,34 +3,88 @@
 #include <algorithm>
 
 #include <Autolock.h>
-#include <DataIO.h>
 #include <Message.h>
 
 #include <CodeEditView/Language.h>
-
-#include "TextSide.h"
 
 
 namespace Workspace {
 
 
 using CodeEdit::ModelLock;
+using CodeEdit::TextLoader;
 using CodeEdit::TextModel;
+using CodeEdit::TextSnapshot;
 
 
-static std::string SavedData(TextModel &model)
+// Data with a NUL byte this early is not edited as text.
+static constexpr size_t kBinaryCheckSize = 8000;
+
+
+// Fingerprints the data of a file and tells whether it is binary; also makes
+// its text if asked to.
+class ContentSink: public DataSink {
+private:
+	const bool fMakeText;
+	FingerprintBuilder fFingerprint;
+	std::optional<TextLoader> fText;
+	size_t fChecked {};
+	bool fBinary {};
+
+public:
+	explicit ContentSink(bool makeText):
+		fMakeText(makeText)
+	{
+		Restart();
+	}
+
+	void Restart() final
+	{
+		fFingerprint = FingerprintBuilder();
+		fChecked = 0;
+		fBinary = false;
+		if (fMakeText) {
+			fText.emplace();
+		}
+	}
+
+	void Append(std::string_view data) final
+	{
+		fFingerprint.Append(data);
+		if (fChecked < kBinaryCheckSize) {
+			const std::string_view head = data.substr(0, kBinaryCheckSize - fChecked);
+			fBinary = fBinary || head.find('\0') != std::string_view::npos;
+			fChecked += head.size();
+		}
+		if (fText.has_value()) {
+			fText->Append(data);
+		}
+	}
+
+	Fingerprint Result() const {return fFingerprint.Result();}
+	bool IsBinary() const {return fBinary;}
+	TextLoader *Text() {return fText.has_value() ? &*fText : nullptr;}
+};
+
+
+// Writes the snapshot as a file's data, passing it through the sink too.
+static DiffKit::ChunkSource WrittenSource(const TextSnapshot &snapshot, ContentSink &written)
 {
-	BMallocIO stream;
-	model.Save(stream);
-	return std::string(static_cast<const char*>(stream.Buffer()), stream.BufferLength());
+	return [&snapshot, &written](const DiffKit::ChunkSink &sink) {
+		written.Restart();
+		snapshot.Write([&](std::string_view data) {
+			written.Append(data);
+			sink(data);
+		});
+	};
 }
 
 
-static std::string SourceData(Document &document)
+static TextSnapshot SourceSnapshot(Document &document)
 {
 	TextModel &model = *document.Model();
 	ModelLock lock(model);
-	return SavedData(model);
+	return model.Snapshot();
 }
 
 
@@ -157,7 +211,7 @@ BReference<Document> DocumentRegistry::Open(const Locator &requested)
 			fDocuments.emplace(locator, document);
 			if (untitled) {
 				document->fStatus.state = DocumentState::Ready;
-				document->fLoaded = std::string();
+				document->fLoaded = FingerprintBuilder().Result();
 			} else {
 				load = error.empty();
 			}
@@ -199,7 +253,7 @@ BReference<Document> DocumentRegistry::NewUntitled()
 		}
 		document.SetTo(new Document(Locator::Untitled(number), true), true);
 		document->fStatus.state = DocumentState::Ready;
-		document->fLoaded = std::string();
+		document->fLoaded = FingerprintBuilder().Result();
 		fDocuments.emplace(document->GetLocator(), document);
 	}
 	Notify(kNoticeDocumentChanged, *document);
@@ -226,18 +280,36 @@ std::vector<BReference<Document>> DocumentRegistry::All()
 }
 
 
+// Text loaded before is only fingerprinted first: the file is read again for
+// its text only if that is to replace the model's. Two copies of the text
+// exist at once only while replacing it.
 void DocumentRegistry::Load(const BReference<Document> &document, bool force)
 {
 	fQueue.Post([this, document, force] {
 		const Locator &locator = document->GetLocator();
-		FileData file;
-		try {
+		const auto read = [&](ContentSink &content) {
+			FileInfo file;
 			// Untitled: nothing to read, reverting empties the text.
 			if (locator.Kind() != LocatorKind::Untitled) {
-				file = fProviders.Get(locator).Read(locator);
+				file = fProviders.Get(locator).Read(locator, content);
 			}
-			if (!file.data.has_value() && !document->fWritable) {
+			if (!file.exists && !document->fWritable) {
 				throw ProviderError(locator.DisplayName() + " does not exist");
+			}
+			return file;
+		};
+		bool loaded;
+		{
+			BAutolock lock(document->fLock);
+			loaded = document->fLoaded.has_value();
+		}
+		try {
+			ContentSink content(!loaded);
+			const FileInfo file = read(content);
+			if (!Apply(*document, file, content.Result(), content.Text(), content.IsBinary(), force)) {
+				ContentSink text(true);
+				const FileInfo textFile = read(text);
+				Apply(*document, textFile, text.Result(), text.Text(), text.IsBinary(), force);
 			}
 		} catch (const ProviderError &error) {
 			{
@@ -250,32 +322,32 @@ void DocumentRegistry::Load(const BReference<Document> &document, bool force)
 			Notify(kNoticeDocumentChanged, *document);
 			return;
 		}
-		Apply(*document, file, force);
 		Notify(kNoticeDocumentChanged, *document);
 	});
 }
 
 
-// Called in the I/O thread.
-void DocumentRegistry::Apply(Document &document, const FileData &file, bool force)
+// Called in the I/O thread. Returns false if the model's text is to be
+// replaced but no text is given.
+bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fingerprint &fingerprint,
+	TextLoader *text, bool binary, bool force)
 {
-	const std::string bytes = file.data.value_or(std::string());
 	bool unchanged;
 	{
 		BAutolock lock(document.fLock);
-		if (!file.data.has_value() && document.fStatus.exists) {
+		if (!file.exists && document.fStatus.exists) {
 			// Deleted elsewhere: the text stays, saving creates the file
 			// again.
 			document.fStatus.exists = false;
 			document.fStatus.changedElsewhere = true;
 			document.fStatus.error.clear();
 			document.fVersion.clear();
-			return;
+			return true;
 		}
-		unchanged = document.fLoaded == bytes;
+		unchanged = document.fLoaded == fingerprint;
 		if (unchanged) {
 			document.fStatus.state = DocumentState::Ready;
-			document.fStatus.exists = file.data.has_value();
+			document.fStatus.exists = file.exists;
 			document.fStatus.error.clear();
 			document.fStatus.changedElsewhere = false;
 			document.fVersion = file.version;
@@ -293,34 +365,59 @@ void DocumentRegistry::Apply(Document &document, const FileData &file, bool forc
 		}
 		// The same data again: the text stays unless forced to drop edits.
 		if (unchanged && (!force || !model.IsModified())) {
-			return;
+			return true;
 		}
 		if (!force && document.Status().state == DocumentState::Ready && model.IsModified()) {
 			BAutolock documentLock(document.fLock);
 			document.fStatus.changedElsewhere = true;
 			document.fStatus.error.clear();
-			return;
+			return true;
 		}
-		BMemoryIO stream(bytes.data(), bytes.size());
-		model.Load(stream);
+		if (text == nullptr) {
+			return false;
+		}
+		model.Load(*text);
 		model.SetSavePoint();
 		// Saving must give back the same bytes, or editing would change
 		// lines the user did not touch.
-		if (DiffKit::IsBinary(bytes)) {
+		if (binary) {
 			problem = "is a binary file";
-		} else if (SavedData(model) != bytes) {
+		} else if (text->HasMixedLineEndings()) {
 			problem = "has mixed line endings";
 		}
 	}
 
 	BAutolock lock(document.fLock);
-	document.fLoaded = bytes;
+	document.fLoaded = fingerprint;
 	document.fVersion = file.version;
 	document.fStatus.state = DocumentState::Ready;
 	document.fStatus.error.clear();
-	document.fStatus.exists = file.data.has_value();
+	document.fStatus.exists = file.exists;
 	document.fStatus.changedElsewhere = false;
 	document.fStatus.problem = problem;
+	return true;
+}
+
+
+// Called in the I/O thread: the document's file was written with the
+// snapshot, which becomes its text.
+void DocumentRegistry::ApplyWritten(Document &document, const TextSnapshot &snapshot, const Fingerprint &fingerprint,
+	bool binary, const std::string &version)
+{
+	{
+		TextModel &model = *document.Model();
+		ModelLock lock(model);
+		model.Load(snapshot);
+		model.SetSavePoint();
+	}
+	BAutolock lock(document.fLock);
+	document.fLoaded = fingerprint;
+	document.fVersion = version;
+	document.fStatus.state = DocumentState::Ready;
+	document.fStatus.error.clear();
+	document.fStatus.exists = true;
+	document.fStatus.changedElsewhere = false;
+	document.fStatus.problem = binary ? "is a binary file" : "";
 }
 
 
@@ -357,23 +454,25 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 		document->fStatus.saving = true;
 	}
 
-	std::string data;
+	TextSnapshot snapshot;
 	uint64_t revision;
 	{
 		TextModel &model = *document->Model();
 		ModelLock lock(model);
-		data = SavedData(model);
+		snapshot = model.Snapshot();
 		revision = model.Revision();
 	}
 	Notify(kNoticeDocumentChanged, *document);
 
-	fQueue.Post([this, document, data = std::move(data), revision, expectedVersion, overwrite] {
+	fQueue.Post([this, document, snapshot, revision, expectedVersion, overwrite] {
 		const Locator &locator = document->GetLocator();
 		std::string error;
 		bool conflict = false;
 		std::string version;
+		ContentSink written(false);
 		try {
-			version = fProviders.Get(locator).Write(locator, data, expectedVersion, overwrite);
+			version = fProviders.Get(locator).Write(locator, WrittenSource(snapshot, written), expectedVersion,
+				overwrite);
 		} catch (const VersionConflict &versionConflict) {
 			error = versionConflict.what();
 			conflict = true;
@@ -394,7 +493,7 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 			document->fStatus.saving = false;
 			document->fStatus.error = error;
 			if (error.empty()) {
-				document->fLoaded = data;
+				document->fLoaded = written.Result();
 				document->fVersion = version;
 				document->fStatus.exists = true;
 				document->fStatus.changedElsewhere = false;
@@ -448,8 +547,8 @@ BReference<Document> DocumentRegistry::Replaced(const Locator &target, bool crea
 // data. The reply (if valid) gets kNoticeCopySaved. An untitled source
 // (if any) of the data counts as saved unless edited meanwhile, and its
 // listeners get kNoticeDocumentMoved.
-void DocumentRegistry::Replace(const Locator &target, const BReference<Document> &document, std::string data,
-	const BMessenger &reply, const BReference<Document> &untitled)
+void DocumentRegistry::Replace(const Locator &target, const BReference<Document> &document,
+	const TextSnapshot &snapshot, const BMessenger &reply, const BReference<Document> &untitled)
 {
 	uint64_t untitledRevision = 0;
 	if (untitled.Get() != nullptr) {
@@ -467,18 +566,18 @@ void DocumentRegistry::Replace(const Locator &target, const BReference<Document>
 		Notify(kNoticeDocumentChanged, *document);
 	}
 
-	fQueue.Post([this, target, document, data = std::move(data), reply, untitled, untitledRevision] {
+	fQueue.Post([this, target, document, snapshot, reply, untitled, untitledRevision] {
 		std::string error;
-		FileData file;
+		std::string version;
+		ContentSink written(false);
 		try {
-			file.version = fProviders.Get(target).Write(target, data, {}, true);
-			file.data = data;
+			version = fProviders.Get(target).Write(target, WrittenSource(snapshot, written), {}, true);
 		} catch (const ProviderError &providerError) {
 			error = providerError.what();
 		}
 		if (document.Get() != nullptr) {
 			if (error.empty()) {
-				Apply(*document, file, true);
+				ApplyWritten(*document, snapshot, written.Result(), written.IsBinary(), version);
 			}
 			{
 				BAutolock lock(document->fLock);
@@ -526,7 +625,7 @@ BReference<Document> DocumentRegistry::SaveAs(Document *source, const Locator &r
 	if (source->GetLocator().Kind() == LocatorKind::Untitled) {
 		untitled.SetTo(source);
 	}
-	Replace(target, document, SourceData(*source), BMessenger(), untitled);
+	Replace(target, document, SourceSnapshot(*source), BMessenger(), untitled);
 	return document;
 }
 
@@ -538,7 +637,7 @@ void DocumentRegistry::SaveCopy(Document *source, const Locator &requested, cons
 		Save(source, true);
 		return;
 	}
-	Replace(target, Replaced(target, false), SourceData(*source), reply, BReference<Document>());
+	Replace(target, Replaced(target, false), SourceSnapshot(*source), reply, BReference<Document>());
 }
 
 

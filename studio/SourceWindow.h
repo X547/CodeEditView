@@ -21,7 +21,10 @@ class OutlineView;
 namespace Studio {
 
 
+class DefinitionsMenu;
 class IconMenuItem;
+class IncludesMenu;
+class OpenMenu;
 struct ShowOptions;
 
 
@@ -43,11 +46,11 @@ private:
 	BMenu *fSessionMenu {};
 	BMenu *fCoverageMenu {};
 	BMenu *fCoverageRunMenu {};
-	// Of the tool bar: the drop-down menus, filled when shown, and the
+	// Of the tool bar: the drop-down menus, made when shown, and the
 	// buttons with a state.
-	BMenu *fOpenMenu {};
-	BMenu *fFunctionsMenu {};
-	BMenu *fHeadersMenu {};
+	OpenMenu *fOpenMenu {};
+	DefinitionsMenu *fFunctionsMenu {};
+	IncludesMenu *fHeadersMenu {};
 	IconMenuItem *fSaveButton {};
 	IconMenuItem *fLockButton {};
 	IconMenuItem *fOutlineButton {};
@@ -88,10 +91,6 @@ private:
 	void UpdateCoverageMenu();
 	BMenuBar *CreateToolBar();
 	void UpdateToolBar();
-	void FillToolBarMenus();
-	void FillOpenMenu();
-	void FillFunctionsMenu();
-	void FillHeadersMenu();
 	void OpenInclude(BMessage *message);
 	void ToggleLocked();
 	void Follow(int32 session, int32 coverage);

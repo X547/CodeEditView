@@ -1651,11 +1651,7 @@ std::vector<OutlineItem> EditorCore::Outline()
 {
 	ModelLock lock(*fModel);
 	Prepare();
-	const SyntaxState *syntax = fModel->Syntax();
-	if (syntax == nullptr || syntax->Tree() == nullptr) {
-		return {};
-	}
-	return BuildOutline(syntax->GetLanguage(), syntax->Tree(), fModel->Text(), fQueryCursor);
+	return fModel->Outline();
 }
 
 

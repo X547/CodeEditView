@@ -207,9 +207,6 @@ BMenuItem *ToolBar::ItemAtPoint(BPoint where) const
 void ToolBar::MouseDown(BPoint where)
 {
 	HideToolTip();
-	if (fMenusBeginning) {
-		fMenusBeginning();
-	}
 	BMenuBar::MouseDown(where);
 }
 

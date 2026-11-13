@@ -19,6 +19,7 @@
 #include <Referenceable.h>
 
 #include <CodeEditView/EditRecord.h>
+#include <CodeEditView/Outline.h>
 #include <CodeEditView/Overlays.h>
 #include <CodeEditView/Rope.h>
 #include <CodeEditView/TextLoader.h>
@@ -221,6 +222,8 @@ public:
 	void SetLanguage(const char *name);
 	const char *LanguageName() const;
 	uint64_t SyntaxRevision() const;
+	// Definitions of the last syntax tree; empty without one.
+	std::vector<OutlineItem> Outline() const;
 };
 
 

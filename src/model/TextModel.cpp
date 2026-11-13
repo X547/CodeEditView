@@ -10,7 +10,9 @@
 
 #include "UndoStack.h"
 #include "support/Assert.h"
+#include "syntax/Highlighter.h"
 #include "syntax/Language.h"
+#include "syntax/Outline.h"
 #include "syntax/SyntaxState.h"
 
 
@@ -681,6 +683,17 @@ uint64_t TextModel::SyntaxRevision() const
 {
 	AssertLocked();
 	return fSyntaxRevision;
+}
+
+
+std::vector<OutlineItem> TextModel::Outline() const
+{
+	AssertLocked();
+	if (fSyntax == nullptr || fSyntax->Tree() == nullptr) {
+		return {};
+	}
+	QueryCursor cursor;
+	return BuildOutline(fSyntax->GetLanguage(), fSyntax->Tree(), fText, cursor);
 }
 
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,7 +47,6 @@ public:
 // item shows its tool tip.
 class ToolBar: public BMenuBar {
 private:
-	std::function<void()> fMenusBeginning;
 	BMenuItem *fToolTipItem {};
 
 	BMenuItem *ItemAtPoint(BPoint where) const;
@@ -56,10 +54,6 @@ private:
 public:
 	explicit ToolBar(const char *name);
 	~ToolBar() override;
-
-	// Runs on the window's thread before a click on the tool bar shows a
-	// menu, to fill the menus that change.
-	void SetMenusBeginning(std::function<void()> hook) {fMenusBeginning = std::move(hook);}
 
 	void MouseDown(BPoint where) override;
 	void MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage) override;

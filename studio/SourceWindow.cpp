@@ -46,6 +46,7 @@
 #include "StartSessionWindow.h"
 #include "StudioApp.h"
 #include "ToolBar.h"
+#include "ToolBarMenus.h"
 #include "WindowHelpers.h"
 
 
@@ -306,16 +307,6 @@ static void ClearMenu(BMenu *menu)
 }
 
 
-// A separator unless the menu is empty or ends with one.
-static void AddSeparator(BMenu *menu)
-{
-	const int32 count = menu->CountItems();
-	if (count > 0 && dynamic_cast<BSeparatorItem *>(menu->ItemAt(count - 1)) == nullptr) {
-		menu->AddSeparatorItem();
-	}
-}
-
-
 // The runs to follow, and the commands enabled with a run.
 void SourceWindow::UpdateCoverageMenu()
 {
@@ -350,9 +341,10 @@ void SourceWindow::UpdateCoverageMenu()
 BMenuBar *SourceWindow::CreateToolBar()
 {
 	ToolBar *toolBar = new ToolBar("toolBar");
-	fOpenMenu = new BMenu("Open");
-	fFunctionsMenu = new BMenu("Functions");
-	fHeadersMenu = new BMenu("Headers");
+	const BMessenger target(this);
+	fOpenMenu = new OpenMenu("Open", target, DiffKit::kCodeEditSignature, kRecentDocumentCount);
+	fFunctionsMenu = new DefinitionsMenu("Functions", fDocument->Model(), BMessage(kMsgSelectDefinition), target);
+	fHeadersMenu = new IncludesMenu("Headers", fDocument->Model(), BMessage(kMsgOpenInclude), target);
 	fSaveButton = new IconMenuItem("save", "Save", new BMessage(kMsgSave));
 	fLockButton = new IconMenuItem("lock", "Prevent editing", new BMessage(kMsgToggleLocked));
 	fOutlineButton = new IconMenuItem("outline", "Outline", new BMessage(kMsgToggleOutline));
@@ -370,9 +362,6 @@ BMenuBar *SourceWindow::CreateToolBar()
 	toolBar->AddItem(fLockButton);
 	toolBar->AddItem(new IconMenuItem("documents", "Documents", new BMessage(kMsgShowDocuments)));
 	toolBar->AddItem(fOutlineButton);
-	toolBar->SetMenusBeginning([this]() {
-		FillToolBarMenus();
-	});
 	return toolBar;
 }
 
@@ -384,163 +373,6 @@ void SourceWindow::UpdateToolBar()
 	fSaveButton->SetEnabled(ready && !fDocument->IsReadOnly());
 	fLockButton->SetPressed(fLocked);
 	fOutlineButton->SetPressed(fOutlineItem->IsMarked());
-}
-
-
-void SourceWindow::FillToolBarMenus()
-{
-	FillOpenMenu();
-	FillFunctionsMenu();
-	FillHeadersMenu();
-}
-
-
-// The open commands and the files opened last.
-void SourceWindow::FillOpenMenu()
-{
-	ClearMenu(fOpenMenu);
-	fOpenMenu->AddItem(new BMenuItem("Open" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenFile)));
-	fOpenMenu->AddItem(new BMenuItem("Open from Git" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenGit)));
-	fOpenMenu->AddItem(new BMenuItem("Open location" B_UTF8_ELLIPSIS, new BMessage(kMsgShowOpenLocation)));
-
-	BMessage recent;
-	be_roster->GetRecentDocuments(&recent, kRecentDocumentCount, nullptr, DiffKit::kCodeEditSignature);
-	fOpenMenu->AddSeparatorItem();
-	entry_ref ref;
-	for (int32 i = 0; recent.FindRef("refs", i, &ref) == B_OK; i++) {
-		BPath path(&ref);
-		if (path.InitCheck() != B_OK) {
-			continue;
-		}
-		BMessage *open = new BMessage(B_REFS_RECEIVED);
-		open->AddRef("refs", &ref);
-		fOpenMenu->AddItem(new BMenuItem(path.Path(), open));
-	}
-	// The separator ends the menu without recent files.
-	const int32 count = fOpenMenu->CountItems();
-	if (dynamic_cast<BSeparatorItem *>(fOpenMenu->ItemAt(count - 1)) != nullptr) {
-		delete fOpenMenu->RemoveItem(count - 1);
-	}
-	fOpenMenu->SetTargetForItems(this);
-}
-
-
-// Sections start a group with their name; members of types are indented.
-static void AddDefinitions(BMenu *menu, const std::vector<CodeEdit::OutlineItem> &items, int32 depth)
-{
-	for (const CodeEdit::OutlineItem &item : items) {
-		switch (item.kind) {
-			case CodeEdit::OutlineKind::Separator:
-				AddSeparator(menu);
-				break;
-			case CodeEdit::OutlineKind::Section: {
-				AddSeparator(menu);
-				BMenuItem *title = new BMenuItem(item.label.c_str(), nullptr);
-				title->SetEnabled(false);
-				menu->AddItem(title);
-				AddDefinitions(menu, item.children, depth);
-				break;
-			}
-			case CodeEdit::OutlineKind::Namespace:
-				AddDefinitions(menu, item.children, depth);
-				break;
-			default: {
-				BMessage *select = new BMessage(kMsgSelectDefinition);
-				select->AddUInt64("start", item.nameStart);
-				select->AddUInt64("end", item.nameEnd);
-				const std::string label = std::string(depth * 4, ' ') + item.label;
-				menu->AddItem(new BMenuItem(label.c_str(), select));
-				AddDefinitions(menu, item.children, depth + 1);
-				break;
-			}
-		}
-	}
-}
-
-
-void SourceWindow::FillFunctionsMenu()
-{
-	ClearMenu(fFunctionsMenu);
-	AddDefinitions(fFunctionsMenu, fEditView->Outline(), 0);
-	const int32 count = fFunctionsMenu->CountItems();
-	if (count > 0 && dynamic_cast<BSeparatorItem *>(fFunctionsMenu->ItemAt(count - 1)) != nullptr) {
-		delete fFunctionsMenu->RemoveItem(count - 1);
-	}
-	if (fFunctionsMenu->CountItems() == 0) {
-		BMenuItem *none = new BMenuItem("No definitions", nullptr);
-		none->SetEnabled(false);
-		fFunctionsMenu->AddItem(none);
-	}
-	fFunctionsMenu->SetTargetForItems(this);
-}
-
-
-struct Include {
-	std::string name;
-	// Written in angle brackets.
-	bool system;
-};
-
-
-// The files named by "#include" directives, in order, each once.
-static std::vector<Include> FindIncludes(CodeEdit::TextModel &model)
-{
-	std::string text;
-	{
-		CodeEdit::ModelLock lock(model);
-		text = model.Text().ToString();
-	}
-	std::vector<Include> includes;
-	std::string_view rest(text);
-	while (!rest.empty()) {
-		const size_t lineEnd = rest.find('\n');
-		const std::string_view line = rest.substr(0, lineEnd);
-		rest = lineEnd == std::string_view::npos ? std::string_view() : rest.substr(lineEnd + 1);
-
-		size_t i = line.find_first_not_of(" \t");
-		if (i == std::string_view::npos || line[i] != '#') {
-			continue;
-		}
-		i = line.find_first_not_of(" \t", i + 1);
-		if (i == std::string_view::npos || line.substr(i, 7) != "include") {
-			continue;
-		}
-		i = line.find_first_not_of(" \t", i + 7);
-		if (i == std::string_view::npos || (line[i] != '<' && line[i] != '"')) {
-			continue;
-		}
-		const bool system = line[i] == '<';
-		const size_t end = line.find(system ? '>' : '"', i + 1);
-		if (end == std::string_view::npos || end == i + 1) {
-			continue;
-		}
-		Include include {std::string(line.substr(i + 1, end - i - 1)), system};
-		const bool known = std::any_of(includes.begin(), includes.end(), [&include](const Include &other) {
-			return other.name == include.name && other.system == include.system;
-		});
-		if (!known) {
-			includes.push_back(std::move(include));
-		}
-	}
-	return includes;
-}
-
-
-void SourceWindow::FillHeadersMenu()
-{
-	ClearMenu(fHeadersMenu);
-	for (const Include &include : FindIncludes(*fDocument->Model())) {
-		BMessage *open = new BMessage(kMsgOpenInclude);
-		open->AddString("name", include.name.c_str());
-		open->AddBool("system", include.system);
-		fHeadersMenu->AddItem(new BMenuItem(include.name.c_str(), open));
-	}
-	if (fHeadersMenu->CountItems() == 0) {
-		BMenuItem *none = new BMenuItem("No included files", nullptr);
-		none->SetEnabled(false);
-		fHeadersMenu->AddItem(none);
-	}
-	fHeadersMenu->SetTargetForItems(this);
 }
 
 
@@ -895,6 +727,8 @@ void SourceWindow::SetDocument(Document *document)
 	}
 	fDocument.SetTo(document);
 	fEditView->SetModel(fDocument->Model());
+	fFunctionsMenu->SetModel(fDocument->Model());
+	fHeadersMenu->SetModel(fDocument->Model());
 	Follow(fSession, fCoverage);
 	UpdateTitle();
 	UpdateStatus();

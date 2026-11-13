@@ -76,6 +76,14 @@ struct TextSnapshot {
 };
 
 
+// Byte ranges of the text whose syntax changed with a new syntax tree, as
+// [start, end), in the text of revision (later edits move them).
+struct SyntaxRanges {
+	uint64_t revision {};
+	std::vector<std::pair<size_t, size_t>> ranges;
+};
+
+
 struct ModelChanges {
 	uint64_t revision {};
 	// Edits are not available (log trimmed); the observer must rebuild all state.
@@ -85,6 +93,9 @@ struct ModelChanges {
 	bool overlaysChanged {};
 	// A new syntax tree changed the highlighting.
 	bool syntaxChanged {};
+	// With syntaxChanged: where it changed, if known (one new tree since the
+	// last Sync()); otherwise anything may have changed.
+	std::optional<SyntaxRanges> syntaxRanges;
 	std::vector<EditRecord> edits;
 };
 
@@ -139,6 +150,8 @@ private:
 
 	std::unique_ptr<SyntaxState> fSyntax;
 	uint64_t fSyntaxRevision {};
+	// Where the last syntax change changed the syntax; none if unknown.
+	std::optional<SyntaxRanges> fSyntaxRanges;
 	std::vector<thread_id> fRetiredWorkers;
 
 	friend class EditorCore;
@@ -157,7 +170,7 @@ private:
 	std::vector<Notification> CollectNotifications();
 
 	SyntaxState *Syntax() const {return fSyntax.get();}
-	void SyntaxChanged();
+	void SyntaxChanged(std::optional<SyntaxRanges> ranges = std::nullopt);
 	void RetireWorkerThread(thread_id thread);
 
 public:

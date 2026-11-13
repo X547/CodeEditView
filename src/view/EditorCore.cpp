@@ -347,6 +347,8 @@ void EditorCore::ShiftLayoutCaches(const EditRecord &edit)
 }
 
 
+// A new syntax tree redraws the rows where the syntax changed, if known,
+// else everything.
 void EditorCore::ApplyChanges(const ModelChanges &changes)
 {
 	if (changes.reset) {
@@ -357,9 +359,40 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		CheckOverlays();
 	}
 	if (changes.syntaxChanged) {
-		fDirty.AddAll();
 		fDirty.contentsChanged = true;
+		if (!changes.syntaxRanges.has_value()) {
+			fDirty.AddAll();
+		}
 	}
+	ApplyEdits(changes);
+	if (changes.syntaxChanged && changes.syntaxRanges.has_value()) {
+		AddSyntaxDirty(*changes.syntaxRanges, changes.edits);
+	}
+}
+
+
+// Edits made after the new tree move its ranges.
+void EditorCore::AddSyntaxDirty(const SyntaxRanges &syntax, const std::vector<EditRecord> &edits)
+{
+	const size_t length = fModel->Text().Length();
+	for (auto [start, end] : syntax.ranges) {
+		for (const EditRecord &edit : edits) {
+			if (edit.revision > syntax.revision) {
+				start = edit.MapOffset(start, Gravity::Left);
+				end = edit.MapOffset(end, Gravity::Right);
+			}
+		}
+		start = std::min(start, length);
+		end = std::clamp(end, start, length);
+		const size_t firstRow = PositionOfOffsetLocked(start).row;
+		const size_t lastRow = end > start ? PositionOfOffsetLocked(end - 1).row : firstRow;
+		fDirty.Add(firstRow, lastRow);
+	}
+}
+
+
+void EditorCore::ApplyEdits(const ModelChanges &changes)
+{
 	if (changes.edits.empty()) {
 		return;
 	}

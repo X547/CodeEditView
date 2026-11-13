@@ -62,19 +62,28 @@ void SyntaxState::TextEdited(const EditRecord &edit)
 }
 
 
+// The edited published tree and the new one both match the current text,
+// so their differences are where the syntax changed. The first tree changes
+// everything.
 void SyntaxState::Publish(TSTree *tree)
 {
-	bool changed = true;
-	if (fTree != nullptr) {
-		uint32_t count = 0;
-		TSRange *ranges = ts_tree_get_changed_ranges(fTree, tree, &count);
-		free(ranges);
-		changed = count > 0;
-		ts_tree_delete(fTree);
-	}
-	fTree = tree;
-	if (changed) {
+	if (fTree == nullptr) {
+		fTree = tree;
 		fModel.SyntaxChanged();
+		return;
+	}
+	uint32_t count = 0;
+	TSRange *changed = ts_tree_get_changed_ranges(fTree, tree, &count);
+	SyntaxRanges ranges;
+	ranges.revision = fModel.fRevision;
+	for (uint32_t i = 0; i < count; i++) {
+		ranges.ranges.emplace_back(changed[i].start_byte, changed[i].end_byte);
+	}
+	free(changed);
+	ts_tree_delete(fTree);
+	fTree = tree;
+	if (count > 0) {
+		fModel.SyntaxChanged(std::move(ranges));
 	}
 }
 

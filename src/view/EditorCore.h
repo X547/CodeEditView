@@ -247,6 +247,8 @@ private:
 	void ResetFromModel();
 	void Relayout();
 	void ApplyChanges(const ModelChanges &changes);
+	void ApplyEdits(const ModelChanges &changes);
+	void AddSyntaxDirty(const SyntaxRanges &syntax, const std::vector<EditRecord> &edits);
 	void ApplyManyEdits(const std::vector<EditRecord> &edits);
 	void ShiftLayoutCaches(const EditRecord &edit);
 	bool MeasureLines(size_t maxLines);

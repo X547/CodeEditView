@@ -138,6 +138,44 @@ TEST_CASE("sticky scopes of the top of the view")
 }
 
 
+TEST_CASE("a new syntax tree redraws where the syntax changed")
+{
+	std::string text;
+	for (int i = 0; i < 100; i++) {
+		text += "int a" + std::to_string(i) + ";\n";
+	}
+	BReference<TextModel> model = MakeModel(text, "cpp");
+	EditorCore core(model);
+	core.TakeDirty();
+
+	uint64_t revision;
+	{
+		ModelLock lock(*model);
+		revision = model->SyntaxRevision();
+		model->Insert(model->Text().LineStart(50), "x");
+	}
+	for (int i = 0; i < 500; i++) {
+		{
+			ModelLock lock(*model);
+			if (model->SyntaxRevision() > revision) {
+				break;
+			}
+		}
+		snooze(10000);
+	}
+	{
+		ModelLock lock(*model);
+		REQUIRE(model->SyntaxRevision() == revision + 1);
+	}
+	core.Sync();
+	const DirtyRows dirty = core.TakeDirty();
+	CHECK(dirty.contentsChanged);
+	REQUIRE_FALSE(dirty.IsEmpty());
+	CHECK(dirty.first >= 45);
+	CHECK(dirty.last <= 55);
+}
+
+
 TEST_CASE("sticky lines name scopes written over several lines")
 {
 	BReference<TextModel> model = MakeModel(

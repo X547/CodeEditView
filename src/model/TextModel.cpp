@@ -502,6 +502,9 @@ ModelChanges TextModel::Sync(ObserverId id)
 	changes.revision = fRevision;
 	changes.overlaysChanged = observer.overlaysRevision != fOverlaysRevision;
 	changes.syntaxChanged = observer.syntaxRevision != fSyntaxRevision;
+	if (observer.syntaxRevision + 1 == fSyntaxRevision) {
+		changes.syntaxRanges = fSyntaxRanges;
+	}
 	if (observer.revision != fRevision) {
 		if (fLog.empty() || fLog.front().revision > observer.revision + 1) {
 			changes.reset = true;
@@ -697,10 +700,11 @@ std::vector<OutlineItem> TextModel::Outline() const
 }
 
 
-void TextModel::SyntaxChanged()
+void TextModel::SyntaxChanged(std::optional<SyntaxRanges> ranges)
 {
 	AssertLocked();
 	fSyntaxRevision++;
+	fSyntaxRanges = std::move(ranges);
 }
 
 

@@ -1,6 +1,9 @@
 #include <CodeEditView/Rope.h>
 
+#include <string.h>
+
 #include <algorithm>
+#include <new>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -9,7 +12,9 @@
 namespace CodeEdit {
 
 
-static constexpr size_t kMaxLeafBytes = 1024;
+// A full leaf with its node takes one 2 KiB heap block.
+static constexpr size_t kLeafBlockSize = 2048;
+static constexpr size_t kMaxLeafBytes = 1984;
 static constexpr size_t kMinLeafBytes = kMaxLeafBytes / 4;
 static constexpr size_t kMaxChildren = 16;
 static constexpr size_t kMinChildren = kMaxChildren / 4;
@@ -29,7 +34,16 @@ static size_t CountNewlines(std::string_view text)
 
 //#pragma mark - Rope::Node
 
+// The text of a leaf follows the node in the same heap block.
 class Rope::Node: public BReferenceable {
+private:
+	struct TextSpace {
+		size_t bytes;
+	};
+
+	static void *operator new(size_t size, TextSpace space);
+	static void operator delete(void *block, TextSpace space);
+
 public:
 	using Ref = BReference<Node>;
 	using RefList = std::vector<Ref>;
@@ -37,13 +51,15 @@ public:
 	size_t bytes {};
 	size_t newlines {};
 	uint32_t height {};
-	std::string text;
 	RefList children;
+
+	static void operator delete(void *block);
 
 	bool IsLeaf() const {return height == 0;}
 	bool IsUnderfull() const;
+	std::string_view Text() const;
 
-	static Ref MakeLeaf(std::string text);
+	static Ref MakeLeaf(std::string_view text);
 	static Ref MakeInternal(RefList children);
 	static RefList MakeLeaves(std::string_view text);
 	static RefList Group(RefList nodes);
@@ -60,6 +76,34 @@ public:
 };
 
 
+void *Rope::Node::operator new(size_t size, TextSpace space)
+{
+	return ::operator new(size + space.bytes);
+}
+
+
+void Rope::Node::operator delete(void *block, TextSpace space)
+{
+	(void)space;
+	::operator delete(block);
+}
+
+
+void Rope::Node::operator delete(void *block)
+{
+	::operator delete(block);
+}
+
+
+std::string_view Rope::Node::Text() const
+{
+	if (!IsLeaf()) {
+		return {};
+	}
+	return std::string_view(reinterpret_cast<const char*>(this + 1), bytes);
+}
+
+
 bool Rope::Node::IsUnderfull() const
 {
 	if (IsLeaf()) {
@@ -69,19 +113,20 @@ bool Rope::Node::IsUnderfull() const
 }
 
 
-Rope::Node::Ref Rope::Node::MakeLeaf(std::string text)
+Rope::Node::Ref Rope::Node::MakeLeaf(std::string_view text)
 {
-	Ref node(new Node(), true);
+	static_assert(sizeof(Node) + kMaxLeafBytes <= kLeafBlockSize);
+	Ref node(new(TextSpace {text.size()}) Node(), true);
 	node->bytes = text.size();
 	node->newlines = CountNewlines(text);
-	node->text = std::move(text);
+	memcpy(reinterpret_cast<char*>(node.Get() + 1), text.data(), text.size());
 	return node;
 }
 
 
 Rope::Node::Ref Rope::Node::MakeInternal(RefList children)
 {
-	Ref node(new Node(), true);
+	Ref node(new(TextSpace {0}) Node(), true);
 	node->height = children.front()->height + 1;
 	for (const Ref &child : children) {
 		node->bytes += child->bytes;
@@ -111,7 +156,7 @@ Rope::Node::RefList Rope::Node::MakeLeaves(std::string_view text)
 				end = aligned;
 			}
 		}
-		leaves.push_back(MakeLeaf(std::string(text.substr(pos, end - pos))));
+		leaves.push_back(MakeLeaf(text.substr(pos, end - pos)));
 		pos = end;
 	}
 	return leaves;
@@ -153,10 +198,10 @@ Rope::Node::RefList Rope::Node::MergePair(const Node &left, const Node &right)
 	if (left.IsLeaf()) {
 		std::string combined;
 		combined.reserve(left.bytes + right.bytes);
-		combined += left.text;
-		combined += right.text;
+		combined += left.Text();
+		combined += right.Text();
 		if (combined.size() <= kMaxLeafBytes) {
-			return {MakeLeaf(std::move(combined))};
+			return {MakeLeaf(combined)};
 		}
 		return MakeLeaves(combined);
 	}
@@ -193,14 +238,14 @@ void Rope::Node::FixUnderfull(RefList &children)
 Rope::Node::RefList Rope::Node::Insert(const Node &node, size_t offset, std::string_view text)
 {
 	if (node.IsLeaf()) {
-		const std::string_view oldText = node.text;
+		const std::string_view oldText = node.Text();
 		std::string combined;
 		combined.reserve(oldText.size() + text.size());
 		combined += oldText.substr(0, offset);
 		combined += text;
 		combined += oldText.substr(offset);
 		if (combined.size() <= kMaxLeafBytes) {
-			return {MakeLeaf(std::move(combined))};
+			return {MakeLeaf(combined)};
 		}
 		return MakeLeaves(combined);
 	}
@@ -234,12 +279,12 @@ Rope::Node::Ref Rope::Node::Erase(const Node &node, size_t offset, size_t length
 	if (node.IsLeaf()) {
 		std::string remaining;
 		remaining.reserve(node.bytes - length);
-		remaining.append(node.text, 0, offset);
-		remaining.append(node.text, offset + length);
+		remaining.append(node.Text().substr(0, offset));
+		remaining.append(node.Text().substr(offset + length));
 		if (remaining.empty()) {
 			return {};
 		}
-		return MakeLeaf(std::move(remaining));
+		return MakeLeaf(remaining);
 	}
 
 	const size_t eraseEnd = offset + length;
@@ -288,8 +333,7 @@ bool Rope::Node::Validate(const Node &node, bool isRoot)
 {
 	if (node.IsLeaf()) {
 		return node.children.empty()
-			&& node.bytes == node.text.size()
-			&& node.newlines == CountNewlines(node.text)
+			&& node.newlines == CountNewlines(node.Text())
 			&& node.bytes <= kMaxLeafBytes
 			&& (isRoot || node.bytes > 0);
 	}
@@ -309,7 +353,7 @@ bool Rope::Node::Validate(const Node &node, bool isRoot)
 		bytes += child->bytes;
 		newlines += child->newlines;
 	}
-	return node.text.empty() && bytes == node.bytes && newlines == node.newlines;
+	return bytes == node.bytes && newlines == node.newlines;
 }
 
 
@@ -394,7 +438,7 @@ char Rope::ByteAt(size_t offset) const
 	}
 	size_t local = offset;
 	const Node &leaf = Node::LeafAt(*fRoot, local);
-	return leaf.text[local];
+	return leaf.Text()[local];
 }
 
 
@@ -432,7 +476,7 @@ std::string_view Rope::ChunkAt(size_t offset) const
 	}
 	size_t local = offset;
 	const Node &leaf = Node::LeafAt(*fRoot, local);
-	return std::string_view(leaf.text).substr(local);
+	return leaf.Text().substr(local);
 }
 
 
@@ -460,7 +504,7 @@ size_t Rope::LineStart(size_t line) const
 
 	size_t pos = 0;
 	for (;;) {
-		pos = node->text.find('\n', pos);
+		pos = node->Text().find('\n', pos);
 		remaining--;
 		if (remaining == 0) {
 			break;
@@ -504,7 +548,8 @@ size_t Rope::LineOfOffset(size_t offset) const
 		}
 		node = next;
 	}
-	return line + std::count(node->text.begin(), node->text.begin() + local, '\n');
+	const std::string_view text = node->Text();
+	return line + std::count(text.begin(), text.begin() + local, '\n');
 }
 
 
@@ -517,6 +562,48 @@ uint32_t Rope::Height() const
 bool Rope::Validate() const
 {
 	return Node::Validate(*fRoot, true);
+}
+
+
+//#pragma mark - Rope::Builder
+
+Rope::Builder::Builder() = default;
+Rope::Builder::~Builder() = default;
+
+
+// Full leaves are made as soon as possible; the last two leaves' worth stays
+// pending, so Build() can split it evenly.
+void Rope::Builder::Append(std::string_view text)
+{
+	fPending += text;
+	if (fPending.size() < 2 * kMaxLeafBytes) {
+		return;
+	}
+	size_t pos = 0;
+	while (fPending.size() - pos >= 2 * kMaxLeafBytes) {
+		size_t end = pos + kMaxLeafBytes;
+		while (end > pos + 1 && IsUtf8Continuation(fPending[end])) {
+			end--;
+		}
+		fLeaves.push_back(Node::MakeLeaf(fPending.substr(pos, end - pos)));
+		pos = end;
+	}
+	fPending.erase(0, pos);
+}
+
+
+Rope Rope::Builder::Build()
+{
+	Node::RefList leaves = std::move(fLeaves);
+	const Node::RefList last = Node::MakeLeaves(fPending);
+	leaves.insert(leaves.end(), last.begin(), last.end());
+	fLeaves.clear();
+	fPending.clear();
+	fPending.shrink_to_fit();
+
+	Rope rope;
+	rope.fRoot = Node::BuildTree(std::move(leaves));
+	return rope;
 }
 
 

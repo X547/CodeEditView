@@ -5,6 +5,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <Referenceable.h>
 
@@ -28,6 +29,8 @@ private:
 	BReference<Node> fRoot;
 
 public:
+	class Builder;
+
 	Rope();
 	explicit Rope(std::string_view text);
 	Rope(const Rope &other);
@@ -61,6 +64,23 @@ public:
 	// Debugging aids.
 	uint32_t Height() const;
 	bool Validate() const;
+};
+
+
+// Builds a rope from text given in pieces, without a contiguous copy of the
+// whole text.
+class Rope::Builder {
+private:
+	std::vector<BReference<Node>> fLeaves;
+	std::string fPending;
+
+public:
+	Builder();
+	~Builder();
+
+	void Append(std::string_view text);
+	// The rope of the text appended so far; the builder is empty afterwards.
+	Rope Build();
 };
 
 

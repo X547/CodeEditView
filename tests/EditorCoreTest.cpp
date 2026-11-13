@@ -611,6 +611,32 @@ TEST_CASE("dirty rows and scroll anchor")
 }
 
 
+TEST_CASE("undoing much typing redraws only the typed lines")
+{
+	BReference<TextModel> model = MakeModel("a\nb\nc\nd\ne");
+	EditorCore core(model);
+	Place(core, 2);
+	for (int i = 0; i < 100; i++) {
+		core.InsertText("x");
+	}
+	core.TakeDirty();
+	CHECK(core.MaxColumns() == 101);
+
+	REQUIRE(core.Undo());
+	DirtyRows dirty = core.TakeDirty();
+	CHECK(dirty.first == 1);
+	CHECK(dirty.last == 1);
+	CHECK_FALSE(dirty.scrollRangeChanged);
+	// Nothing was laid out again.
+	CHECK(core.MaxColumns() == 101);
+
+	REQUIRE(core.Redo());
+	dirty = core.TakeDirty();
+	CHECK(dirty.first == 1);
+	CHECK(dirty.last == 1);
+}
+
+
 TEST_CASE("read-only view")
 {
 	BReference<TextModel> model = MakeModel("abc\ndef");

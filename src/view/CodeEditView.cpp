@@ -2247,11 +2247,31 @@ void CodeEditView::HandleDrop(BMessage *message)
 }
 
 
+// Focus decides how the selection and the caret are drawn, nothing else.
+void CodeEditView::InvalidateSelection()
+{
+	const CodeEdit::Selection selection = fCore->GetSelection();
+	if (selection.anchor == selection.caret) {
+		InvalidateCaret();
+		return;
+	}
+	const size_t anchorRow = fCore->PositionOfOffset(selection.anchor).row;
+	const size_t caretRow = fCore->PositionOfOffset(selection.caret).row;
+	const BRect bounds = Bounds();
+	const float top = std::max(bounds.top, RowTop(std::min(anchorRow, caretRow)));
+	const float bottom = std::min(bounds.bottom, RowTop(std::max(anchorRow, caretRow) + 1) - 1);
+	if (top <= bottom) {
+		Invalidate(BRect(bounds.left, top, bounds.right, bottom));
+	}
+}
+
+
 void CodeEditView::MakeFocus(bool focus)
 {
 	if (!focus) {
 		CommitInputMethod();
 	}
+	const bool changed = focus != IsFocus();
 	BView::MakeFocus(focus);
 	if (focus) {
 		InstallCommandShortcuts();
@@ -2259,7 +2279,9 @@ void CodeEditView::MakeFocus(bool focus)
 		RemoveCommandShortcuts();
 	}
 	RestartCaretBlink();
-	Invalidate();
+	if (changed && Window() != nullptr) {
+		InvalidateSelection();
+	}
 }
 
 
@@ -2267,7 +2289,7 @@ void CodeEditView::WindowActivated(bool active)
 {
 	BView::WindowActivated(active);
 	RestartCaretBlink();
-	Invalidate();
+	InvalidateSelection();
 }
 
 

@@ -23,6 +23,8 @@ static constexpr size_t kMaxCachedClusters = 512 * 1024;
 static constexpr size_t kMeasureLinesPerWrap = 8;
 // More edits than this in one change are applied by laying out all lines.
 static constexpr size_t kManyEdits = 64;
+// Up to this many edits renumber the cached layouts, more empty the caches.
+static constexpr size_t kMaxShiftedCacheEdits = 1024;
 
 
 void DirtyRows::Add(size_t from, size_t to)
@@ -420,11 +422,69 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 }
 
 
-// Many edits at once (e.g. replace all): what follows offsets is mapped
-// through each edit, then all lines are laid out once, instead of updating
-// the lines of each edit.
+// Many edits at once (an undo step of much typing, replace all): what follows
+// offsets is mapped through each edit, and the edited lines are kept as one
+// range. Without wrapping, the display map follows each edit cheaply (unless
+// many edits change the line count of a map with line states); the lines
+// are measured again in the background. Otherwise all lines are laid out
+// again.
 void EditorCore::ApplyManyEdits(const std::vector<EditRecord> &edits)
 {
+	const size_t lineCountChanges = std::count_if(edits.begin(), edits.end(), [](const EditRecord &edit) {
+		return edit.oldEnd.line != edit.newEnd.line;
+	});
+	if (!IsWrappingLocked() && (!fDisplayMap.IsDense() || lineCountChanges <= kManyEdits)) {
+		const bool shiftCaches = edits.size() <= kMaxShiftedCacheEdits;
+		bool foldsRemoved = false;
+		// Inclusive range of the edited lines, following later edits.
+		size_t from = SIZE_MAX;
+		size_t to = 0;
+		for (const EditRecord &edit : edits) {
+			fDisplayMap.ApplyEdit(edit);
+			if (shiftCaches) {
+				ShiftLayoutCaches(edit);
+			}
+			foldsRemoved = AdjustFolds(edit) || foldsRemoved;
+			MapDecorations(edit);
+			fSelection = MapSelection(fSelection, edit);
+			fScrollAnchor = edit.MapOffset(fScrollAnchor, Gravity::Left);
+
+			const size_t first = edit.start.line;
+			const size_t oldLast = edit.oldEnd.line;
+			const size_t newLast = edit.newEnd.line;
+			if (from != SIZE_MAX) {
+				if (from > oldLast) {
+					from = from - oldLast + newLast;
+					to = to - oldLast + newLast;
+				} else if (to >= first) {
+					to = to > oldLast ? to - oldLast + newLast : newLast;
+				}
+			}
+			from = std::min(from, first);
+			to = std::max(to, newLast);
+		}
+		if (!shiftCaches) {
+			fLayoutCache.clear();
+			fWrapCache.clear();
+		}
+		if (foldsRemoved) {
+			ApplyFolds();
+		}
+		fMeasureLine = std::min(fMeasureLine, from);
+		const size_t firstRow = fDisplayMap.FirstRowOfLine(from);
+		if (lineCountChanges > 0 || foldsRemoved) {
+			fDirty.Add(firstRow, SIZE_MAX);
+			fDirty.scrollRangeChanged = true;
+			fDirty.marksChanged = true;
+		} else {
+			const size_t lastLine = std::min(to, fModel->Text().NewlineCount());
+			const size_t endRow = fDisplayMap.FirstRowOfLine(lastLine + 1);
+			fDirty.Add(firstRow, endRow > firstRow ? endRow - 1 : firstRow);
+		}
+		fSelection = ClampSelection(fSelection);
+		return;
+	}
+
 	for (const EditRecord &edit : edits) {
 		AdjustFolds(edit);
 		MapDecorations(edit);

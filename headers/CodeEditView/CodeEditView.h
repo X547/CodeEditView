@@ -123,6 +123,7 @@ private:
 	void MoveRows(const CodeEdit::RowShift &shift, bool topMoved);
 	void EraseView();
 	void InvalidateCaret();
+	void InvalidateSelection();
 	void RestartCaretBlink();
 	void UpdateScrollBars();
 	void UpdateInputMethodFlag();

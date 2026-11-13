@@ -611,6 +611,53 @@ TEST_CASE("dirty rows and scroll anchor")
 }
 
 
+TEST_CASE("dirty rows are kept as a few ranges")
+{
+	DirtyRows dirty;
+	dirty.Add(5, 5);
+	dirty.Add(7, 8);
+	dirty.Add(6, 6);
+	CHECK(dirty.ranges == std::vector<std::pair<size_t, size_t>> {{5, 8}});
+	dirty.Add(20, SIZE_MAX);
+	dirty.Add(30, 40);
+	dirty.Add(1, 1);
+	CHECK(dirty.ranges == std::vector<std::pair<size_t, size_t>> {{1, 1}, {5, 8}, {20, SIZE_MAX}});
+	CHECK(dirty.first == 1);
+	CHECK(dirty.last == SIZE_MAX);
+
+	DirtyRows many;
+	for (size_t row = 0; row < 100; row += 10) {
+		many.Add(row, row);
+	}
+	CHECK(many.ranges.size() <= 8);
+	CHECK(many.ranges.front().first == 0);
+	CHECK(many.ranges.back().second == 90);
+}
+
+
+TEST_CASE("selection changes dirty the rows they change")
+{
+	std::string text;
+	for (int line = 0; line < 20; line++) {
+		text += "l" + std::to_string(line % 10) + "x\n";
+	}
+	BReference<TextModel> model = MakeModel(text);
+	EditorCore core(model);
+	core.SetSelection({0, 40});
+	core.TakeDirty();
+
+	// Extending the selection: only the rows the caret end passed.
+	core.SetSelection({0, 48});
+	CHECK(core.TakeDirty().ranges == std::vector<std::pair<size_t, size_t>> {{10, 12}});
+
+	// Moving the caret far: its old and new rows, not those between.
+	core.SetSelection({8, 8});
+	core.TakeDirty();
+	core.SetSelection({60, 60});
+	CHECK(core.TakeDirty().ranges == std::vector<std::pair<size_t, size_t>> {{2, 2}, {15, 15}});
+}
+
+
 TEST_CASE("undoing much typing redraws only the typed lines")
 {
 	BReference<TextModel> model = MakeModel("a\nb\nc\nd\ne");

@@ -1275,7 +1275,9 @@ void CodeEditView::ApplyDirty()
 	}
 
 	if (!dirty.IsEmpty()) {
-		InvalidateRows(dirty.first, dirty.last);
+		for (const auto &[first, last] : dirty.ranges) {
+			InvalidateRows(first, last);
+		}
 		RefreshCursor();
 	}
 	if (dirty.marksChanged && fGutter != nullptr) {

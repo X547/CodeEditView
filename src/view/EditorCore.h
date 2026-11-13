@@ -177,8 +177,12 @@ struct RowShift {
 
 
 struct DirtyRows {
+	// All dirty rows are between first and last.
 	size_t first = SIZE_MAX;
 	size_t last = 0;
+	// The dirty rows: sorted, disjoint inclusive ranges, a few at most (close
+	// ones are merged).
+	std::vector<std::pair<size_t, size_t>> ranges;
 	// The view may move these rows instead of drawing them again; given only
 	// when no row was dirty before (whose number the shift would change).
 	std::optional<RowShift> shift;

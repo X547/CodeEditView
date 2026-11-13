@@ -23,6 +23,7 @@ static constexpr size_t kMaxCachedClusters = 512 * 1024;
 static constexpr size_t kMeasureLinesPerWrap = 8;
 // More edits than this in one change are applied by laying out all lines.
 static constexpr size_t kManyEdits = 64;
+static constexpr size_t kMaxDirtyRanges = 8;
 // Up to this many edits renumber the cached layouts, more empty the caches.
 static constexpr size_t kMaxShiftedCacheEdits = 1024;
 
@@ -31,6 +32,30 @@ void DirtyRows::Add(size_t from, size_t to)
 {
 	first = std::min(first, from);
 	last = std::max(last, to);
+
+	// Ranges overlapping or touching the new one join it.
+	auto it = ranges.begin();
+	while (it != ranges.end() && it->second != SIZE_MAX && it->second + 1 < from) {
+		++it;
+	}
+	while (it != ranges.end() && (to == SIZE_MAX || it->first <= to + 1)) {
+		from = std::min(from, it->first);
+		to = std::max(to, it->second);
+		it = ranges.erase(it);
+	}
+	ranges.insert(it, {from, to});
+
+	// The closest ranges are merged until few are left.
+	while (ranges.size() > kMaxDirtyRanges) {
+		size_t closest = 0;
+		for (size_t i = 1; i + 1 < ranges.size(); i++) {
+			if (ranges[i + 1].first - ranges[i].second < ranges[closest + 1].first - ranges[closest].second) {
+				closest = i;
+			}
+		}
+		ranges[closest].second = ranges[closest + 1].second;
+		ranges.erase(ranges.begin() + closest + 1);
+	}
 }
 
 
@@ -832,9 +857,15 @@ void EditorCore::SetSelectionLocked(const Selection &selection)
 	if (selection == fSelection) {
 		return;
 	}
-	AddSelectionDirty(fSelection);
+	if (selection.anchor == fSelection.anchor) {
+		// Only the caret end moved (extending a selection, moving the caret):
+		// the rows between its places changed.
+		AddSelectionDirty({fSelection.caret, selection.caret});
+	} else {
+		AddSelectionDirty(fSelection);
+		AddSelectionDirty(selection);
+	}
 	fSelection = selection;
-	AddSelectionDirty(fSelection);
 }
 
 

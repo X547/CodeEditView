@@ -32,6 +32,21 @@ void DirtyRows::Add(size_t from, size_t to)
 }
 
 
+void DirtyRows::AddShift(const RowShift &rowShift)
+{
+	if (!IsEmpty() || shift.has_value()) {
+		// Rows dirty before moved too: everything after the edit is drawn
+		// again.
+		Add(rowShift.first, SIZE_MAX);
+		shift.reset();
+		marksChanged = true;
+		return;
+	}
+	shift = rowShift;
+	Add(rowShift.first, rowShift.from - 1);
+}
+
+
 static Selection MapSelection(const Selection &selection, const EditRecord &edit)
 {
 	const bool forward = selection.anchor <= selection.caret;
@@ -328,6 +343,10 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 	}
 
 	const Rope &text = fModel->Text();
+	// With one edit, the rows after it keep what they show: the view moves
+	// them (DirtyRows::shift) instead of drawing them again.
+	const bool single = changes.edits.size() == 1;
+	const size_t oldEndRow = single ? fDisplayMap.FirstRowOfLine(changes.edits.front().oldEnd.line + 1) : 0;
 	bool foldsRemoved = false;
 	bool rowsChanged = false;
 	// Inclusive line ranges touched by the edits, following later edits.
@@ -379,7 +398,17 @@ void EditorCore::ApplyChanges(const ModelChanges &changes)
 		ApplyFolds();
 	}
 	const size_t firstRow = fDisplayMap.FirstRowOfLine(firstLine);
-	if (rowsChanged) {
+	const size_t newEndRow = single ? fDisplayMap.FirstRowOfLine(changes.edits.front().newEnd.line + 1) : 0;
+	if (rowsChanged && single && !foldsRemoved && newEndRow > firstRow) {
+		const EditRecord &edit = changes.edits.front();
+		fDirty.AddShift({
+			firstRow,
+			newEndRow,
+			static_cast<ptrdiff_t>(newEndRow) - static_cast<ptrdiff_t>(oldEndRow),
+			edit.oldEnd.line != edit.newEnd.line
+		});
+		fDirty.scrollRangeChanged = true;
+	} else if (rowsChanged) {
 		fDirty.Add(firstRow, SIZE_MAX);
 		fDirty.scrollRangeChanged = true;
 		fDirty.marksChanged = true;

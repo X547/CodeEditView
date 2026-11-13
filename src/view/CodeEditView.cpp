@@ -173,6 +173,38 @@ public:
 };
 
 
+// Moves what a view shows from sourceTop to its bottom down by distance
+// pixels (up if negative). What comes into view at the bottom is drawn anew;
+// what is left above the moved part is up to the caller.
+static void MoveContents(BView &view, float sourceTop, float distance)
+{
+	const BRect bounds = view.Bounds();
+	if (distance == 0) {
+		return;
+	}
+	float top = sourceTop;
+	float bottom = distance > 0 ? bounds.bottom - distance : bounds.bottom;
+	float targetTop = sourceTop + distance;
+	if (targetTop < bounds.top) {
+		top += bounds.top - targetTop;
+		targetTop = bounds.top;
+	}
+	if (top < bounds.top) {
+		targetTop += bounds.top - top;
+		top = bounds.top;
+	}
+	if (distance < 0) {
+		view.Invalidate(BRect(bounds.left, std::max(bounds.top, bounds.bottom + distance + 1), bounds.right, bounds.bottom));
+	}
+	if (top <= bottom) {
+		view.CopyBits(
+			BRect(bounds.left, top, bounds.right, bottom),
+			BRect(bounds.left, targetTop, bounds.right, targetTop + bottom - top)
+		);
+	}
+}
+
+
 // Moves the contents of a view up by delta pixels (down if negative); what
 // comes into view is drawn anew.
 static void ShiftContents(BView &view, double delta)
@@ -884,6 +916,64 @@ void CodeEditView::InvalidateRows(size_t first, size_t last)
 }
 
 
+// Rows an edit moved are moved on screen instead of drawn again. The edited
+// rows themselves are dirty and drawn by the caller.
+void CodeEditView::MoveRows(const CodeEdit::RowShift &shift, bool topMoved)
+{
+	const BRect bounds = Bounds();
+	if (topMoved) {
+		// The edit is above the top row, which kept its text: nothing on screen
+		// moves, unless the edit reaches into the view.
+		if (fTopRow < shift.from) {
+			InvalidateRows(fTopRow, SIZE_MAX);
+		} else if (shift.linesChanged && fGutter != nullptr) {
+			fGutter->Invalidate();
+		}
+		return;
+	}
+	if (fTopRow > shift.first) {
+		InvalidateRows(fTopRow, SIZE_MAX);
+		return;
+	}
+	const float distance = static_cast<float>(shift.rows) * fLineHeight;
+	const float sourceTop = RowTop(shift.from) - distance;
+	if (sourceTop > bounds.bottom && RowTop(shift.from) > bounds.bottom) {
+		return;
+	}
+	CodeEdit::MoveContents(*this, sourceTop, distance);
+	if (fGutter == nullptr) {
+		return;
+	}
+	if (shift.linesChanged) {
+		// The numbers of the lines after the edit changed.
+		const BRect gutterBounds = fGutter->Bounds();
+		const float top = std::max(gutterBounds.top, RowTop(shift.first));
+		if (top <= gutterBounds.bottom) {
+			fGutter->Invalidate(BRect(gutterBounds.left, top, gutterBounds.right, gutterBounds.bottom));
+		}
+	} else {
+		CodeEdit::MoveContents(*fGutter, sourceTop, distance);
+	}
+}
+
+
+void CodeEditView::EraseView()
+{
+	const rgb_color color = {255, 0, 255, 255};
+	for (BView *view : {static_cast<BView*>(this), static_cast<BView*>(fGutter)}) {
+		if (view == nullptr) {
+			continue;
+		}
+		view->PushState();
+		view->SetDrawingMode(B_OP_COPY);
+		view->SetHighColor(color);
+		view->FillRect(view->Bounds());
+		view->PopState();
+	}
+	Flush();
+}
+
+
 void CodeEditView::InvalidateCaret()
 {
 	const CodeEdit::CaretPosition caret = fCore->PositionOfOffset(fCore->GetSelection().caret);
@@ -1169,6 +1259,9 @@ void CodeEditView::ApplyDirty()
 	if (topMoved) {
 		fTopRow = anchorRow;
 		UpdateScrollBars();
+	}
+	if (dirty.shift.has_value()) {
+		MoveRows(*dirty.shift, topMoved);
 	}
 	ScrollToDocument(Bounds().left, TopY());
 	if (topMoved || dirty.scrollRangeChanged) {
@@ -2201,6 +2294,9 @@ void CodeEditView::MessageReceived(BMessage *message)
 		}
 		case kMsgAutoScroll:
 			AutoScrollTick();
+			break;
+		case CodeEdit::kMsgEraseView:
+			EraseView();
 			break;
 		case B_MOUSE_WHEEL_CHANGED: {
 			// As BView does through the scroll bars, but by rows exactly.

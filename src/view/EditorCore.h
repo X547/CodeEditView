@@ -165,9 +165,23 @@ struct LineDecorations {
 
 // Rows that need repainting since the last TakeDirty(). last == SIZE_MAX
 // means "to the end".
+// Rows an edit moved: rows from `from` on show what rows from - rows showed
+// before. Rows from first to from - 1 were edited.
+struct RowShift {
+	size_t first {};
+	size_t from {};
+	ptrdiff_t rows {};
+	// Lines were inserted or removed, so line numbers after the edit changed.
+	bool linesChanged {};
+};
+
+
 struct DirtyRows {
 	size_t first = SIZE_MAX;
 	size_t last = 0;
+	// The view may move these rows instead of drawing them again; given only
+	// when no row was dirty before (whose number the shift would change).
+	std::optional<RowShift> shift;
 	bool scrollRangeChanged {};
 	bool marksChanged {};
 	// The text or its syntax tree changed.
@@ -176,6 +190,7 @@ struct DirtyRows {
 	bool IsEmpty() const {return first > last;}
 	void Add(size_t from, size_t to);
 	void AddAll() {Add(0, SIZE_MAX);}
+	void AddShift(const RowShift &rowShift);
 };
 
 

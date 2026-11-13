@@ -164,6 +164,8 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 		.AddMenu("View")
 			.AddItem("Outline", kMsgToggleOutline, 'L', B_SHIFT_KEY)
 				.GetItem(fOutlineItem)
+			.AddSeparator()
+			.AddItem("Erase view (debug)", CodeEdit::kMsgEraseView, 'E', B_SHIFT_KEY)
 		.End()
 		.AddMenu("Window")
 			.AddItem("New view", kMsgNewView, 'N', B_SHIFT_KEY)
@@ -935,6 +937,9 @@ void SourceWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgToggleLocked:
 			ToggleLocked();
+			break;
+		case CodeEdit::kMsgEraseView:
+			PostMessage(message, fEditView);
 			break;
 		case kMsgSelectDefinition: {
 			const size_t start = message->GetUInt64("start", 0);

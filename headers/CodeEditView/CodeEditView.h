@@ -31,6 +31,9 @@ namespace CodeEdit {
 
 // Commands the view accepts as messages, e.g. from menu items.
 constexpr uint32 kMsgToggleFold = 'CEtf';
+// Debugging: fills the view and its gutter with a color, without drawing
+// them again, to show what is drawn and what is moved afterwards.
+constexpr uint32 kMsgEraseView = 'CEev';
 constexpr uint32 kMsgFoldAll = 'CEfa';
 constexpr uint32 kMsgUnfoldAll = 'CEua';
 constexpr uint32 kMsgIndentLess = 'CEil';
@@ -65,6 +68,7 @@ struct InputMethodState;
 struct MouseState;
 struct PageInfo;
 struct RowData;
+struct RowShift;
 enum class EditorCommand;
 
 
@@ -116,6 +120,8 @@ private:
 	void DrawRow(size_t row, const BRect &updateRect, const CodeEdit::RowData &data, const CodeEdit::DrawContext &context);
 	void ApplyDirty();
 	void InvalidateRows(size_t first, size_t last);
+	void MoveRows(const CodeEdit::RowShift &shift, bool topMoved);
+	void EraseView();
 	void InvalidateCaret();
 	void RestartCaretBlink();
 	void UpdateScrollBars();

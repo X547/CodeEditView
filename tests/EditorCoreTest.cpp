@@ -575,11 +575,33 @@ TEST_CASE("dirty rows and scroll anchor")
 	CHECK(dirty.last == 2);
 	CHECK_FALSE(dirty.scrollRangeChanged);
 
+	// The rows after an edit move instead of becoming dirty.
 	core.InsertNewline();
 	dirty = core.TakeDirty();
 	CHECK(dirty.first == 2);
-	CHECK(dirty.last == SIZE_MAX);
+	CHECK(dirty.last == 3);
 	CHECK(dirty.scrollRangeChanged);
+	REQUIRE(dirty.shift.has_value());
+	CHECK(dirty.shift->first == 2);
+	CHECK(dirty.shift->from == 4);
+	CHECK(dirty.shift->rows == 1);
+	CHECK(dirty.shift->linesChanged);
+
+	core.Delete(Deletion::CharacterLeft);
+	dirty = core.TakeDirty();
+	CHECK(dirty.first == 2);
+	CHECK(dirty.last == 2);
+	REQUIRE(dirty.shift.has_value());
+	CHECK(dirty.shift->from == 3);
+	CHECK(dirty.shift->rows == -1);
+
+	// Dirty rows before the edit would move too: no shift then.
+	core.SetSelection({0, 0});
+	core.InsertNewline();
+	core.InsertNewline();
+	dirty = core.TakeDirty();
+	CHECK_FALSE(dirty.shift.has_value());
+	CHECK(dirty.last == SIZE_MAX);
 
 	core.SetScrollAnchor(core.RowStartOffset(5));
 	Place(other, 0);

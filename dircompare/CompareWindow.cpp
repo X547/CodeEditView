@@ -241,11 +241,18 @@ static std::string ScanProgressText(const BuildProgress &progress)
 	if (!progress.comparingContents) {
 		return "Listing the entries: " + std::to_string(progress.entries) + " found";
 	}
-	const int percent = progress.bytesToCompare > 0
-		? static_cast<int>(progress.bytesCompared * 100 / progress.bytesToCompare)
-		: 100;
 	return "Comparing the contents: " + std::to_string(progress.filesCompared) + " of "
-		+ std::to_string(progress.filesToCompare) + " files (" + std::to_string(percent) + "%)";
+		+ std::to_string(progress.filesToCompare) + " files";
+}
+
+
+// Of the bytes to compare; files are compared after all are listed.
+static float ScanProgressFraction(const BuildProgress &progress)
+{
+	if (progress.bytesToCompare <= 0) {
+		return 1;
+	}
+	return static_cast<float>(static_cast<double>(progress.bytesCompared) / progress.bytesToCompare);
 }
 
 
@@ -272,7 +279,11 @@ void CompareWindow::StartScan(const std::string &left, const std::string &right,
 						return;
 					}
 					lastReport = now;
-					progress.SetText(ScanProgressText(state));
+					if (state.comparingContents) {
+						progress.SetProgress(ScanProgressText(state), ScanProgressFraction(state));
+					} else {
+						progress.SetText(ScanProgressText(state));
+					}
 				});
 		}, [this, left, right, options, built](const std::string &error) {
 			fScanning = false;

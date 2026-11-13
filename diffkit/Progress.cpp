@@ -1,5 +1,6 @@
 #include "Progress.h"
 
+#include <algorithm>
 #include <exception>
 #include <memory>
 #include <thread>
@@ -7,6 +8,7 @@
 
 #include <Button.h>
 #include <LayoutBuilder.h>
+#include <StatusBar.h>
 #include <StringView.h>
 #include <Window.h>
 
@@ -37,6 +39,15 @@ void Progress::SetText(const std::string &text)
 }
 
 
+void Progress::SetProgress(const std::string &text, float fraction)
+{
+	BMessage message(kMsgProgressText);
+	message.AddString("text", text.c_str());
+	message.AddFloat("fraction", fraction);
+	fDialog.SendMessage(&message);
+}
+
+
 //#pragma mark - ProgressDialog
 
 // Closed by the work finishing, or by its owner closing; not by the user.
@@ -44,6 +55,8 @@ class ProgressDialog: public BWindow {
 private:
 	std::shared_ptr<Progress> fProgress;
 	TruncatingLabel *fText {};
+	// Hidden until the work reports a fraction.
+	BStatusBar *fBar {};
 	BButton *fCancel {};
 
 public:
@@ -74,11 +87,15 @@ ProgressDialog::ProgressDialog(const std::string &title, bool cancellable):
 	heading->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 	fText = new TruncatingLabel("text", "");
 	fText->SetExplicitMinSize(BSize(360, B_SIZE_UNSET));
+	fBar = new BStatusBar("bar");
+	fBar->SetMaxValue(1);
+	fBar->Hide();
 
 	BGroupLayout *layout = BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(heading)
-		.Add(fText);
+		.Add(fText)
+		.Add(fBar);
 	if (cancellable) {
 		fCancel = new BButton("Cancel", new BMessage(kMsgProgressCancel));
 		layout->AddItem(BLayoutBuilder::Group<>(B_HORIZONTAL)
@@ -98,11 +115,21 @@ ProgressDialog::~ProgressDialog()
 void ProgressDialog::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
-		case kMsgProgressText:
-			if (!fProgress->Cancelled()) {
-				fText->SetLabel(message->GetString("text", ""));
+		case kMsgProgressText: {
+			if (fProgress->Cancelled()) {
+				break;
+			}
+			fText->SetLabel(message->GetString("text", ""));
+			float fraction;
+			if (message->FindFloat("fraction", &fraction) == B_OK) {
+				if (fBar->IsHidden()) {
+					fBar->Show();
+					ResizeToPreferred();
+				}
+				fBar->SetTo(std::clamp(fraction, 0.0f, 1.0f));
 			}
 			break;
+		}
 		case kMsgProgressCancel:
 			fProgress->fCancelled = true;
 			if (fCancel != nullptr) {

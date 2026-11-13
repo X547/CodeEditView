@@ -29,6 +29,9 @@ public:
 
 	// Shown under the title.
 	void SetText(const std::string &text);
+	// The text and how much of the work is done (0 to 1), shown as a bar.
+	// Without it, no bar is shown.
+	void SetProgress(const std::string &text, float fraction);
 	// The user asked to cancel; the work stops when it sees this (by
 	// returning or throwing).
 	bool Cancelled() const {return fCancelled;}

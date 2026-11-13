@@ -138,6 +138,31 @@ TEST_CASE("sticky scopes of the top of the view")
 }
 
 
+TEST_CASE("sticky lines name scopes written over several lines")
+{
+	BReference<TextModel> model = MakeModel(
+		"status_t\n"                // 0
+		"reserve(int a,\n"          // 1
+		"\tint b)\n"                // 2
+		"{\n"                       // 3
+		"\tif (a\n"                 // 4
+		"\t\t&& b)\n"               // 5
+		"\t{\n"                     // 6
+		"\t\tx();\n"                // 7
+		"\t\ty();\n"                // 8
+		"\t}\n"                     // 9
+		"\treturn 0;\n"             // 10
+		"}\n",                      // 11
+		"cpp"
+	);
+	EditorCore core(model);
+	// The function by its declarator, not its return type or its last
+	// parameters; the if statement from its start.
+	CHECK(core.StickyScopes(5, 5) == std::vector<FoldRange> {{1, 10}});
+	CHECK(core.StickyScopes(7, 5) == std::vector<FoldRange> {{1, 10}, {4, 8}});
+}
+
+
 TEST_CASE("fold candidates of other languages")
 {
 	// Closing keywords on their own line stay visible.

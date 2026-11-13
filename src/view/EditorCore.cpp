@@ -2018,7 +2018,8 @@ size_t EditorCore::FirstNonBlank(size_t line) const
 // Fold candidates from the syntax tree, merged per header line (the largest
 // range wins). If a node ends with a token that starts its last line, like
 // a closing brace or #endif, that line stays visible.
-std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange)
+std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange,
+	std::map<size_t, size_t> *labels)
 {
 	std::vector<FoldRange> candidates;
 	const Rope &text = fModel->Text();
@@ -2038,7 +2039,7 @@ std::vector<FoldRange> EditorCore::FoldCandidatesLocked(size_t firstLine, size_t
 	}
 	const SyntaxState *syntax = fModel->Syntax();
 	if (syntax != nullptr && syntax->Tree() != nullptr) {
-		AddSyntaxFoldCandidates(syntax, firstLine, lastLine, headersInRange, candidates);
+		AddSyntaxFoldCandidates(syntax, firstLine, lastLine, labels, headersInRange, candidates);
 	}
 
 	std::stable_sort(candidates.begin(), candidates.end(), [](const FoldRange &a, const FoldRange &b) {
@@ -2080,26 +2081,9 @@ std::vector<FoldRange> EditorCore::EnclosingScopes(size_t line, size_t maxCount)
 }
 
 
-// The sticky line of a scope: its header line, or the line before a header
-// holding only the opening bracket (a function or block with the bracket on
-// its own line).
-size_t EditorCore::StickyHeaderLine(size_t headerLine) const
-{
-	if (headerLine == 0) {
-		return headerLine;
-	}
-	const Rope &text = fModel->Text();
-	const size_t start = text.LineStart(headerLine);
-	const std::string line = text.Substring(start, std::min<size_t>(text.LineEnd(headerLine) - start, 64));
-	const size_t first = line.find_first_not_of(" \t");
-	const size_t last = line.find_last_not_of(" \t");
-	return first != std::string::npos && first == last && line[first] == '{' ? headerLine - 1 : headerLine;
-}
-
-
 // Outer scopes come first, each taking the next row at the top of the view:
 // a scope sticks when its header is above its row and its lines reach that
-// row. headerLine of each is the line to show (StickyHeaderLine()).
+// row. headerLine of each is the line to show: the one naming the scope.
 std::vector<FoldRange> EditorCore::StickyScopes(size_t topRow, size_t maxCount)
 {
 	ModelLock lock(*fModel);
@@ -2111,7 +2095,8 @@ std::vector<FoldRange> EditorCore::StickyScopes(size_t topRow, size_t maxCount)
 	}
 	const size_t firstLine = RowAtLocked(topRow).line;
 	const size_t lastLine = RowAtLocked(std::min(rowCount - 1, topRow + maxCount)).line;
-	for (const FoldRange &candidate : FoldCandidatesLocked(firstLine, lastLine, false)) {
+	std::map<size_t, size_t> labels;
+	for (const FoldRange &candidate : FoldCandidatesLocked(firstLine, lastLine, false, &labels)) {
 		if (scopes.size() == maxCount) {
 			break;
 		}
@@ -2120,7 +2105,10 @@ std::vector<FoldRange> EditorCore::StickyScopes(size_t topRow, size_t maxCount)
 		const size_t endRow = fDisplayMap.FirstRowOfLine(candidate.lastLine + 1);
 		if (headerRow < slot && endRow > slot) {
 			FoldRange scope = candidate;
-			scope.headerLine = StickyHeaderLine(candidate.headerLine);
+			const auto label = labels.find(candidate.headerLine);
+			if (label != labels.end()) {
+				scope.headerLine = label->second;
+			}
 			scopes.push_back(scope);
 		}
 	}
@@ -2128,8 +2116,36 @@ std::vector<FoldRange> EditorCore::StickyScopes(size_t topRow, size_t maxCount)
 }
 
 
+// Where the text naming a scope starts. A body in brackets is named by its
+// owner, which often starts on a line before: a function by its declarator
+// (the return type may be on a line of its own), a statement, a class or a
+// namespace from its start. A block within a block names itself.
+static size_t ScopeLabelStart(TSNode node)
+{
+	const size_t start = ts_node_start_byte(node);
+	const auto opensWithBracket = [](TSNode candidate) {
+		if (ts_node_child_count(candidate) == 0) {
+			return false;
+		}
+		const TSNode first = ts_node_child(candidate, 0);
+		return !ts_node_is_named(first) && std::string_view(ts_node_type(first)) == "{";
+	};
+	if (!opensWithBracket(node)) {
+		return start;
+	}
+	const TSNode parent = ts_node_parent(node);
+	if (ts_node_is_null(parent) || opensWithBracket(parent)) {
+		return start;
+	}
+	static constexpr std::string_view kDeclarator = "declarator";
+	const TSNode declarator = ts_node_child_by_field_name(parent, kDeclarator.data(), kDeclarator.size());
+	const TSNode owner = ts_node_is_null(declarator) ? parent : declarator;
+	return std::min<size_t>(start, ts_node_start_byte(owner));
+}
+
+
 void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
-	bool headersInRange, std::vector<FoldRange> &candidates)
+	std::map<size_t, size_t> *labels, bool headersInRange, std::vector<FoldRange> &candidates)
 {
 	const Rope &text = fModel->Text();
 	TSQueryCursor *cursor = fQueryCursor.Get();
@@ -2196,6 +2212,12 @@ void EditorCore::AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t first
 		}
 		if (last > header) {
 			candidates.push_back({header, last});
+			if (labels != nullptr) {
+				const size_t label = text.LineOfOffset(ScopeLabelStart(node));
+				if (label != header) {
+					labels->emplace(header, label);
+				}
+			}
 		}
 	}
 }

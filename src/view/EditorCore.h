@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -287,10 +288,13 @@ private:
 	void AddFold(const FoldRange &fold);
 	size_t FirstNonBlank(size_t line) const;
 	uint32_t IndentSize() const;
-	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange);
+	// labels (if given) gets the line naming each scope of the syntax tree
+	// by its header line, where that is another one.
+	std::vector<FoldRange> FoldCandidatesLocked(size_t firstLine, size_t lastLine, bool headersInRange,
+		std::map<size_t, size_t> *labels = nullptr);
 	std::vector<FoldRange> EnclosingScopesLocked(size_t line, size_t maxCount);
-	size_t StickyHeaderLine(size_t headerLine) const;
 	void AddSyntaxFoldCandidates(const SyntaxState *syntax, size_t firstLine, size_t lastLine,
+		std::map<size_t, size_t> *labels,
 		bool headersInRange, std::vector<FoldRange> &candidates);
 	bool IsFoldedLocked(size_t headerLine) const;
 	void MapDecorations(const EditRecord &edit);

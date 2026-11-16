@@ -56,6 +56,12 @@ highlightQueries = [
 		output: 'CMakeHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kCMakeHighlights', '@INPUT@']
 	),
+	custom_target(
+		'devicetree-highlights',
+		input: files('syntax/queries/devicetree-highlights.scm'),
+		output: 'DeviceTreeHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kDeviceTreeHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -94,7 +100,7 @@ codeEditViewLib = shared_library(
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
 	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep,
-		treeSitterComponentPascalDep, treeSitterPythonDep, treeSitterMakeDep, treeSitterCMakeDep],
+		treeSitterComponentPascalDep, treeSitterPythonDep, treeSitterMakeDep, treeSitterCMakeDep, treeSitterDeviceTreeDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

@@ -291,6 +291,18 @@ TEST_CASE("fold candidates of other languages")
 	);
 	EditorCore makeCore(make);
 	CHECK(makeCore.FoldCandidates(0, 6) == std::vector<FoldRange> {{0, 1}, {3, 5}});
+
+	// The "};" closing a node stays visible.
+	BReference<TextModel> deviceTree = MakeModel(
+		"/ {\n"
+		"  a {\n"
+		"    x = <1>;\n"
+		"  };\n"
+		"};\n",
+		"devicetree"
+	);
+	EditorCore deviceTreeCore(deviceTree);
+	CHECK(deviceTreeCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
 }
 
 

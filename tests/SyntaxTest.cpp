@@ -109,6 +109,7 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::find(languages.begin(), languages.end(), "python") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "make") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "cmake") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "devicetree") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -142,6 +143,10 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::string_view(LanguageForPath("src/CMakeLists.txt")) == "cmake");
 	CHECK(std::string_view(LanguageForPath("FindFoo.cmake")) == "cmake");
 	CHECK(LanguageForPath("cmakelists.txt") == nullptr);
+	CHECK(std::string_view(LanguageForPath("arch/arm/boot/dts/board.dts")) == "devicetree");
+	CHECK(std::string_view(LanguageForPath("soc.DTSI")) == "devicetree");
+	CHECK(std::string_view(LanguageForPath("fix.dtso")) == "devicetree");
+	CHECK(std::string_view(LanguageForPath("boards/nrf52840dk.overlay")) == "devicetree");
 	CHECK(LanguageForPath("README") == nullptr);
 	CHECK(LanguageForPath("x.build") == nullptr);
 	CHECK(LanguageForPath("notes.txt") == nullptr);
@@ -565,6 +570,53 @@ TEST_CASE("cmake highlighting")
 	CHECK(StyleAt(core, 6, 2) == HighlightStyle::Keyword);
 	CHECK(StyleAt(core, 7, 0) == HighlightStyle::Keyword);
 	CHECK(StyleAt(core, 8, 0) == HighlightStyle::Comment);
+}
+
+
+TEST_CASE("devicetree highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"/dts-v1/;\n"
+		"#include <dt-bindings/gpio/gpio.h>\n"
+		"/ {\n"
+		"  uart0: serial@1000 {\n"
+		"    compatible = \"ns16550\";\n"
+		"    reg = <0x1000 (1 + 2)>;\n"
+		"    gpios = <&gpio0 GPIO(3) 0>;\n"
+		"  };\n"
+		"};\n"
+		"// note\n"
+		"&uart0 { status = \"okay\"; };\n",
+		"devicetree"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 8) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 1, 9) == HighlightStyle::String);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 2, 2) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 2) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 3, 7) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 9) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 3, 15) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 16) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 4, 4) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 15) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 17) == HighlightStyle::String);
+	CHECK(StyleAt(core, 5, 10) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 11) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 5, 18) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 21) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 13) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 6, 14) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 6, 20) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 6, 25) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 7, 2) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 9, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 10, 0) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 10, 1) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 10, 9) == HighlightStyle::Default);
 }
 
 

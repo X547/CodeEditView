@@ -20,6 +20,7 @@
 #include "CMakeHighlights.inc"
 #include "ComponentPascalHighlights.inc"
 #include "CppHighlights.inc"
+#include "DeviceTreeHighlights.inc"
 #include "JamHighlights.inc"
 #include "MakeHighlights.inc"
 #include "MesonHighlights.inc"
@@ -36,6 +37,7 @@ extern "C" const TSLanguage *tree_sitter_componentpascal();
 extern "C" const TSLanguage *tree_sitter_python();
 extern "C" const TSLanguage *tree_sitter_make();
 extern "C" const TSLanguage *tree_sitter_cmake();
+extern "C" const TSLanguage *tree_sitter_devicetree();
 
 
 namespace CodeEdit {
@@ -88,6 +90,10 @@ static constexpr const char *kMakeNavigation = R"scm(
 static constexpr const char *kCMakeNavigation = R"scm(
 (function_def) @definition
 (macro_def) @definition
+)scm";
+
+static constexpr const char *kDeviceTreeNavigation = R"scm(
+(node) @definition
 )scm";
 
 
@@ -214,6 +220,14 @@ static constexpr const char *kCMakeFolds = R"scm(
 (bracket_argument) @fold
 )scm";
 
+// The "};" closing a node keeps its line visible.
+static constexpr const char *kDeviceTreeFolds = R"scm(
+(node) @fold
+(comment) @fold
+(preproc_if) @fold
+(preproc_ifdef) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
@@ -248,6 +262,11 @@ static constexpr FileExtension kFileExtensions[] = {
 	{"mk",    "make"},
 	{"mak",   "make"},
 	{"cmake", "cmake"},
+	{"dts",   "devicetree"},
+	{"dtsi",  "devicetree"},
+	{"dtso",  "devicetree"},
+	// Zephyr board overlays.
+	{"overlay", "devicetree"},
 };
 
 // Files known by their whole name, compared case-sensitively.
@@ -405,8 +424,10 @@ const std::vector<const Language*> &Language::All()
 	static const Language sPython("python", tree_sitter_python(), kPythonHighlights, kPythonNavigation, kPythonFolds);
 	static const Language sMake("make", tree_sitter_make(), kMakeHighlights, kMakeNavigation, kMakeFolds);
 	static const Language sCMake("cmake", tree_sitter_cmake(), kCMakeHighlights, kCMakeNavigation, kCMakeFolds);
+	static const Language sDeviceTree("devicetree", tree_sitter_devicetree(),
+		kDeviceTreeHighlights, kDeviceTreeNavigation, kDeviceTreeFolds);
 	static const std::vector<const Language*> sAll = {
-		&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal, &sPython, &sMake, &sCMake
+		&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal, &sPython, &sMake, &sCMake, &sDeviceTree
 	};
 	return sAll;
 }

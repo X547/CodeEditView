@@ -121,6 +121,27 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 		if (ts_node_is_null(name) || NodeType(name) != "targets") {
 			return std::nullopt;
 		}
+	} else if (type == "node") {
+		// Devicetree: "label: name@address", or "&label" for a node changed
+		// by reference.
+		item.kind = OutlineKind::Struct;
+		if (!ts_node_is_null(name)) {
+			size_t end = ts_node_end_byte(name);
+			const uint32_t count = ts_node_named_child_count(node);
+			for (uint32_t i = 0; i < count; i++) {
+				const TSNode child = ts_node_named_child(node, i);
+				if (NodeType(child) == "unit_address") {
+					end = ts_node_end_byte(child);
+					break;
+				}
+			}
+			const size_t start = ts_node_start_byte(name);
+			item.label = Compact(text.Substring(start, end - start));
+			const TSNode label = ChildByField(node, "label");
+			if (!ts_node_is_null(label)) {
+				item.label = NodeText(label, text) + ": " + item.label;
+			}
+		}
 	} else if (type == "define_directive") {
 		// Make
 		item.kind = OutlineKind::Function;

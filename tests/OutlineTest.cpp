@@ -348,6 +348,28 @@ TEST_CASE("outline of python, cmake and make")
 }
 
 
+TEST_CASE("outline of a devicetree")
+{
+	const std::string_view text =
+		"/dts-v1/;\n"
+		"/ {\n"
+		"  uart0: serial@1000 {\n"
+		"  };\n"
+		"};\n"
+		"&uart0 {\n"
+		"};\n";
+	EditorCore core(MakeModel(text, "devicetree"));
+	const std::vector<OutlineItem> outline = core.Outline();
+	REQUIRE(outline.size() == 2);
+	CHECK(outline[0].kind == OutlineKind::Struct);
+	CHECK(outline[0].label == "/");
+	REQUIRE(outline[0].children.size() == 1);
+	CHECK(outline[0].children[0].label == "uart0: serial@1000");
+	CHECK(outline[0].children[0].nameStart == text.find("serial"));
+	CHECK(outline[1].label == "&uart0");
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

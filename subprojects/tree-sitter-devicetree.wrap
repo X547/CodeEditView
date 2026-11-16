@@ -1,0 +1,6 @@
+[wrap-file]
+directory = tree-sitter-devicetree-0.15.0
+source_url = https://github.com/joelspadin/tree-sitter-devicetree/archive/refs/tags/v0.15.0.tar.gz
+source_filename = tree-sitter-devicetree-0.15.0.tar.gz
+source_hash = c436de34e25ea7cadb0e12135ff11598bc84aace88c4a90e2b9fe11793c92e3c
+patch_directory = tree-sitter-devicetree

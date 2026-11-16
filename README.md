@@ -35,7 +35,8 @@ The view handles `B_CUT`, `B_COPY`, `B_PASTE`, `B_SELECT_ALL`, `B_UNDO` and
 `B_REDO` messages, so menu items can target it directly.
 
 Syntax highlighting is enabled per document; C, C++, shell (sh and Bash),
-Meson, Jam, Component Pascal, Python, Make and CMake are built in:
+Meson, Jam, Component Pascal, Python, Make, CMake and Devicetree source
+(`.dts`, `.dtsi`, `.dtso`, `.overlay`) are built in:
 
 ```cpp
 CodeEdit::ModelLock lock(*model);

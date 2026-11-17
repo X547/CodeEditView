@@ -71,8 +71,9 @@ public:
 
 
 // The folders of a file as Tracker, StyledEdit and Pe show them when the
-// field beside the horizontal scroll bar is clicked: from the root of the
-// file's volume at the top down to the file's own folder. Choosing a folder
+// field beside the horizontal scroll bar is clicked (BDirMenu in reverse
+// order): the file's own folder at the top, next to the field, up to the
+// root of its volume at the bottom. Choosing a folder
 // opens it in Tracker; its submenu is a FolderMenu. Text files chosen go to
 // the editor. nullptr if the file is not on disk.
 BPopUpMenu *CreateParentFoldersMenu(const std::string &path, const BMessenger &editor);

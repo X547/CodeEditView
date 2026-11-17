@@ -249,7 +249,7 @@ BPopUpMenu *CreateParentFoldersMenu(const std::string &path, const BMessenger &e
 
 	const FolderMenuTargets targets {editor, BMessenger(kTrackerSignature)};
 	BPopUpMenu *menu = new BPopUpMenu("parentFolders", false, false);
-	for (auto folder = folders.rbegin(); folder != folders.rend(); folder++) {
+	for (auto folder = folders.begin(); folder != folders.end(); folder++) {
 		const std::string label = FolderLabel(*folder);
 		EntryItem *item = new EntryItem(
 			new FolderMenu(label.c_str(), *folder, targets),

@@ -216,6 +216,11 @@ same document. Window > New view and files opened from a window join the
 window's stack (Window > Open windows in the same stack). File > Open from
 Git browses the tree of a commit; File > Open location takes a location.
 View > Outline shows the definitions of the document beside it.
+As in Pe, a click on the line:column field beside the horizontal scroll
+bar asks for a line to go to; pressing and holding it (or dragging off it,
+or the secondary button) shows the parent folders of a file, each with its
+contents as a submenu: choosing a folder opens it in Tracker, a text file
+opens in CodeEdit, other files open in their preferred application.
 Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
 Without arguments, the Documents window lists the open documents.

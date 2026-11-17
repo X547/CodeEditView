@@ -52,11 +52,16 @@ constexpr uint32 kMsgGutterClicked = 'CEgc';
 // were added or removed (edits, folds, wrapping, resizing). "scrolled" (bool)
 // is true if the view scrolled. Bursts are coalesced into one message.
 constexpr uint32 kMsgViewportChanged = 'CEvc';
-// Posted to the window (not the target) when the caret position shown
-// beside the horizontal scroll bar is clicked; the view is focused first.
-// Hosts pass it to EditorCommands::Dispatch(), where a go to line command
-// (FindKit) handles it.
+// Posted to the window (not the target) from the caret position field
+// beside the horizontal scroll bar; the view is focused first. As in Pe, a
+// quick click sends kMsgPositionClicked when released; pressing and holding,
+// dragging off the field, or the secondary button sends kMsgPositionHeld
+// while the button is down, e.g. to show a menu of the document's folders
+// that the pointer can be dragged into. Both have "frame" (BRect): the field
+// in screen coordinates. Hosts pass them to EditorCommands::Dispatch(),
+// where a go to line command (FindKit) handles both.
 constexpr uint32 kMsgPositionClicked = 'CEpc';
+constexpr uint32 kMsgPositionHeld = 'CEph';
 
 
 // A header line stuck to the top of the view (EditorSettings::stickyLines):

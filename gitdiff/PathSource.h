@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Git.h"
+#include "NameOrder.h"
 
 
 namespace GitDiff {
@@ -29,8 +30,7 @@ public:
 };
 
 
-// Case-insensitive, numbers by value ("file2" before "file10").
-bool NameLess(const std::string &a, const std::string &b);
+using DiffKit::NameLess;
 
 
 // The files on disk under a folder (a working tree), read when listed.

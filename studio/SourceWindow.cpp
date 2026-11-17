@@ -21,6 +21,7 @@
 #include <MenuItem.h>
 #include <Path.h>
 #include <PathFinder.h>
+#include <PopUpMenu.h>
 #include <Roster.h>
 #include <ScrollBar.h>
 #include <ScrollView.h>
@@ -43,6 +44,7 @@
 #include "OpenGitWindow.h"
 #include "OpenLocationWindow.h"
 #include "OutlineView.h"
+#include "ParentFoldersMenu.h"
 #include "StartSessionWindow.h"
 #include "StudioApp.h"
 #include "ToolBar.h"
@@ -914,6 +916,26 @@ void SourceWindow::OpenRefs(BMessage *message)
 }
 
 
+// As in Pe, holding the button on the position field shows the folders of a
+// file on disk (a quick click goes to a line); other documents have none.
+// The menu runs on its own thread; it opens while the button is down, so an
+// item can be chosen by dragging to it and releasing.
+void SourceWindow::PositionHeld(BMessage *message)
+{
+	const Locator &locator = fDocument->GetLocator();
+	BRect frame;
+	BPopUpMenu *menu = nullptr;
+	if (locator.Kind() == LocatorKind::File && message->FindRect("frame", &frame) == B_OK) {
+		menu = CreateParentFoldersMenu(locator.Path(), BMessenger(this));
+	}
+	if (menu == nullptr) {
+		beep();
+		return;
+	}
+	menu->Go(frame.LeftBottom() + BPoint(0, 3), true, true, frame, true);
+}
+
+
 void SourceWindow::MessageReceived(BMessage *message)
 {
 	switch (message->what) {
@@ -1120,6 +1142,9 @@ void SourceWindow::MessageReceived(BMessage *message)
 			}
 			break;
 		}
+		case CodeEdit::kMsgPositionHeld:
+			PositionHeld(message);
+			break;
 		case kMsgShowOpenFile:
 			ShowOpenPanel();
 			break;

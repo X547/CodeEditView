@@ -237,6 +237,7 @@ bool FindCommandSet::Handles(uint32 what) const
 		case kMsgReplaceAll:
 		case kMsgGoToLine:
 		case CodeEdit::kMsgPositionClicked:
+		case CodeEdit::kMsgPositionHeld:
 			return true;
 		default:
 			return false;
@@ -270,6 +271,7 @@ bool FindCommandSet::IsEnabled(uint32 what, CodeEditView *view)
 			return editable && !settings.findText.empty() && (!settings.inSelection || HasSelection(view));
 		case kMsgGoToLine:
 		case CodeEdit::kMsgPositionClicked:
+		case CodeEdit::kMsgPositionHeld:
 			return true;
 		default:
 			return false;
@@ -288,7 +290,8 @@ void FindCommandSet::Execute(BMessage *message, CodeEditView *view)
 		return;
 	}
 
-	if (message->what == kMsgGoToLine || message->what == CodeEdit::kMsgPositionClicked) {
+	if (message->what == kMsgGoToLine || message->what == CodeEdit::kMsgPositionClicked
+		|| message->what == CodeEdit::kMsgPositionHeld) {
 		int32 line = 0;
 		if (message->FindInt32("line", &line) != B_OK) {
 			(new GoToLinePanel(view))->Show();

@@ -13,6 +13,7 @@ diffKit = static_library(
 		'FreezeWatchdog.cpp',
 		'Git.cpp',
 		'LinkMapView.cpp',
+		'NameOrder.cpp',
 		'Progress.cpp',
 		'TextSide.cpp',
 		'TruncatingLabel.cpp',

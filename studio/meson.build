@@ -9,6 +9,7 @@ codeEdit = executable(
 		'LazyMenu.cpp',
 		'OpenGitWindow.cpp',
 		'OpenLocationWindow.cpp',
+		'ParentFoldersMenu.cpp',
 		'SourceWindow.cpp',
 		'StartSessionWindow.cpp',
 		'StudioApp.cpp',

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <string>
 
+#include <MessageRunner.h>
 #include <Window.h>
 
 #include <CodeEditView/CodeEditView.h>
@@ -16,6 +17,10 @@ namespace CodeEdit {
 
 static constexpr int kMinLineDigits = 4;
 static constexpr float kPadding = 4;
+// A press longer than this, or moving further, is a hold (as in Pe).
+static constexpr bigtime_t kHoldDelay = 250000;
+static constexpr float kDragDistance = 2;
+static constexpr uint32 kMsgHoldTimeout = 'CEht';
 
 
 PositionView::PositionView(CodeEditView *editView):
@@ -67,14 +72,90 @@ void PositionView::Draw(BRect updateRect)
 }
 
 
+PositionView::~PositionView()
+{
+	delete fHoldRunner;
+}
+
+
+void PositionView::PostToWindow(uint32 what)
+{
+	BMessage message(what);
+	message.AddRect("frame", ConvertToScreen(Bounds()));
+	Window()->PostMessage(&message);
+}
+
+
+void PositionView::EndPress()
+{
+	fPressed = false;
+	delete fHoldRunner;
+	fHoldRunner = nullptr;
+}
+
+
+// The hold is timed by a message, so the window keeps running meanwhile.
 void PositionView::MouseDown(BPoint where)
 {
-	(void)where;
 	if (Window() == nullptr) {
 		return;
 	}
 	fEditView->MakeFocus(true);
-	Window()->PostMessage(kMsgPositionClicked);
+	EndPress();
+	int32 buttons = 0;
+	const BMessage *current = Window()->CurrentMessage();
+	if (current != nullptr) {
+		buttons = current->GetInt32("buttons", 0);
+	}
+	if ((buttons & B_SECONDARY_MOUSE_BUTTON) != 0) {
+		PostToWindow(kMsgPositionHeld);
+		return;
+	}
+	SetMouseEventMask(B_POINTER_EVENTS);
+	fPressed = true;
+	fPressPoint = where;
+	BMessage hold(kMsgHoldTimeout);
+	fHoldRunner = new BMessageRunner(BMessenger(this), &hold, kHoldDelay, 1);
+}
+
+
+void PositionView::MouseMoved(BPoint where, uint32 transit, const BMessage *dragMessage)
+{
+	(void)transit;
+	(void)dragMessage;
+	if (!fPressed) {
+		return;
+	}
+	const bool dragged = fabsf(where.x - fPressPoint.x) > kDragDistance
+		|| fabsf(where.y - fPressPoint.y) > kDragDistance;
+	if (dragged) {
+		EndPress();
+		PostToWindow(kMsgPositionHeld);
+	}
+}
+
+
+void PositionView::MouseUp(BPoint where)
+{
+	(void)where;
+	if (fPressed) {
+		EndPress();
+		PostToWindow(kMsgPositionClicked);
+	}
+}
+
+
+void PositionView::MessageReceived(BMessage *message)
+{
+	if (message->what != kMsgHoldTimeout) {
+		BView::MessageReceived(message);
+		return;
+	}
+	// A timeout sent before the press ended is ignored.
+	if (fPressed) {
+		EndPress();
+		PostToWindow(kMsgPositionHeld);
+	}
 }
 
 

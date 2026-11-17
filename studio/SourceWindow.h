@@ -81,6 +81,7 @@ private:
 	void SavedNotice(BMessage *message);
 	void ShowOpenPanel();
 	void OpenRefs(BMessage *message);
+	void PositionHeld(BMessage *message);
 	std::string StartDirectory() const;
 	void ScheduleOutlineRefresh();
 	void RefreshOutline();

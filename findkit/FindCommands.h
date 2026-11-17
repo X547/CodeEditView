@@ -22,7 +22,7 @@ constexpr uint32 kMsgReplaceAndFind = 'FKrf';
 constexpr uint32 kMsgReplaceAll = 'FKra';
 // Moves the caret to "line" and "column" (int32, 1-based; column optional);
 // without them, asks for them in a panel. CodeEdit::kMsgPositionClicked
-// asks too.
+// and kMsgPositionHeld ask too.
 constexpr uint32 kMsgGoToLine = 'FKgl';
 
 

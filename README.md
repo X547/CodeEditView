@@ -220,7 +220,10 @@ As in Pe, a click on the line:column field beside the horizontal scroll
 bar asks for a line to go to; pressing and holding it (or dragging off it,
 or the secondary button) shows the parent folders of a file, each with its
 contents as a submenu: choosing a folder opens it in Tracker, a text file
-opens in CodeEdit, other files open in their preferred application.
+opens in CodeEdit, other files open in their preferred application. For a
+file of a Git commit it shows the directories of the commit's tree the same
+way: choosing a file opens it from the commit, choosing a directory opens
+Open from Git there.
 Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
 Without arguments, the Documents window lists the open documents.

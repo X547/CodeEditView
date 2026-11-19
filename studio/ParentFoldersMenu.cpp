@@ -10,19 +10,29 @@
 #include <Bitmap.h>
 #include <ControlLook.h>
 #include <Directory.h>
+#include <Mime.h>
 #include <Node.h>
 #include <NodeInfo.h>
 #include <Path.h>
 #include <PopUpMenu.h>
 #include <Volume.h>
 
+#include "Messages.h"
 #include "NameOrder.h"
 
 
 namespace Studio {
 
 
+using Workspace::DirEntry;
+using Workspace::Locator;
+using Workspace::ProviderError;
+using Workspace::Providers;
+
+
 static constexpr const char *kTrackerSignature = "application/x-vnd.Be-TRAK";
+// The type of folders (Tracker's B_DIRECTORY_MIME_TYPE, not public).
+static constexpr const char *kDirectoryType = "application/x-vnd.Be-directory";
 
 
 // The bounds of an icon: B_MINI_ICON scaled with the font.
@@ -34,35 +44,77 @@ static BRect IconBounds()
 
 //#pragma mark - EntryItem
 
-EntryItem::EntryItem(const char *label, const entry_ref &ref, BMessage *message):
-	BMenuItem(label, message)
+// An icon drawn by get(bitmap, size); nullptr if it fails.
+template<typename Get>
+static BBitmap *NewIcon(Get get)
 {
-	LoadIcon(ref);
+	const BRect bounds = IconBounds();
+	BBitmap *icon = new BBitmap(bounds, B_RGBA32);
+	const icon_size size = static_cast<icon_size>(bounds.IntegerWidth() + 1);
+	if (icon->InitCheck() != B_OK || get(icon, size) != B_OK) {
+		delete icon;
+		return nullptr;
+	}
+	return icon;
+}
+
+
+static BBitmap *NewIcon(const entry_ref &ref)
+{
+	return NewIcon([&ref](BBitmap *icon, icon_size size) {
+		return BNodeInfo::GetTrackerIcon(&ref, icon, size);
+	});
+}
+
+
+// The icon of the type, else of its supertype, else of a generic file.
+static BBitmap *NewIcon(const char *type)
+{
+	return NewIcon([type](BBitmap *icon, icon_size size) {
+		const BMimeType mime(type);
+		if (mime.GetIcon(icon, size) == B_OK) {
+			return B_OK;
+		}
+		BMimeType super;
+		if (mime.GetSupertype(&super) == B_OK && super.GetIcon(icon, size) == B_OK) {
+			return B_OK;
+		}
+		return BMimeType(B_FILE_MIME_TYPE).GetIcon(icon, size);
+	});
+}
+
+
+EntryItem::EntryItem(const char *label, const entry_ref &ref, BMessage *message):
+	BMenuItem(label, message),
+	fIcon(NewIcon(ref))
+{
 }
 
 
 EntryItem::EntryItem(BMenu *submenu, const entry_ref &ref, BMessage *message):
-	BMenuItem(submenu, message)
+	BMenuItem(submenu, message),
+	fIcon(NewIcon(ref))
 {
-	LoadIcon(ref);
+}
+
+
+EntryItem::EntryItem(const char *label, const char *type, BMessage *message):
+	BMenuItem(label, message),
+	fIcon(NewIcon(type))
+{
+}
+
+
+EntryItem::EntryItem(BMenu *submenu, const char *type, BMessage *message):
+	BMenuItem(submenu, message),
+	fIcon(NewIcon(type))
+{
 }
 
 
 EntryItem::~EntryItem()
 {
 	delete fIcon;
-}
-
-
-void EntryItem::LoadIcon(const entry_ref &ref)
-{
-	const BRect bounds = IconBounds();
-	fIcon = new BBitmap(bounds, B_RGBA32);
-	const icon_size size = static_cast<icon_size>(bounds.IntegerWidth() + 1);
-	if (fIcon->InitCheck() != B_OK || BNodeInfo::GetTrackerIcon(&ref, fIcon, size) != B_OK) {
-		delete fIcon;
-		fIcon = nullptr;
-	}
 }
 
 
@@ -257,6 +309,139 @@ BPopUpMenu *CreateParentFoldersMenu(const std::string &path, const BMessenger &e
 			RefsMessage(*folder)
 		);
 		item->SetTarget(targets.tracker);
+		menu->AddItem(item);
+	}
+	menu->SetAsyncAutoDestruct(true);
+	return menu;
+}
+
+
+//#pragma mark - GitFolderMenu
+
+static BMessage *LocatorMessage(uint32 what, const Locator &locator)
+{
+	BMessage *message = new BMessage(what);
+	message->AddString("locator", locator.ToString().c_str());
+	return message;
+}
+
+
+static Locator ChildLocator(const Locator &folder, const std::string &name)
+{
+	return folder.WithPath(folder.Path().empty() ? name : folder.Path() + "/" + name);
+}
+
+
+GitFolderMenu::GitFolderMenu(const char *name, const Locator &folder, const BMessenger &editor):
+	LazyMenu(name),
+	fFolder(folder),
+	fEditor(editor)
+{
+}
+
+
+size_t GitFolderMenu::Prepare()
+{
+	fItems.clear();
+	fError.clear();
+	std::vector<DirEntry> entries;
+	try {
+		entries = Providers::Default().Get(fFolder).List(fFolder);
+	} catch (const ProviderError &error) {
+		fError = error.what();
+		return 1;
+	}
+	for (const DirEntry &entry : entries) {
+		Item item {entry.name, {}, entry.directory};
+		BMimeType type;
+		if (!entry.directory && BMimeType::GuessMimeType(entry.name.c_str(), &type) == B_OK) {
+			item.type = type.Type();
+		}
+		fItems.push_back(std::move(item));
+	}
+	std::sort(fItems.begin(), fItems.end(), [](const Item &a, const Item &b) {
+		if (a.folder != b.folder) {
+			return a.folder;
+		}
+		return DiffKit::NameLess(a.name, b.name);
+	});
+	return std::max<size_t>(fItems.size(), 1);
+}
+
+
+BMenuItem *GitFolderMenu::MakeItem(size_t index)
+{
+	if (!fError.empty() || fItems.empty()) {
+		BMenuItem *none = new BMenuItem(fError.empty() ? "Empty folder" : fError.c_str(), nullptr);
+		none->SetEnabled(false);
+		return none;
+	}
+	const Item &item = fItems[index];
+	const Locator locator = ChildLocator(fFolder, item.name);
+	BMenuItem *result;
+	if (item.folder) {
+		result = new EntryItem(
+			new GitFolderMenu(item.name.c_str(), locator, fEditor),
+			kDirectoryType,
+			LocatorMessage(kMsgShowOpenGit, locator)
+		);
+	} else {
+		result = new EntryItem(
+			item.name.c_str(),
+			item.type.empty() ? B_FILE_MIME_TYPE : item.type.c_str(),
+			LocatorMessage(kMsgOpenLocator, locator)
+		);
+	}
+	result->SetTarget(fEditor);
+	return result;
+}
+
+
+void GitFolderMenu::Release()
+{
+	fItems = std::vector<Item>();
+}
+
+
+//#pragma mark - CreateGitParentFoldersMenu
+
+// The root of the tree is named as the commit, as Locator::DisplayName()
+// names it.
+static std::string GitFolderLabel(const Locator &folder)
+{
+	if (!folder.Path().empty()) {
+		return folder.Leaf();
+	}
+	const std::string &revision = folder.Revision();
+	return Locator::File(folder.Repository()).Leaf() + " @ " + (folder.IsResolved() ? revision.substr(0, 7) : revision);
+}
+
+
+BPopUpMenu *CreateGitParentFoldersMenu(const Locator &file, const BMessenger &editor)
+{
+	if (file.Kind() != Workspace::LocatorKind::GitCommit || file.Path().empty()) {
+		return nullptr;
+	}
+	// From the file's directory up to the root of the tree.
+	std::vector<Locator> folders;
+	Locator folder = file.Parent();
+	for (;;) {
+		folders.push_back(folder);
+		if (folder.Path().empty()) {
+			break;
+		}
+		folder = folder.Parent();
+	}
+
+	BPopUpMenu *menu = new BPopUpMenu("gitParentFolders", false, false);
+	for (const Locator &each : folders) {
+		const std::string label = GitFolderLabel(each);
+		EntryItem *item = new EntryItem(
+			new GitFolderMenu(label.c_str(), each, editor),
+			kDirectoryType,
+			LocatorMessage(kMsgShowOpenGit, each)
+		);
+		item->SetTarget(editor);
 		menu->AddItem(item);
 	}
 	menu->SetAsyncAutoDestruct(true);

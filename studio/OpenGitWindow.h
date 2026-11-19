@@ -35,6 +35,8 @@ private:
 	// The directory shown, with the resolved commit.
 	std::optional<Workspace::Locator> fDirectory;
 	std::vector<Workspace::DirEntry> fEntries;
+	// The directory of the tree shown first; then the root.
+	std::string fStartPath;
 
 	void ShowCommit();
 	void ShowDirectory(const Workspace::Locator &directory);
@@ -42,7 +44,14 @@ private:
 	void SetStatus(const std::string &text);
 
 public:
-	OpenGitWindow(const BMessenger &target, const std::string &directory);
+	// The commit's tree is shown at once if the repository directory is
+	// given, at path (relative, empty for the root).
+	OpenGitWindow(
+		const BMessenger &target,
+		const std::string &directory,
+		const std::string &revision = "HEAD",
+		const std::string &path = {}
+	);
 	~OpenGitWindow() override;
 
 	void MessageReceived(BMessage *message) override;

@@ -9,6 +9,8 @@
 #include <Messenger.h>
 
 #include "LazyMenu.h"
+#include "Locator.h"
+#include "Provider.h"
 
 
 class BBitmap;
@@ -27,12 +29,11 @@ struct FolderMenuTargets {
 };
 
 
-// An item with the Tracker icon of a file or folder before its label.
+// An item with an icon before its label: the Tracker icon of a file or
+// folder on disk, or the icon of a MIME type (for entries not on disk).
 class EntryItem: public BMenuItem {
 private:
 	BBitmap *fIcon {};
-
-	void LoadIcon(const entry_ref &ref);
 
 protected:
 	void GetContentSize(float *width, float *height) override;
@@ -41,6 +42,8 @@ protected:
 public:
 	EntryItem(const char *label, const entry_ref &ref, BMessage *message);
 	EntryItem(BMenu *submenu, const entry_ref &ref, BMessage *message);
+	EntryItem(const char *label, const char *type, BMessage *message);
+	EntryItem(BMenu *submenu, const char *type, BMessage *message);
 	~EntryItem() override;
 };
 
@@ -77,6 +80,44 @@ public:
 // opens it in Tracker; its submenu is a FolderMenu. Text files chosen go to
 // the editor. nullptr if the file is not on disk.
 BPopUpMenu *CreateParentFoldersMenu(const std::string &path, const BMessenger &editor);
+
+
+// The contents of a directory of a Git commit, read each time it opens (in
+// the menu's thread; the repository is local): directories first, each with
+// its own contents as a submenu, then files. Choosing a file sends
+// kMsgOpenLocator to the editor; choosing a directory sends it
+// kMsgShowOpenGit with the directory.
+class GitFolderMenu: public LazyMenu {
+private:
+	struct Item {
+		std::string name;
+		// The MIME type of a file, guessed from its name.
+		std::string type;
+		bool folder {};
+	};
+
+	Workspace::Locator fFolder;
+	BMessenger fEditor;
+	std::vector<Item> fItems;
+	// Why the directory could not be read.
+	std::string fError;
+
+protected:
+	size_t Prepare() final;
+	BMenuItem *MakeItem(size_t index) final;
+	void Release() final;
+
+public:
+	GitFolderMenu(const char *name, const Workspace::Locator &folder, const BMessenger &editor);
+};
+
+
+// The directories of a file of a Git commit, in the order of
+// CreateParentFoldersMenu(): the file's own directory at the top down to the
+// root of the commit's tree ("repo @ 1a2b3c4") at the bottom, each a
+// GitFolderMenu. Nothing is read from the repository until a submenu opens.
+// nullptr if the locator is not a file of a commit.
+BPopUpMenu *CreateGitParentFoldersMenu(const Workspace::Locator &file, const BMessenger &editor);
 
 
 } // Studio

@@ -917,16 +917,21 @@ void SourceWindow::OpenRefs(BMessage *message)
 
 
 // As in Pe, holding the button on the position field shows the folders of a
-// file on disk (a quick click goes to a line); other documents have none.
-// The menu runs on its own thread; it opens while the button is down, so an
-// item can be chosen by dragging to it and releasing.
+// file on disk, or the directories of a file of a Git commit (a quick click
+// goes to a line); other documents have none. The menu runs on its own
+// thread, which also reads the folders; it opens while the button is down,
+// so an item can be chosen by dragging to it and releasing.
 void SourceWindow::PositionHeld(BMessage *message)
 {
 	const Locator &locator = fDocument->GetLocator();
 	BRect frame;
 	BPopUpMenu *menu = nullptr;
-	if (locator.Kind() == LocatorKind::File && message->FindRect("frame", &frame) == B_OK) {
-		menu = CreateParentFoldersMenu(locator.Path(), BMessenger(this));
+	if (message->FindRect("frame", &frame) == B_OK) {
+		if (locator.Kind() == LocatorKind::File) {
+			menu = CreateParentFoldersMenu(locator.Path(), BMessenger(this));
+		} else if (locator.Kind() == LocatorKind::GitCommit) {
+			menu = CreateGitParentFoldersMenu(locator, BMessenger(this));
+		}
 	}
 	if (menu == nullptr) {
 		beep();
@@ -1152,7 +1157,13 @@ void SourceWindow::MessageReceived(BMessage *message)
 			OpenRefs(message);
 			break;
 		case kMsgShowOpenGit: {
-			BWindow *window = new OpenGitWindow(BMessenger(this), StartDirectory());
+			const std::optional<Locator> folder = Locator::Parse(message->GetString("locator", ""));
+			BWindow *window;
+			if (folder.has_value() && folder->Kind() == LocatorKind::GitCommit) {
+				window = new OpenGitWindow(BMessenger(this), folder->Repository(), folder->Revision(), folder->Path());
+			} else {
+				window = new OpenGitWindow(BMessenger(this), StartDirectory());
+			}
 			DiffKit::PlaceOver(window, Frame());
 			window->Show();
 			break;

@@ -40,6 +40,7 @@ constexpr uint32 kMsgShowOpenCoverage = 'CSoc';
 constexpr uint32 kMsgShowOpenFile = 'CSof';
 // Opens a new untitled document.
 constexpr uint32 kMsgNewDocument = 'CSnd';
+// "locator" (string, optional): a directory of a Git commit to start at.
 constexpr uint32 kMsgShowOpenGit = 'CSog';
 constexpr uint32 kMsgShowOpenLocation = 'CSoL';
 constexpr uint32 kMsgShowDocuments = 'CSsd';

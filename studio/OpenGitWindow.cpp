@@ -31,14 +31,20 @@ static constexpr uint32 kMsgShow = 'OGsh';
 static constexpr uint32 kMsgOpen = 'OGop';
 
 
-OpenGitWindow::OpenGitWindow(const BMessenger &target, const std::string &directory):
+OpenGitWindow::OpenGitWindow(
+	const BMessenger &target,
+	const std::string &directory,
+	const std::string &revision,
+	const std::string &path
+):
 	BWindow(BRect(0, 0, 559, 499), "Open from Git", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
 	fTarget(target),
 	fRepository(new BTextControl("repository", "Repository:", directory.c_str(), nullptr)),
-	fRevision(new BTextControl("revision", "Revision:", "HEAD", new BMessage(kMsgShow))),
+	fRevision(new BTextControl("revision", "Revision:", revision.c_str(), new BMessage(kMsgShow))),
 	fPlace(new BStringView("place", "")),
 	fList(new BListView("entries")),
-	fStatus(new BStringView("status", ""))
+	fStatus(new BStringView("status", "")),
+	fStartPath(path)
 {
 	fList->SetInvocationMessage(new BMessage(kMsgOpen));
 	fPlace->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -87,7 +93,8 @@ void OpenGitWindow::SetStatus(const std::string &text)
 
 void OpenGitWindow::ShowCommit()
 {
-	const Locator requested = Locator::GitCommit(fRepository->Text(), fRevision->Text(), "");
+	const Locator requested = Locator::GitCommit(fRepository->Text(), fRevision->Text(), fStartPath);
+	fStartPath.clear();
 	try {
 		ShowDirectory(Providers::Default().Get(requested).Resolve(requested));
 	} catch (const ProviderError &error) {

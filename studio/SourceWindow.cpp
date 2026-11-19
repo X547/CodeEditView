@@ -39,6 +39,7 @@
 #include "CoverageMessages.h"
 #include "CoverageRun.h"
 #include "FindCommands.h"
+#include "LocatorFolderMenu.h"
 #include "Messages.h"
 #include "Protocol.h"
 #include "OpenGitWindow.h"
@@ -930,7 +931,7 @@ void SourceWindow::PositionHeld(BMessage *message)
 		if (locator.Kind() == LocatorKind::File) {
 			menu = CreateParentFoldersMenu(locator.Path(), BMessenger(this));
 		} else if (locator.Kind() == LocatorKind::GitCommit) {
-			menu = CreateGitParentFoldersMenu(locator, BMessenger(this));
+			menu = CreateLocatorParentFoldersMenu(locator, BMessenger(this), {kMsgShowOpenGit, kMsgOpenLocator});
 		}
 	}
 	if (menu == nullptr) {

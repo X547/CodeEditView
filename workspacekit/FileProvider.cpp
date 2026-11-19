@@ -107,10 +107,32 @@ std::vector<DirEntry> FileProvider::List(const Locator &directory)
 		if (name == "." || name == "..") {
 			continue;
 		}
-		struct stat info;
 		const std::string entryPath = path == "/" ? "/" + name : path + "/" + name;
-		const bool isDirectory = stat(entryPath.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
-		entries.push_back({name, isDirectory});
+		DirEntry item;
+		item.name = name;
+		struct stat info;
+		if (lstat(entryPath.c_str(), &info) != 0) {
+			entries.push_back(std::move(item));
+			continue;
+		}
+		item.link = S_ISLNK(info.st_mode);
+		// A link is described by its target; a broken one by itself.
+		struct stat target;
+		if (item.link && stat(entryPath.c_str(), &target) == 0) {
+			info = target;
+		}
+		item.directory = S_ISDIR(info.st_mode);
+		if (S_ISREG(info.st_mode)) {
+			item.size = info.st_size;
+		}
+		item.modified = info.st_mtim.tv_sec;
+		BNode node(entryPath.c_str());
+		BNodeInfo nodeInfo(&node);
+		char type[B_MIME_TYPE_LENGTH];
+		if (node.InitCheck() == B_OK && nodeInfo.InitCheck() == B_OK && nodeInfo.GetType(type) == B_OK) {
+			item.mimeType = type;
+		}
+		entries.push_back(std::move(item));
 	}
 	closedir(dir);
 	std::sort(entries.begin(), entries.end(), [](const DirEntry &a, const DirEntry &b) {

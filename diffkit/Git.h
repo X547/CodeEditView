@@ -50,6 +50,7 @@ using SignaturePtr = GitPtr<git_signature, git_signature_free>;
 using RebasePtr = GitPtr<git_rebase, git_rebase_free>;
 using BranchIteratorPtr = GitPtr<git_branch_iterator, git_branch_iterator_free>;
 using ReferenceIteratorPtr = GitPtr<git_reference_iterator, git_reference_iterator_free>;
+using OdbPtr = GitPtr<git_odb, git_odb_free>;
 
 
 // Owns a git_buf.

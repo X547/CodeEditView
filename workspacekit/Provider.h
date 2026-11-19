@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include <map>
 #include <memory>
 #include <optional>
@@ -59,9 +61,20 @@ public:
 };
 
 
+// An entry of a directory, with what the provider knows about it.
 struct DirEntry {
 	std::string name;
+	// Can be listed (also a link to a directory).
 	bool directory {};
+	// A symbolic link.
+	bool link {};
+	// Of a file, in bytes.
+	std::optional<uint64_t> size;
+	// Seconds since the epoch.
+	std::optional<int64_t> modified;
+	// The MIME type the entry has (BEOS:TYPE attribute); empty if it has none
+	// or the provider has no attributes.
+	std::string mimeType;
 };
 
 

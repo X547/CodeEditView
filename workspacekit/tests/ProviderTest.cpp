@@ -39,12 +39,26 @@ TEST_CASE("file provider")
 	CHECK(provider.Write(locator, "three\n", overwritten, false) != overwritten);
 
 	directory.Write("sub/b.txt", "b");
+	std::filesystem::create_symlink("sub", directory / "link");
+	std::filesystem::create_symlink("none", directory / "loose");
 	const std::vector<DirEntry> entries = provider.List(Locator::File(directory.Path()));
-	REQUIRE(entries.size() == 2);
+	REQUIRE(entries.size() == 4);
 	CHECK(entries[0].name == "a.txt");
 	CHECK_FALSE(entries[0].directory);
-	CHECK(entries[1].name == "sub");
+	CHECK_FALSE(entries[0].link);
+	CHECK(entries[0].size == 6u);
+	CHECK(entries[0].modified.has_value());
+	// A link to a directory can be listed.
+	CHECK(entries[1].name == "link");
 	CHECK(entries[1].directory);
+	CHECK(entries[1].link);
+	CHECK(entries[2].name == "loose");
+	CHECK_FALSE(entries[2].directory);
+	CHECK(entries[2].link);
+	CHECK_FALSE(entries[2].size.has_value());
+	CHECK(entries[3].name == "sub");
+	CHECK(entries[3].directory);
+	CHECK_FALSE(entries[3].size.has_value());
 	CHECK_THROWS_AS(provider.List(Locator::File(directory / "none")), ProviderError);
 }
 
@@ -123,6 +137,33 @@ TEST_CASE("Git provider")
 	REQUIRE(entries.size() == 1);
 	CHECK(entries[0].name == "a.cpp");
 	CHECK_THROWS_AS(provider.List(resolved), ProviderError);
+}
+
+
+TEST_CASE("Git provider lists sizes and links")
+{
+	TestRepository repository;
+	repository.Write("a.txt", "abc\n");
+	repository.Write("dir/b.txt", "");
+	std::filesystem::create_symlink("a.txt", repository / "link");
+	const std::string commit = repository.Commit();
+
+	GitProvider provider;
+	const std::vector<DirEntry> entries = provider.List(Locator::GitCommit(repository.Path(), commit, ""));
+	REQUIRE(entries.size() == 3);
+	CHECK(entries[0].name == "a.txt");
+	CHECK(entries[0].size == 4u);
+	CHECK_FALSE(entries[0].link);
+	// No times or types in a tree.
+	CHECK_FALSE(entries[0].modified.has_value());
+	CHECK(entries[0].mimeType.empty());
+	CHECK(entries[1].name == "dir");
+	CHECK(entries[1].directory);
+	CHECK_FALSE(entries[1].size.has_value());
+	CHECK(entries[2].name == "link");
+	CHECK(entries[2].link);
+	CHECK_FALSE(entries[2].directory);
+	CHECK(provider.List(Locator::GitCommit(repository.Path(), commit, "dir"))[0].size == 0u);
 }
 
 

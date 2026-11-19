@@ -214,7 +214,9 @@ locations:
 Each window shows one view of a document; several windows may show the
 same document. Window > New view and files opened from a window join the
 window's stack (Window > Open windows in the same stack). File > Open from
-Git browses the tree of a commit; File > Open location takes a location.
+Git browses the tree of a commit as Tracker's open panel browses folders
+(icons, sizes, kinds; the folder menu shows its parents); File > Open
+location takes a location.
 View > Outline shows the definitions of the document beside it.
 As in Pe, a click on the line:column field beside the horizontal scroll
 bar asks for a line to go to; pressing and holding it (or dragging off it,

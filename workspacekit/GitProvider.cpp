@@ -141,10 +141,24 @@ std::vector<DirEntry> GitProvider::List(const Locator &directory)
 			Check(git_tree_lookup(&subtree, repository, git_tree_entry_id(entry)), "Cannot read the directory");
 			tree.reset(subtree);
 		}
+		git_odb *odb = nullptr;
+		Check(git_repository_odb(&odb, repository), "Cannot read the repository");
+		DiffKit::OdbPtr odbPtr(odb);
 		std::vector<DirEntry> entries;
 		for (size_t i = 0; i < git_tree_entrycount(tree.get()); i++) {
 			const git_tree_entry *entry = git_tree_entry_byindex(tree.get(), i);
-			entries.push_back({git_tree_entry_name(entry), git_tree_entry_type(entry) == GIT_OBJECT_TREE});
+			DirEntry item;
+			item.name = git_tree_entry_name(entry);
+			item.directory = git_tree_entry_type(entry) == GIT_OBJECT_TREE;
+			item.link = git_tree_entry_filemode(entry) == GIT_FILEMODE_LINK;
+			// The header only: the size without reading the data.
+			size_t size = 0;
+			git_object_t type {};
+			if (git_tree_entry_type(entry) == GIT_OBJECT_BLOB && !item.link
+				&& git_odb_read_header(&size, &type, odb, git_tree_entry_id(entry)) == 0) {
+				item.size = size;
+			}
+			entries.push_back(std::move(item));
 		}
 		std::sort(entries.begin(), entries.end(), [](const DirEntry &a, const DirEntry &b) {
 			return a.name < b.name;

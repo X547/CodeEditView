@@ -67,6 +67,7 @@ highlightQueries = [
 codeEditViewSources = files(
 	'Version.cpp',
 	'commands/EditorCommands.cpp',
+	'commands/TextCommands.cpp',
 	'layout/DisplayMap.cpp',
 	'layout/LineLayout.cpp',
 	'layout/RowIndex.cpp',

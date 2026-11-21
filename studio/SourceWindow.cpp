@@ -32,6 +32,7 @@
 #include <CodeEditView/CodeEditScrollView.h>
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
+#include <CodeEditView/TextCommands.h>
 
 #include "CodeEditLink.h"
 #include "Common.h"
@@ -140,6 +141,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	fStatus->SetTruncation(B_TRUNCATE_MIDDLE);
 
 	BMenuBar *menuBar = new BMenuBar("menuBar");
+	BMenu *editMenu = nullptr;
 	BMenu *searchMenu = nullptr;
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
@@ -158,6 +160,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.AddItem("Quit", B_QUIT_REQUESTED, 'Q')
 		.End()
 		.AddMenu("Edit")
+			.GetMenu(editMenu)
 			.AddItem("Undo", B_UNDO, 'Z')
 			.AddItem("Redo", B_REDO, 'Z', B_SHIFT_KEY)
 			.AddSeparator()
@@ -166,6 +169,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.AddItem("Paste", B_PASTE, 'V')
 			.AddSeparator()
 			.AddItem("Select all", B_SELECT_ALL, 'A')
+			.AddSeparator()
 		.End()
 		.AddMenu("Search")
 			.GetMenu(searchMenu)
@@ -184,6 +188,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.AddSeparator()
 			.AddItem("Open windows in the same stack", kMsgToggleStacking)
 		.End();
+	CodeEdit::TextCommands::AddItems(editMenu);
 	FindKit::AddFindItems(searchMenu);
 	// Before the Window menu.
 	menuBar->AddItem(CreateDebugMenu(), menuBar->CountItems() - 1);

@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "EditorConfig.h"
 #include "FileIO.h"
 #include "FileOptions.h"
 #include "Locator.h"
@@ -43,6 +44,9 @@ struct FileInfo {
 	std::optional<FileOptions> options;
 	// Lines of the bookmarks kept with the file, sorted.
 	std::vector<size_t> bookmarks;
+	// What .editorconfig files say about the file, also one that does not
+	// exist; empty if the provider reads none.
+	EditorConfig editorConfig;
 };
 
 

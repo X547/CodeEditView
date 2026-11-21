@@ -162,6 +162,38 @@ FileAttributes Document::Attributes() const
 }
 
 
+EditorConfig Document::GetEditorConfig() const
+{
+	BAutolock lock(fLock);
+	return fEditorConfig;
+}
+
+
+Indentation Document::AutomaticIndentation() const
+{
+	BAutolock lock(fLock);
+	const Indentation defaults;
+	Indentation indentation;
+	indentation.tabWidth = fEditorConfig.tabWidth.value_or(defaults.tabWidth);
+	indentation.indentSize = fEditorConfig.indentSize.value_or(defaults.indentSize);
+	indentation.insertSpaces = fEditorConfig.insertSpaces.value_or(defaults.insertSpaces);
+	return indentation;
+}
+
+
+Indentation Document::GetIndentation() const
+{
+	const Indentation automatic = AutomaticIndentation();
+	BAutolock lock(fLock);
+	const FileOptions &options = fAttributes.options;
+	Indentation indentation;
+	indentation.tabWidth = options.tabWidth.value_or(automatic.tabWidth);
+	indentation.indentSize = options.indentSize.value_or(automatic.indentSize);
+	indentation.insertSpaces = options.insertSpaces.value_or(automatic.insertSpaces);
+	return indentation;
+}
+
+
 DocumentStatus Document::Status() const
 {
 	BAutolock lock(fLock);
@@ -506,6 +538,7 @@ bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fin
 				document.fAttributes.options = file.options.value_or(FileOptions());
 			}
 		}
+		document.fEditorConfig = file.editorConfig;
 		language = document.Language();
 		unchanged = document.fLoaded == fingerprint;
 		if (unchanged) {

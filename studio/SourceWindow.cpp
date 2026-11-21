@@ -713,14 +713,14 @@ void SourceWindow::UpdateStatus()
 	fStatus->SetText(text.c_str());
 	fStatus->SetToolTip(text.c_str());
 
-	// The indentation and wrapping of the document's options.
-	const Workspace::FileOptions options = fDocument->Attributes().options;
+	// The indentation and wrapping of the document.
+	const Workspace::Indentation indentation = fDocument->GetIndentation();
 	CodeEdit::EditorSettings settings = fEditView->Settings();
 	settings.readOnly = fLocked || fDocument->IsReadOnly() || status.state != DocumentState::Ready;
-	settings.tabWidth = options.tabWidth;
-	settings.indentSize = options.indentSize;
-	settings.insertSpacesForTab = options.insertSpaces;
-	settings.wordWrap = options.wordWrap;
+	settings.tabWidth = indentation.tabWidth;
+	settings.indentSize = indentation.indentSize;
+	settings.insertSpacesForTab = indentation.insertSpaces;
+	settings.wordWrap = fDocument->Attributes().options.wordWrap;
 	if (!(settings == fEditView->Settings())) {
 		fEditView->SetSettings(settings);
 	}
@@ -745,9 +745,17 @@ void SourceWindow::ApplyFileOptions(BMessage *message)
 	if (message->FindString("language", &language) == B_OK) {
 		options.language = language;
 	}
-	options.tabWidth = static_cast<uint32>(std::max<int32>(message->GetInt32("tabWidth", 4), 1));
-	options.indentSize = static_cast<uint32>(std::max<int32>(message->GetInt32("indentSize", 0), 0));
-	options.insertSpaces = message->GetBool("insertSpaces", false);
+	int32 width = 0;
+	if (message->FindInt32("tabWidth", &width) == B_OK && width > 0) {
+		options.tabWidth = static_cast<uint32>(width);
+	}
+	if (message->FindInt32("indentSize", &width) == B_OK && width >= 0) {
+		options.indentSize = static_cast<uint32>(width);
+	}
+	bool insertSpaces = false;
+	if (message->FindBool("insertSpaces", &insertSpaces) == B_OK) {
+		options.insertSpaces = insertSpaces;
+	}
 	options.wordWrap = message->GetBool("wordWrap", false);
 	const auto lineEnding = static_cast<CodeEdit::LineEnding>(message->GetInt32("lineEnding", 0));
 	StudioApp::Get().Registry().SetFileSettings(fDocument, attributes, lineEnding, message->GetBool("bom", false));

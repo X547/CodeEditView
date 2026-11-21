@@ -36,9 +36,15 @@ std::string FlattenFileOptions(const FileOptions &options)
 	if (options.language.has_value()) {
 		message.AddString("language", options.language->c_str());
 	}
-	message.AddInt32("tabWidth", static_cast<int32>(options.tabWidth));
-	message.AddInt32("indentSize", static_cast<int32>(options.indentSize));
-	message.AddBool("insertSpaces", options.insertSpaces);
+	if (options.tabWidth.has_value()) {
+		message.AddInt32("tabWidth", static_cast<int32>(*options.tabWidth));
+	}
+	if (options.indentSize.has_value()) {
+		message.AddInt32("indentSize", static_cast<int32>(*options.indentSize));
+	}
+	if (options.insertSpaces.has_value()) {
+		message.AddBool("insertSpaces", *options.insertSpaces);
+	}
 	message.AddBool("wordWrap", options.wordWrap);
 	return Flatten(message);
 }
@@ -55,15 +61,20 @@ std::optional<FileOptions> UnflattenFileOptions(std::string_view data)
 	if (message.FindString("language", &language) == B_OK) {
 		options.language = language;
 	}
-	const int32 tabWidth = message.GetInt32("tabWidth", 0);
-	if (tabWidth > 0 && static_cast<uint32_t>(tabWidth) <= kMaxWidth) {
+	int32 tabWidth = 0;
+	if (message.FindInt32("tabWidth", &tabWidth) == B_OK && tabWidth > 0
+		&& static_cast<uint32_t>(tabWidth) <= kMaxWidth) {
 		options.tabWidth = static_cast<uint32_t>(tabWidth);
 	}
-	const int32 indentSize = message.GetInt32("indentSize", 0);
-	if (indentSize > 0 && static_cast<uint32_t>(indentSize) <= kMaxWidth) {
+	int32 indentSize = 0;
+	if (message.FindInt32("indentSize", &indentSize) == B_OK && indentSize >= 0
+		&& static_cast<uint32_t>(indentSize) <= kMaxWidth) {
 		options.indentSize = static_cast<uint32_t>(indentSize);
 	}
-	options.insertSpaces = message.GetBool("insertSpaces", false);
+	bool insertSpaces = false;
+	if (message.FindBool("insertSpaces", &insertSpaces) == B_OK) {
+		options.insertSpaces = insertSpaces;
+	}
 	options.wordWrap = message.GetBool("wordWrap", false);
 	return options;
 }

@@ -92,6 +92,7 @@ FileInfo FileProvider::Read(const Locator &locator, DataSink &sink)
 				break;
 			}
 		}
+		result.editorConfig = ReadEditorConfig(path);
 		if (!result.exists) {
 			result.version.clear();
 			return result;

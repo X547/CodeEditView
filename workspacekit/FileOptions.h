@@ -18,13 +18,26 @@ struct FileOptions {
 	// A language of CodeEdit::AvailableLanguages(), or empty for plain text;
 	// none: from the MIME type or the path.
 	std::optional<std::string> language;
-	uint32_t tabWidth = 4;
-	// Width of one indentation level with spaces; 0: tabWidth.
-	uint32_t indentSize = 0;
-	bool insertSpaces {};
+	// The indentation; none: from an .editorconfig file, else the default
+	// (Indentation).
+	std::optional<uint32_t> tabWidth;
+	// Width of one indentation level with spaces; 0: the tab width.
+	std::optional<uint32_t> indentSize;
+	std::optional<bool> insertSpaces;
 	bool wordWrap {};
 
 	bool operator==(const FileOptions &other) const = default;
+};
+
+
+// The indentation a file gets.
+struct Indentation {
+	uint32_t tabWidth = 4;
+	// 0: the tab width.
+	uint32_t indentSize = 0;
+	bool insertSpaces {};
+
+	bool operator==(const Indentation &other) const = default;
 };
 
 

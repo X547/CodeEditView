@@ -54,7 +54,10 @@ The **info button** of the tool bar opens the options of the file:
   type, then the file name), plain text, or a language of your choice.
 - **File type** (MIME type) of the file.
 - **Indent with** tabs or spaces, **Tab width**, and **Indent width** (when
-  indenting with spaces).
+  indenting with spaces). *Automatic* takes them from the project's
+  [`.editorconfig`](https://editorconfig.org) files (`indent_style`,
+  `indent_size`, `tab_width`), else tabs of 4 columns; the menu shows which
+  value applies and whether it comes from `.editorconfig`.
 - **Wrap long lines** at the window width (also **View > Word wrap**).
 - **Line endings** (LF, CRLF or CR) and **UTF-8 byte order mark**, used when
   the file is saved. Changing them counts as an unsaved change.

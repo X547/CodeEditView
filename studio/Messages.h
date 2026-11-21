@@ -49,8 +49,9 @@ constexpr uint32 kMsgShowFileOptions = 'CSfo';
 // From the file options dialog to its source window: "mimeType" (string,
 // empty for none), "language" (string, empty for plain text; missing:
 // automatic), "tabWidth", "indentSize" (int32; 0: the tab width),
-// "insertSpaces", "wordWrap" (bool), "lineEnding" (int32:
-// CodeEdit::LineEnding), "bom" (bool).
+// "insertSpaces" (bool) — each missing: automatic (.editorconfig or the
+// default) —, "wordWrap" (bool), "lineEnding" (int32: CodeEdit::LineEnding),
+// "bom" (bool).
 constexpr uint32 kMsgFileOptionsChosen = 'CSfc';
 constexpr uint32 kMsgToggleStacking = 'CSts';
 // To the application after a window closed.

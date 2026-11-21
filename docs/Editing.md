@@ -66,8 +66,9 @@ step to undo:
 - **Convert leading spaces to tabs**: rewrites the indentation at the start
   of each line with tabs, keeping its width.
 
-The tab width comes from the file's options in CodeEdit (see its
-[guide](../studio/README.md#file-options)); otherwise it is 4.
+The tab width comes from the file's options or its `.editorconfig` in
+CodeEdit (see its [guide](../studio/README.md#file-options)); otherwise it
+is 4.
 
 
 ## Search menu

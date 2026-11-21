@@ -5,6 +5,7 @@ workspaceKit = static_library(
 	files(
 		'Document.cpp',
 		'DocumentWatcher.cpp',
+		'EditorConfig.cpp',
 		'FileOptions.cpp',
 		'FileProvider.cpp',
 		'Fingerprint.cpp',
@@ -27,6 +28,7 @@ if get_option('tests')
 		'WorkspaceKitTests',
 		files(
 			'tests/DocumentTest.cpp',
+			'tests/EditorConfigTest.cpp',
 			'tests/FingerprintTest.cpp',
 			'tests/LocatorTest.cpp',
 			'tests/MemoryTest.cpp',

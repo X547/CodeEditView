@@ -308,6 +308,36 @@ TEST_CASE("bookmarks are kept in the file's attributes")
 }
 
 
+TEST_CASE("indentation from .editorconfig unless chosen in the options")
+{
+	TempDirectory directory;
+	directory.Write(".editorconfig", "[*.py]\nindent_style = space\nindent_size = 2\n");
+	directory.Write("a.py", "x\n");
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(Locator::File(directory / "a.py"));
+	registry.WaitIdle();
+	CHECK(document->GetEditorConfig().insertSpaces == true);
+	CHECK(document->GetIndentation() == Indentation {2, 2, true});
+
+	FileAttributes attributes = document->Attributes();
+	attributes.options.insertSpaces = false;
+	attributes.options.tabWidth = 8;
+	registry.SetFileAttributes(document, attributes);
+	CHECK(document->GetIndentation() == Indentation {8, 2, false});
+	CHECK(document->AutomaticIndentation() == Indentation {2, 2, true});
+	registry.WaitIdle();
+
+	// A new file gets it too.
+	BReference<Document> created = registry.Open(Locator::File(directory / "new.py"));
+	registry.WaitIdle();
+	CHECK(created->GetIndentation().insertSpaces);
+
+	// Without one: the defaults.
+	BReference<Document> untitled = registry.NewUntitled();
+	CHECK(untitled->GetIndentation() == Indentation());
+}
+
+
 TEST_CASE("line endings and BOM set are unsaved changes")
 {
 	TempDirectory directory;

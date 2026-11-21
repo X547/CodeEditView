@@ -1,6 +1,8 @@
 #include "FileOptionsWindow.h"
 
 #include <algorithm>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -11,7 +13,6 @@
 #include <MenuItem.h>
 #include <Mime.h>
 #include <PopUpMenu.h>
-#include <Spinner.h>
 #include <StringView.h>
 
 #include <CodeEditView/Language.h>
@@ -25,7 +26,6 @@ namespace Studio {
 
 static constexpr uint32 kMsgOk = 'FOok';
 static constexpr uint32 kMsgMimeTypeChanged = 'FOmt';
-static constexpr uint32 kMsgIndentChanged = 'FOin';
 static constexpr int32 kMaxWidth = 16;
 
 
@@ -84,21 +84,33 @@ FileOptionsWindow::FileOptionsWindow(Workspace::Document *document, const BMesse
 	fMimeTypeField = CreateMimeTypeField(attributes.mimeType);
 	fMimeTypeField->SetEnabled(document->HasAttributes());
 
-	BPopUpMenu *indentMenu = new BPopUpMenu("indent");
-	BMessage *tabs = new BMessage(kMsgIndentChanged);
-	tabs->AddBool("insertSpaces", false);
-	AddMenuItem(indentMenu, "Tabs", tabs, !options.insertSpaces);
-	BMessage *spaces = new BMessage(kMsgIndentChanged);
-	spaces->AddBool("insertSpaces", true);
-	AddMenuItem(indentMenu, "Spaces", spaces, options.insertSpaces);
-	fIndentField = new BMenuField("indent", "Indent with:", indentMenu);
+	// Each starts with the automatic choice: what an .editorconfig file says,
+	// else the default.
+	const Workspace::EditorConfig config = document->GetEditorConfig();
+	const Workspace::Indentation automatic = document->AutomaticIndentation();
+	const auto automaticLabel = [](const std::string &value, bool fromConfig) {
+		return "Automatic (" + value + (fromConfig ? ", .editorconfig)" : ")");
+	};
+	const auto chosen = [](const auto &option) {
+		return option.has_value() ? std::optional<int32>(static_cast<int32>(*option)) : std::nullopt;
+	};
 
-	fTabWidth = new BSpinner("tabWidth", nullptr, nullptr);
-	fTabWidth->SetRange(1, kMaxWidth);
-	fTabWidth->SetValue(static_cast<int32>(options.tabWidth));
-	fIndentWidth = new BSpinner("indentWidth", nullptr, nullptr);
-	fIndentWidth->SetRange(1, kMaxWidth);
-	fIndentWidth->SetValue(static_cast<int32>(options.indentSize > 0 ? options.indentSize : options.tabWidth));
+	fIndentField = CreateChoiceField("indent", "Indent with:",
+		automaticLabel(automatic.insertSpaces ? "Spaces" : "Tabs", config.insertSpaces.has_value()),
+		{{"Tabs", 0}, {"Spaces", 1}}, chosen(options.insertSpaces));
+
+	std::vector<std::pair<std::string, int32>> widths;
+	for (int32 width = 1; width <= kMaxWidth; width++) {
+		widths.emplace_back(std::to_string(width), width);
+	}
+	fTabWidth = CreateChoiceField("tabWidth", "Tab width:",
+		automaticLabel(std::to_string(automatic.tabWidth), config.tabWidth.has_value()), widths,
+		chosen(options.tabWidth));
+	widths.insert(widths.begin(), {"Same as tab width", 0});
+	fIndentWidth = CreateChoiceField("indentWidth", "Indent width:",
+		automaticLabel(automatic.indentSize == 0 ? "same as tab width" : std::to_string(automatic.indentSize),
+			config.indentSize.has_value()),
+		widths, chosen(options.indentSize));
 	fWordWrap = new BCheckBox("wordWrap", "Wrap long lines", nullptr);
 	fWordWrap->SetValue(options.wordWrap ? B_CONTROL_ON : B_CONTROL_OFF);
 
@@ -131,10 +143,8 @@ FileOptionsWindow::FileOptionsWindow(Workspace::Document *document, const BMesse
 			.AddMenuField(fLanguageField, 0, 0)
 			.AddMenuField(fMimeTypeField, 0, 1)
 			.AddMenuField(fIndentField, 0, 2)
-			.Add(new BStringView("tabWidthLabel", "Tab width:"), 0, 3)
-			.Add(fTabWidth, 1, 3)
-			.Add(new BStringView("indentWidthLabel", "Indent width:"), 0, 4)
-			.Add(fIndentWidth, 1, 4)
+			.AddMenuField(fTabWidth, 0, 3)
+			.AddMenuField(fIndentWidth, 0, 4)
 			.Add(fWordWrap, 1, 5)
 			.AddMenuField(fLineEndingField, 0, 6)
 			.Add(fBom, 1, 7)
@@ -147,7 +157,34 @@ FileOptionsWindow::FileOptionsWindow(Workspace::Document *document, const BMesse
 		.End();
 	SetDefaultButton(okButton);
 	UpdateAutomaticLanguage();
-	UpdateIndentWidth();
+}
+
+
+// The automatic choice first, sending no value; the others send "value".
+BMenuField *FileOptionsWindow::CreateChoiceField(const char *name, const char *label, const std::string &automatic,
+	const std::vector<std::pair<std::string, int32>> &choices, std::optional<int32> chosen)
+{
+	BPopUpMenu *menu = new BPopUpMenu(name);
+	AddMenuItem(menu, automatic, new BMessage(), !chosen.has_value());
+	menu->AddSeparatorItem();
+	for (const auto &[choiceLabel, value] : choices) {
+		BMessage *message = new BMessage();
+		message->AddInt32("value", value);
+		AddMenuItem(menu, choiceLabel, message, chosen == value);
+	}
+	return new BMenuField(name, label, menu);
+}
+
+
+// The chosen value; none for the automatic choice.
+std::optional<int32> FileOptionsWindow::ChosenValue(BMenuField *field)
+{
+	int32 value = 0;
+	const BMessage *message = MarkedMessage(field);
+	if (message == nullptr || message->FindInt32("value", &value) != B_OK) {
+		return std::nullopt;
+	}
+	return value;
 }
 
 
@@ -231,14 +268,6 @@ void FileOptionsWindow::UpdateAutomaticLanguage()
 }
 
 
-// The indent width applies to indenting with spaces.
-void FileOptionsWindow::UpdateIndentWidth()
-{
-	const BMessage *message = MarkedMessage(fIndentField);
-	fIndentWidth->SetEnabled(message != nullptr && message->GetBool("insertSpaces", false));
-}
-
-
 void FileOptionsWindow::Accept()
 {
 	BMessage chosen(kMsgFileOptionsChosen);
@@ -247,12 +276,15 @@ void FileOptionsWindow::Accept()
 	if (language != nullptr && language->HasString("language")) {
 		chosen.AddString("language", language->GetString("language", ""));
 	}
-	const int32 tabWidth = fTabWidth->Value();
-	const int32 indentWidth = fIndentWidth->Value();
-	chosen.AddInt32("tabWidth", tabWidth);
-	chosen.AddInt32("indentSize", indentWidth == tabWidth ? 0 : indentWidth);
-	const BMessage *indent = MarkedMessage(fIndentField);
-	chosen.AddBool("insertSpaces", indent != nullptr && indent->GetBool("insertSpaces", false));
+	if (const std::optional<int32> insertSpaces = ChosenValue(fIndentField)) {
+		chosen.AddBool("insertSpaces", *insertSpaces != 0);
+	}
+	if (const std::optional<int32> tabWidth = ChosenValue(fTabWidth)) {
+		chosen.AddInt32("tabWidth", *tabWidth);
+	}
+	if (const std::optional<int32> indentSize = ChosenValue(fIndentWidth)) {
+		chosen.AddInt32("indentSize", *indentSize);
+	}
 	chosen.AddBool("wordWrap", fWordWrap->Value() == B_CONTROL_ON);
 	const BMessage *lineEnding = MarkedMessage(fLineEndingField);
 	chosen.AddInt32("lineEnding", lineEnding != nullptr ? lineEnding->GetInt32("lineEnding", 0) : 0);
@@ -270,9 +302,6 @@ void FileOptionsWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgMimeTypeChanged:
 			UpdateAutomaticLanguage();
-			break;
-		case kMsgIndentChanged:
-			UpdateIndentWidth();
 			break;
 		default:
 			BWindow::MessageReceived(message);

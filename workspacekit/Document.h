@@ -76,6 +76,7 @@ private:
 	// text.
 	std::optional<Fingerprint> fLoaded;
 	FileAttributes fAttributes;
+	EditorConfig fEditorConfig;
 
 	friend class DocumentRegistry;
 
@@ -99,6 +100,13 @@ public:
 	// The file keeps its attributes; otherwise they last as long as the
 	// document.
 	bool HasAttributes() const {return fHasAttributes;}
+	// What .editorconfig files said about the file when it was last read.
+	EditorConfig GetEditorConfig() const;
+	// The indentation: as chosen in the options, else as the .editorconfig
+	// files say, else the default.
+	Indentation GetIndentation() const;
+	// The same without the options.
+	Indentation AutomaticIndentation() const;
 	// The language the document gets without one chosen in its options:
 	// that of the MIME type, else of the path; empty for plain text.
 	std::string LanguageFor(const std::string &mimeType) const;

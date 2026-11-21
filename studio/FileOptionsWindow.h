@@ -1,6 +1,9 @@
 #pragma once
 
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <Messenger.h>
 #include <Referenceable.h>
@@ -12,7 +15,6 @@
 class BCheckBox;
 class BMenuField;
 class BMenuItem;
-class BSpinner;
 
 
 namespace Studio {
@@ -30,8 +32,8 @@ private:
 	BMenuItem *fAutomaticItem {};
 	BMenuField *fMimeTypeField {};
 	BMenuField *fIndentField {};
-	BSpinner *fTabWidth {};
-	BSpinner *fIndentWidth {};
+	BMenuField *fTabWidth {};
+	BMenuField *fIndentWidth {};
 	BCheckBox *fWordWrap {};
 	BMenuField *fLineEndingField {};
 	BCheckBox *fBom {};
@@ -40,7 +42,9 @@ private:
 	BMenuField *CreateMimeTypeField(const std::string &mimeType);
 	std::string SelectedMimeType() const;
 	void UpdateAutomaticLanguage();
-	void UpdateIndentWidth();
+	BMenuField *CreateChoiceField(const char *name, const char *label, const std::string &automatic,
+		const std::vector<std::pair<std::string, int32>> &choices, std::optional<int32> chosen);
+	static std::optional<int32> ChosenValue(BMenuField *field);
 	void Accept();
 
 public:

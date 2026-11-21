@@ -370,13 +370,12 @@ TEST_CASE("folds and the selection follow many edits at once")
 		// One undo step of many edits, as replace all makes it; the hidden
 		// lines stay unchanged (editing them unfolds).
 		ModelLock lock(*model);
-		model->BeginGroup(kNoObserver, EditKind::Other, {0, 0});
+		UndoScript script(*model, "Replace all", kNoObserver, {0, 0});
 		for (size_t line = 200; line-- > 0;) {
 			if (line <= 100 || line > 110) {
 				model->Insert(model->Text().LineStart(line), "y");
 			}
 		}
-		model->EndGroup({0, 0});
 	}
 	CHECK(core.Folds() == std::vector<FoldRange> {{100, 110}});
 	CHECK(core.RowCount() == rows);

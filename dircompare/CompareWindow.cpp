@@ -784,7 +784,7 @@ void CompareWindow::MessageReceived(BMessage *message)
 		case kMsgCopyChanges: {
 			const int pane = message->GetInt32("pane", 0);
 			if (fDiffView->CanCopyTo(pane)) {
-				fDiffView->CopyChanges(pane);
+				fDiffView->CopyChanges(pane, "Copy change");
 			}
 			break;
 		}

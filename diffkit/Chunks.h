@@ -57,16 +57,16 @@ std::vector<Chunk> SwapSides(const std::vector<Chunk> &chunks);
 std::vector<size_t> TouchedChunks(const std::vector<Chunk> &chunks, const LineRange &range, bool onA);
 
 // Copies the B lines of the chunks to A, replacing their A lines; with
-// selection (B lines), only the selected B lines are copied. One undo group
-// in A. The chunks must be current.
+// selection (B lines), only the selected B lines are copied. One undo step
+// in A named undoName. The chunks must be current.
 void ApplyToA(CodeEdit::TextModel &a, CodeEdit::TextModel &b, const std::vector<Chunk> &chunks,
-	const std::vector<size_t> &indexes, const LineRange *selection = nullptr);
+	const std::vector<size_t> &indexes, std::string_view undoName, const LineRange *selection = nullptr);
 
 // Reverts B lines to A: the chunks' B lines are replaced by their A lines;
 // with selection (B lines), unselected B lines stay after the A lines. One
-// undo group in B. The chunks must be current.
+// undo step in B named undoName. The chunks must be current.
 void RevertB(CodeEdit::TextModel &a, CodeEdit::TextModel &b, const std::vector<Chunk> &chunks,
-	const std::vector<size_t> &indexes, const LineRange *selection = nullptr);
+	const std::vector<size_t> &indexes, std::string_view undoName, const LineRange *selection = nullptr);
 
 
 } // DiffKit

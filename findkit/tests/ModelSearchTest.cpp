@@ -45,6 +45,13 @@ static std::optional<UndoResult> Undo(TextModel &model)
 }
 
 
+static std::string UndoName(TextModel &model)
+{
+	ModelLock lock(model);
+	return model.UndoName();
+}
+
+
 static bool CanUndo(TextModel &model)
 {
 	ModelLock lock(model);
@@ -106,6 +113,7 @@ TEST_CASE("replace selection is one undo step restoring the selection")
 	REQUIRE(after.has_value());
 	CHECK(*after == Selection {1, 5});
 	CHECK(Text(model) == "f[oo] bar");
+	CHECK(UndoName(model) == "Replace");
 
 	const std::optional<UndoResult> undo = Undo(model);
 	REQUIRE(undo.has_value());
@@ -124,6 +132,7 @@ TEST_CASE("replace all is one undo step")
 	CHECK(result.count == 3);
 	CHECK(Text(model) == "a# b# c#");
 	CHECK(result.selection == Selection {8, 8});
+	CHECK(UndoName(model) == "Replace all");
 
 	const std::optional<UndoResult> undo = Undo(model);
 	REQUIRE(undo.has_value());

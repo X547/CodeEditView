@@ -1671,7 +1671,7 @@ void CodeEditView::Cut()
 	}
 	CommitInputMethod();
 	Copy();
-	fCore->DeleteSelection();
+	fCore->DeleteSelection("Cut");
 	ApplyDirty();
 	ScrollToCaret(false);
 	RestartCaretBlink();
@@ -1777,7 +1777,7 @@ void CodeEditView::HandleInputMethodChanged(BMessage *message)
 
 	if (!input.composing) {
 		// Composing replaces the selection, like typing.
-		fCore->DeleteSelection();
+		fCore->DeleteSelection("Typing");
 		ApplyDirty();
 		input.composing = true;
 	}

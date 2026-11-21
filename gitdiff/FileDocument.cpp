@@ -138,7 +138,7 @@ void FileDocument::StageFile(Repository &repository)
 	TextModel &index = *Model(Side::Index);
 	TextModel &worktree = *Model(Side::Worktree);
 	const std::vector<Chunk> chunks = ComputeChunks(ModelText(index), ModelText(worktree));
-	ApplyToA(index, worktree, chunks, AllIndexes(chunks));
+	ApplyToA(index, worktree, chunks, AllIndexes(chunks), "Stage file");
 	if (Exists(Side::Index)) {
 		State(Side::Index).mode = State(Side::Worktree).mode;
 	}
@@ -156,7 +156,7 @@ void FileDocument::UnstageFile(Repository &repository)
 	TextModel &head = *Model(Side::Head);
 	TextModel &index = *Model(Side::Index);
 	const std::vector<Chunk> chunks = ComputeChunks(ModelText(head), ModelText(index));
-	RevertB(head, index, chunks, AllIndexes(chunks));
+	RevertB(head, index, chunks, AllIndexes(chunks), "Unstage file");
 	// The entry takes the HEAD mode, also when it was not in the index.
 	SideState &indexState = State(Side::Index);
 	const uint32_t mode = State(Side::Head).mode;

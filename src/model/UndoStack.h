@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <CodeEditView/TextModel.h>
@@ -24,6 +25,7 @@ public:
 		uint64_t id {};
 		ObserverId owner {};
 		EditKind kind {};
+		std::string name;
 		Selection before;
 		Selection after;
 		std::vector<Step> steps;
@@ -42,13 +44,15 @@ private:
 public:
 	// Starts a new undo group with its first step, or continues the previous
 	// group when the edit can be coalesced with it.
-	void BeginGroup(ObserverId owner, EditKind kind, const Selection &before, Step step);
+	void BeginGroup(std::string_view name, ObserverId owner, EditKind kind, const Selection &before, Step step);
 	void Append(Step step);
 	void EndGroup(const Selection &after);
 	void BreakCoalescing() {fCanCoalesce = false;}
 
 	bool CanUndo() const {return !fUndo.empty();}
 	bool CanRedo() const {return !fRedo.empty();}
+	const Group &TopUndo() const {return fUndo.back();}
+	const Group &TopRedo() const {return fRedo.back();}
 	Group PopUndo();
 	Group PopRedo();
 	void PushUndo(Group group);

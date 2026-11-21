@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Referenceable.h>
@@ -99,7 +100,8 @@ private:
 	void SavePosition();
 	void RestorePosition();
 	CodeEditView *FocusedView() const;
-	void CopyChunks(const std::vector<size_t> &indexes, int toPane, int selectionPane, const LineRange *selection);
+	void CopyChunks(const std::vector<size_t> &indexes, int toPane, int selectionPane, const LineRange *selection,
+		std::string_view undoName);
 
 public:
 	DiffView();
@@ -133,9 +135,10 @@ public:
 	// Copies changes into a pane: the chunks at the caret or selection of the
 	// focused view; with selected lines, only those (Chunks.h rules: selected
 	// source lines replace the chunk's target lines; selected target lines
-	// are reverted). One undo group; the window gets kMsgChangesCopied.
-	void CopyChanges(int toPane);
-	// Copies a whole chunk into a pane.
+	// are reverted). One undo step named undoName; the window gets
+	// kMsgChangesCopied.
+	void CopyChanges(int toPane, std::string_view undoName);
+	// Copies a whole chunk into a pane, as the undo step "Copy change".
 	void CopyChunk(size_t index, int toPane);
 	void GoToChunk(bool next);
 

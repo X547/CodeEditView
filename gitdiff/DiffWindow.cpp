@@ -698,12 +698,13 @@ void DiffWindow::MessageReceived(BMessage *message)
 		case kMsgStage:
 			// To the index: left in the unstaged diff, right in the staged one.
 			if (CanEdit()) {
-				fDiffView->CopyChanges(fKind == DiffKind::Unstaged ? 0 : 1);
+				fDiffView->CopyChanges(fKind == DiffKind::Unstaged ? 0 : 1,
+					fKind == DiffKind::Unstaged ? "Stage change" : "Unstage change");
 			}
 			break;
 		case kMsgRevert:
 			if (CanEdit() && fKind == DiffKind::Unstaged && fDocument->Exists(Side::Worktree)) {
-				fDiffView->CopyChanges(1);
+				fDiffView->CopyChanges(1, "Revert change");
 			}
 			break;
 		case kMsgChangesCopied:

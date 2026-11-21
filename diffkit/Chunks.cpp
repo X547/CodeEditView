@@ -169,7 +169,7 @@ static void ReplaceLines(TextModel &model, size_t first, size_t count, const std
 
 
 void ApplyToA(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
-	const std::vector<size_t> &indexes, const LineRange *selection)
+	const std::vector<size_t> &indexes, std::string_view undoName, const LineRange *selection)
 {
 	Rope bText;
 	{
@@ -177,7 +177,7 @@ void ApplyToA(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
 		bText = b.Text();
 	}
 	ModelLock lock(a);
-	a.BeginGroup(CodeEdit::kNoObserver, CodeEdit::EditKind::Other, {});
+	CodeEdit::UndoScript script(a, undoName, CodeEdit::kNoObserver, {});
 	for (const size_t index : Descending(indexes)) {
 		const Chunk &chunk = chunks.at(index);
 		std::vector<LinePiece> lines;
@@ -188,12 +188,11 @@ void ApplyToA(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
 		}
 		ReplaceLines(a, chunk.aFirst, chunk.aCount, lines);
 	}
-	a.EndGroup({});
 }
 
 
 void RevertB(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
-	const std::vector<size_t> &indexes, const LineRange *selection)
+	const std::vector<size_t> &indexes, std::string_view undoName, const LineRange *selection)
 {
 	Rope aText;
 	{
@@ -201,7 +200,7 @@ void RevertB(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
 		aText = a.Text();
 	}
 	ModelLock lock(b);
-	b.BeginGroup(CodeEdit::kNoObserver, CodeEdit::EditKind::Other, {});
+	CodeEdit::UndoScript script(b, undoName, CodeEdit::kNoObserver, {});
 	for (const size_t index : Descending(indexes)) {
 		const Chunk &chunk = chunks.at(index);
 		std::vector<LinePiece> lines;
@@ -217,7 +216,6 @@ void RevertB(TextModel &a, TextModel &b, const std::vector<Chunk> &chunks,
 		}
 		ReplaceLines(b, chunk.bFirst, chunk.bCount, lines);
 	}
-	b.EndGroup({});
 }
 
 

@@ -54,8 +54,9 @@ std::optional<Match> FindNext(
 std::optional<Match> SelectionMatch(const Searcher &searcher, const TextSource &text, const Selection &selection);
 
 
-// The model functions lock the model. Edits are one undo step owned by owner
-// (CodeEditView::EditOwner()), which restores the selection on undo.
+// The model functions lock the model. Edits are one undo step ("Replace",
+// "Replace all") owned by owner (CodeEditView::EditOwner()), which restores
+// the selection on undo.
 
 // Replaces the selection if it is a match; returns the selection of the
 // replacement text.

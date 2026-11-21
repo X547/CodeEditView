@@ -177,12 +177,12 @@ std::optional<Selection> Execute(
 	}
 
 	const Selection after {MapOffset(changes, before.anchor), MapOffset(changes, before.caret)};
-	model.BeginGroup(owner, EditKind::Other, before);
+	UndoScript script(model, {}, owner, before);
 	// Backwards, so the offsets of the changes still to make stay valid.
 	for (size_t i = changes.size(); i-- > 0;) {
 		model.Replace(changes[i].offset, changes[i].length, changes[i].text);
 	}
-	model.EndGroup(after);
+	script.SetAfter(after);
 	return after;
 }
 

@@ -277,7 +277,7 @@ private:
 	Selection ClampSelection(const Selection &selection) const;
 	void SetSelectionLocked(const Selection &selection);
 	void AddSelectionDirty(const Selection &selection);
-	void ReplaceRange(size_t from, size_t to, std::string_view text, EditKind kind);
+	void ReplaceRange(size_t from, size_t to, std::string_view text, std::string_view name, EditKind kind);
 	// Breaks the caret line after typing, for EditorSettings::hardWrapColumn.
 	void HardWrapCaretLine();
 	void ApplyUndoResult(const std::optional<UndoResult> &result, const ModelChanges &changes);
@@ -387,7 +387,8 @@ public:
 	// line (the caret line without a selection). Empty lines are skipped.
 	void ChangeIndent(bool increase);
 	void Paste(std::string_view text);
-	void DeleteSelection();
+	// name: of the undo step, e.g. "Cut".
+	void DeleteSelection(std::string_view name);
 	void SelectAll();
 	void SetSelection(const Selection &selection);
 	bool Undo();

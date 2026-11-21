@@ -11,9 +11,9 @@
 namespace FindKit {
 
 
-using CodeEdit::EditKind;
 using CodeEdit::ModelLock;
 using CodeEdit::Rope;
+using CodeEdit::UndoScript;
 
 
 //#pragma mark - RopeSource
@@ -109,9 +109,9 @@ std::optional<Selection> ReplaceSelection(
 
 	const std::string expanded = searcher.Expand(text, *match, replacement);
 	const Selection after {match->offset, match->offset + expanded.size()};
-	model.BeginGroup(owner, EditKind::Other, selection);
+	UndoScript script(model, "Replace", owner, selection);
 	model.Replace(match->offset, match->length, expanded);
-	model.EndGroup(after);
+	script.SetAfter(after);
 	return after;
 }
 
@@ -160,11 +160,11 @@ ReplaceAllResult ReplaceAll(
 
 	const Selection after = inSelection ? Selection {from, to + delta} : Selection {lastEnd, lastEnd};
 
-	model.BeginGroup(owner, EditKind::Other, selection);
+	UndoScript script(model, "Replace all", owner, selection);
 	for (size_t i = matches.size(); i-- > 0;) {
 		model.Replace(matches[i].offset, matches[i].length, expanded[i]);
 	}
-	model.EndGroup(after);
+	script.SetAfter(after);
 	return {matches.size(), after};
 }
 

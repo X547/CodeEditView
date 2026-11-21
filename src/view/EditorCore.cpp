@@ -74,25 +74,6 @@ void DirtyRows::AddShift(const RowShift &rowShift)
 }
 
 
-static Selection MapSelection(const Selection &selection, const EditRecord &edit)
-{
-	const bool forward = selection.anchor <= selection.caret;
-	size_t start = std::min(selection.anchor, selection.caret);
-	size_t end = std::max(selection.anchor, selection.caret);
-	if (start == end) {
-		start = end = edit.MapOffset(start, Gravity::Right);
-	} else {
-		// Text inserted at the selection edges stays outside of it.
-		start = edit.MapOffset(start, Gravity::Right);
-		end = edit.MapOffset(end, Gravity::Left);
-		if (start > end) {
-			start = end;
-		}
-	}
-	return forward ? Selection {start, end} : Selection {end, start};
-}
-
-
 static std::string NormalizeLineEndings(std::string_view text)
 {
 	std::string result;
@@ -902,12 +883,14 @@ void EditorCore::SetSelectionLocked(const Selection &selection)
 }
 
 
-void EditorCore::ReplaceRange(size_t from, size_t to, std::string_view text, EditKind kind)
+void EditorCore::ReplaceRange(size_t from, size_t to, std::string_view text, std::string_view name, EditKind kind)
 {
 	const size_t caretAfter = from + text.size();
-	fModel->BeginGroup(fObserver, kind, fSelection);
-	fModel->Replace(from, to - from, text);
-	fModel->EndGroup({caretAfter, caretAfter});
+	{
+		UndoScript script(*fModel, name, fObserver, fSelection, kind);
+		fModel->Replace(from, to - from, text);
+		script.SetAfter({caretAfter, caretAfter});
+	}
 	SyncLocked();
 	fGoalColumn.reset();
 	SetSelectionLocked(ClampSelection({caretAfter, caretAfter}));
@@ -1481,7 +1464,7 @@ void EditorCore::Delete(Deletion deletion)
 	if (from >= to) {
 		return;
 	}
-	ReplaceRange(from, to, {}, kind);
+	ReplaceRange(from, to, {}, "Delete", kind);
 }
 
 
@@ -1496,6 +1479,7 @@ void EditorCore::InsertText(std::string_view text)
 		std::min(fSelection.anchor, fSelection.caret),
 		std::max(fSelection.anchor, fSelection.caret),
 		text,
+		"Typing",
 		EditKind::Typing
 	);
 	if (fSettings.hardWrapColumn > 0 && text.find('\n') == std::string_view::npos) {
@@ -1554,9 +1538,11 @@ void EditorCore::HardWrapCaretLine()
 	}
 	const auto [from, to] = *blanks;
 	const size_t caretAfter = caret - (to - from) + inserted.size();
-	fModel->BeginGroup(fObserver, EditKind::Typing, fSelection);
-	fModel->Replace(from, to - from, inserted);
-	fModel->EndGroup({caretAfter, caretAfter});
+	{
+		UndoScript script(*fModel, "Typing", fObserver, fSelection, EditKind::Typing);
+		fModel->Replace(from, to - from, inserted);
+		script.SetAfter({caretAfter, caretAfter});
+	}
 	SyncLocked();
 	SetSelectionLocked(ClampSelection({caretAfter, caretAfter}));
 }
@@ -1584,7 +1570,7 @@ void EditorCore::InsertNewline()
 			inserted += ch;
 		}
 	}
-	ReplaceRange(from, to, inserted, EditKind::Typing);
+	ReplaceRange(from, to, inserted, "Typing", EditKind::Typing);
 }
 
 
@@ -1603,7 +1589,7 @@ void EditorCore::InsertTab()
 		const uint32_t column = LineColumnOfOffset(from);
 		inserted.assign(IndentSize() - column % IndentSize(), ' ');
 	}
-	ReplaceRange(from, to, inserted, EditKind::Typing);
+	ReplaceRange(from, to, inserted, "Typing", EditKind::Typing);
 }
 
 
@@ -1630,34 +1616,35 @@ void EditorCore::ChangeIndent(bool increase)
 	}
 
 	const std::string unit = fSettings.insertSpacesForTab ? std::string(IndentSize(), ' ') : std::string("\t");
-	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
-	// Last line first, so the offsets of earlier lines stay valid.
-	for (size_t line = lastLine + 1; line-- > firstLine;) {
-		const size_t lineStart = text.LineStart(line);
-		const size_t lineEnd = text.LineEnd(line);
-		if (lineStart == lineEnd) {
-			continue;
-		}
-		if (increase) {
-			fModel->Insert(lineStart, unit);
-			continue;
-		}
-		size_t length = 0;
-		if (text.ByteAt(lineStart) == '\t') {
-			length = 1;
-		} else {
-			while (length < IndentSize() && lineStart + length < lineEnd && text.ByteAt(lineStart + length) == ' ') {
-				length++;
+	{
+		UndoScript script(*fModel, increase ? "Indent" : "Unindent", fObserver, fSelection);
+		// Last line first, so the offsets of earlier lines stay valid.
+		for (size_t line = lastLine + 1; line-- > firstLine;) {
+			const size_t lineStart = text.LineStart(line);
+			const size_t lineEnd = text.LineEnd(line);
+			if (lineStart == lineEnd) {
+				continue;
 			}
-		}
-		if (length > 0) {
-			fModel->Erase(lineStart, length);
+			if (increase) {
+				fModel->Insert(lineStart, unit);
+				continue;
+			}
+			size_t length = 0;
+			if (text.ByteAt(lineStart) == '\t') {
+				length = 1;
+			} else {
+				while (length < IndentSize() && lineStart + length < lineEnd && text.ByteAt(lineStart + length) == ' ') {
+					length++;
+				}
+			}
+			if (length > 0) {
+				fModel->Erase(lineStart, length);
+			}
 		}
 	}
 	// The selection follows the edits (see MapSelection()).
 	SyncLocked();
 	fGoalColumn.reset();
-	fModel->EndGroup(fSelection);
 }
 
 
@@ -1674,11 +1661,11 @@ void EditorCore::Paste(std::string_view text)
 	if (normalized.empty() && from == to) {
 		return;
 	}
-	ReplaceRange(from, to, normalized, EditKind::Other);
+	ReplaceRange(from, to, normalized, "Paste", EditKind::Other);
 }
 
 
-void EditorCore::DeleteSelection()
+void EditorCore::DeleteSelection(std::string_view name)
 {
 	ModelLock lock(*fModel);
 	Prepare();
@@ -1690,7 +1677,7 @@ void EditorCore::DeleteSelection()
 	if (from == to) {
 		return;
 	}
-	ReplaceRange(from, to, {}, EditKind::Other);
+	ReplaceRange(from, to, {}, name, EditKind::Other);
 }
 
 
@@ -1712,10 +1699,12 @@ void EditorCore::MoveText(const TextRange &source, size_t target)
 	const std::string moved = text.Substring(source.start, length);
 	const size_t insertAt = target > source.end ? target - length : target;
 
-	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
-	fModel->Erase(source.start, length);
-	fModel->Insert(insertAt, moved);
-	fModel->EndGroup({insertAt, insertAt + length});
+	{
+		UndoScript script(*fModel, "Move", fObserver, fSelection);
+		fModel->Erase(source.start, length);
+		fModel->Insert(insertAt, moved);
+		script.SetAfter({insertAt, insertAt + length});
+	}
 	SyncLocked();
 	fGoalColumn.reset();
 	SetSelectionLocked(ClampSelection({insertAt, insertAt + length}));
@@ -1735,9 +1724,11 @@ void EditorCore::InsertTextAt(size_t offset, std::string_view text)
 		return;
 	}
 	const size_t end = offset + normalized.size();
-	fModel->BeginGroup(fObserver, EditKind::Other, fSelection);
-	fModel->Insert(offset, normalized);
-	fModel->EndGroup({offset, end});
+	{
+		UndoScript script(*fModel, "Drop", fObserver, fSelection);
+		fModel->Insert(offset, normalized);
+		script.SetAfter({offset, end});
+	}
 	SyncLocked();
 	fGoalColumn.reset();
 	SetSelectionLocked(ClampSelection({offset, end}));

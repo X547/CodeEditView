@@ -116,18 +116,16 @@ static bool HasMark(TextModel &model, MarkId id)
 static void Type(TextModel &model, ObserverId owner, size_t offset, std::string_view text)
 {
 	ModelLock lock(model);
-	model.BeginGroup(owner, EditKind::Typing, {offset, offset});
+	UndoScript script(model, "Typing", owner, {offset, offset}, EditKind::Typing);
 	model.Insert(offset, text);
-	model.EndGroup({offset + text.size(), offset + text.size()});
 }
 
 
 static void Backspace(TextModel &model, ObserverId owner, size_t caret)
 {
 	ModelLock lock(model);
-	model.BeginGroup(owner, EditKind::Backspace, {caret, caret});
+	UndoScript script(model, "Delete", owner, {caret, caret}, EditKind::Backspace);
 	model.Erase(caret - 1, 1);
-	model.EndGroup({caret - 1, caret - 1});
 }
 
 
@@ -289,10 +287,12 @@ TEST_CASE("undo and redo restore text and owner selection")
 	TextModel model;
 	ModelLock lock(model);
 	model.SetText("hello");
-	model.BeginGroup(7, EditKind::Other, {0, 5});
-	model.Replace(0, 5, "bye");
-	model.Insert(3, "!");
-	model.EndGroup({4, 4});
+	{
+		UndoScript script(model, "Greet", 7, {0, 5});
+		model.Replace(0, 5, "bye");
+		model.Insert(3, "!");
+		script.SetAfter({4, 4});
+	}
 
 	std::optional<UndoResult> result = model.Undo();
 	REQUIRE(result.has_value());
@@ -310,6 +310,60 @@ TEST_CASE("undo and redo restore text and owner selection")
 	model.Insert(0, "x");
 	CHECK_FALSE(model.CanRedo());
 	CHECK_FALSE(model.Redo().has_value());
+}
+
+
+TEST_CASE("undo scripts are named undo steps")
+{
+	TextModel model;
+	ModelLock lock(model);
+	model.SetText("a b");
+	CHECK(model.UndoName().empty());
+	{
+		UndoScript outer(model, "Outer", 3, {0, 0});
+		model.Replace(0, 1, "xy");
+		{
+			UndoScript inner(model, "Inner", 4, {1, 1});
+			model.Insert(model.Text().Length(), "!");
+		}
+	}
+	{
+		UndoScript empty(model, "Empty", 3, {0, 0});
+	}
+	CHECK(model.Text().ToString() == "xy b!");
+	CHECK(model.UndoName() == "Outer");
+	CHECK(model.RedoName().empty());
+
+	const std::optional<UndoResult> result = model.Undo();
+	REQUIRE(result.has_value());
+	CHECK(result->owner == 3);
+	CHECK(model.Text().ToString() == "a b");
+	CHECK_FALSE(model.CanUndo());
+	CHECK(model.UndoName().empty());
+	CHECK(model.RedoName() == "Outer");
+
+	model.Insert(0, "z");
+	CHECK(model.UndoName().empty());
+	CHECK(model.RedoName().empty());
+}
+
+
+TEST_CASE("the selection after an undo script follows the edits")
+{
+	TextModel model;
+	ModelLock lock(model);
+	model.SetText("one two");
+	{
+		UndoScript script(model, "Edit", 1, {4, 7});
+		model.Insert(0, ">> ");
+		CHECK(script.After() == Selection {7, 10});
+		// Inserted at the end of the selection: stays outside of it.
+		model.Insert(10, "s");
+	}
+	model.Undo();
+	const std::optional<UndoResult> result = model.Redo();
+	REQUIRE(result.has_value());
+	CHECK(result->selection == Selection {7, 10});
 }
 
 

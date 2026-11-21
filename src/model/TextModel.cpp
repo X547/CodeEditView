@@ -250,7 +250,25 @@ EditRecord TextModel::ApplyEdit(size_t offset, size_t length, std::string_view t
 }
 
 
-void TextModel::BeginGroup(ObserverId owner, EditKind kind, const Selection &before)
+Selection MapSelection(const Selection &selection, const EditRecord &edit)
+{
+	const bool forward = selection.anchor <= selection.caret;
+	size_t start = std::min(selection.anchor, selection.caret);
+	size_t end = std::max(selection.anchor, selection.caret);
+	if (start == end) {
+		start = end = edit.MapOffset(start, Gravity::Right);
+	} else {
+		start = edit.MapOffset(start, Gravity::Right);
+		end = edit.MapOffset(end, Gravity::Left);
+		if (start > end) {
+			start = end;
+		}
+	}
+	return forward ? Selection {start, end} : Selection {end, start};
+}
+
+
+void TextModel::BeginGroup(std::string_view name, ObserverId owner, EditKind kind, const Selection &before)
 {
 	AssertLocked();
 	if (fGroupDepth++ > 0) {
@@ -258,18 +276,20 @@ void TextModel::BeginGroup(ObserverId owner, EditKind kind, const Selection &bef
 	}
 	fGroupOwner = owner;
 	fGroupKind = kind;
+	fGroupName = name;
 	fGroupBefore = before;
+	fGroupAfter = before;
 	fGroupHasSteps = false;
 }
 
 
-void TextModel::EndGroup(const Selection &after)
+void TextModel::EndGroup()
 {
 	AssertLocked();
 	Assert(fGroupDepth > 0, "TextModel::EndGroup without BeginGroup");
 	fGroupDepth--;
 	if (fGroupDepth == 0 && fGroupHasSteps) {
-		fUndo->EndGroup(after);
+		fUndo->EndGroup(fGroupAfter);
 	}
 }
 
@@ -284,7 +304,7 @@ void TextModel::Replace(size_t offset, size_t length, std::string_view text)
 
 	const bool implicitGroup = fGroupDepth == 0;
 	if (implicitGroup) {
-		BeginGroup(kNoObserver, EditKind::Other, {offset, offset + length});
+		BeginGroup({}, kNoObserver, EditKind::Other, {offset, offset + length});
 	}
 
 	UndoStack::Step step;
@@ -293,14 +313,17 @@ void TextModel::Replace(size_t offset, size_t length, std::string_view text)
 	const EditRecord edit = ApplyEdit(offset, length, step.inserted, step.removed);
 
 	if (!fGroupHasSteps) {
-		fUndo->BeginGroup(fGroupOwner, fGroupKind, fGroupBefore, std::move(step));
+		fUndo->BeginGroup(fGroupName, fGroupOwner, fGroupKind, fGroupBefore, std::move(step));
 		fGroupHasSteps = true;
 	} else {
 		fUndo->Append(std::move(step));
 	}
 
 	if (implicitGroup) {
-		EndGroup({edit.NewEnd(), edit.NewEnd()});
+		fGroupAfter = {edit.NewEnd(), edit.NewEnd()};
+		EndGroup();
+	} else {
+		fGroupAfter = MapSelection(fGroupAfter, edit);
 	}
 }
 
@@ -409,6 +432,20 @@ std::optional<UndoResult> TextModel::Redo()
 	const UndoResult result {group.owner, group.after};
 	fUndo->PushUndo(std::move(group));
 	return result;
+}
+
+
+std::string TextModel::UndoName() const
+{
+	AssertLocked();
+	return fUndo->CanUndo() ? fUndo->TopUndo().name : std::string();
+}
+
+
+std::string TextModel::RedoName() const
+{
+	AssertLocked();
+	return fUndo->CanRedo() ? fUndo->TopRedo().name : std::string();
 }
 
 
@@ -712,6 +749,27 @@ void TextModel::RetireWorkerThread(thread_id thread)
 {
 	AssertLocked();
 	fRetiredWorkers.push_back(thread);
+}
+
+
+//#pragma mark - UndoScript
+
+UndoScript::UndoScript(
+	TextModel &model,
+	std::string_view name,
+	ObserverId owner,
+	const Selection &before,
+	EditKind kind
+):
+	fModel(model)
+{
+	fModel.BeginGroup(name, owner, kind, before);
+}
+
+
+UndoScript::~UndoScript()
+{
+	fModel.EndGroup();
 }
 
 

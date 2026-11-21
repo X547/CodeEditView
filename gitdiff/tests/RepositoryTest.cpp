@@ -216,7 +216,7 @@ TEST_CASE("file documents stage and unstage")
 	TextModel &worktree = *document->Model(Side::Worktree);
 	const std::vector<Chunk> chunks = ComputeChunks(Text(index), Text(worktree));
 	REQUIRE(chunks.size() == 2);
-	ApplyToA(index, worktree, chunks, {1});
+	ApplyToA(index, worktree, chunks, {1}, "Copy change");
 	CHECK(document->IsModified(Side::Index));
 	document->WriteIndex(repository);
 	CHECK_FALSE(document->IsModified(Side::Index));

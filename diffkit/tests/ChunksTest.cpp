@@ -107,21 +107,22 @@ TEST_CASE("transferring whole chunks")
 	REQUIRE(chunks.size() >= 2);
 	REQUIRE(chunks[1] == Chunk {1, 1, 2, 1});
 
-	ApplyToA(*a, *b, chunks, {1});
+	ApplyToA(*a, *b, chunks, {1}, "Copy change");
 	CHECK(Text(*a) == "1\nx\n3\n4\n5");
 	{
 		ModelLock lock(*a);
+		CHECK(a->UndoName() == "Copy change");
 		REQUIRE(a->Undo().has_value());
 	}
 	CHECK(Text(*a) == "1\n2\n3\n4\n5");
 
-	RevertB(*a, *b, chunks, All(chunks));
+	RevertB(*a, *b, chunks, All(chunks), "Copy change");
 	CHECK(Text(*b) == "1\n2\n3\n4\n5");
 	{
 		ModelLock lock(*b);
 		REQUIRE(b->Undo().has_value());
 	}
-	ApplyToA(*a, *b, chunks, All(chunks));
+	ApplyToA(*a, *b, chunks, All(chunks), "Copy change");
 	CHECK(Text(*a) == Text(*b));
 }
 
@@ -135,7 +136,7 @@ TEST_CASE("transferring selected lines")
 
 	// Staging line x: the chunk's A line goes, only x comes.
 	const LineRange first {1, 1};
-	ApplyToA(*a, *b, chunks, {0}, &first);
+	ApplyToA(*a, *b, chunks, {0}, "Copy change", &first);
 	CHECK(Text(*a) == "1\nx\n3\n");
 	{
 		ModelLock lock(*a);
@@ -144,7 +145,7 @@ TEST_CASE("transferring selected lines")
 
 	// Reverting line y: the A line comes back, the unselected x stays.
 	const LineRange second {2, 2};
-	RevertB(*a, *b, chunks, {0}, &second);
+	RevertB(*a, *b, chunks, {0}, "Copy change", &second);
 	CHECK(Text(*b) == "1\n2\nx\n3\n");
 	{
 		ModelLock lock(*b);
@@ -155,7 +156,7 @@ TEST_CASE("transferring selected lines")
 	const std::vector<Chunk> swapped = SwapSides(chunks);
 	CHECK(swapped == std::vector<Chunk> {{1, 2, 1, 1}});
 	const LineRange third {1, 1};
-	ApplyToA(*b, *a, swapped, {0}, &third);
+	ApplyToA(*b, *a, swapped, {0}, "Copy change", &third);
 	CHECK(Text(*b) == "1\n2\n3\n");
 }
 
@@ -165,13 +166,13 @@ TEST_CASE("transfers keep missing final newlines")
 	BReference<TextModel> a = MakeModel("1\n2");
 	BReference<TextModel> b = MakeModel("1\n2\n3");
 	std::vector<Chunk> chunks = ComputeChunks(Text(*a), Text(*b));
-	ApplyToA(*a, *b, chunks, All(chunks));
+	ApplyToA(*a, *b, chunks, All(chunks), "Copy change");
 	CHECK(Text(*a) == "1\n2\n3");
 
 	a = MakeModel("1\nend");
 	b = MakeModel("x\n1\nend");
 	chunks = ComputeChunks(Text(*a), Text(*b));
-	RevertB(*a, *b, chunks, All(chunks));
+	RevertB(*a, *b, chunks, All(chunks), "Copy change");
 	CHECK(Text(*b) == "1\nend");
 
 	// Reverting part of a last chunk: A's last line gets a newline when
@@ -180,7 +181,7 @@ TEST_CASE("transfers keep missing final newlines")
 	b = MakeModel("1\nx\ny");
 	chunks = ComputeChunks(Text(*a), Text(*b));
 	const LineRange selection {1, 1};
-	RevertB(*a, *b, chunks, All(chunks), &selection);
+	RevertB(*a, *b, chunks, All(chunks), "Copy change", &selection);
 	CHECK(Text(*b) == "1\n2\ny");
 }
 
@@ -208,18 +209,18 @@ TEST_CASE("randomized transfers")
 
 		BReference<TextModel> a = MakeModel(aText);
 		BReference<TextModel> b = MakeModel(bText);
-		ApplyToA(*a, *b, chunks, All(chunks));
+		ApplyToA(*a, *b, chunks, All(chunks), "Copy change");
 		CHECK(Text(*a) == bText);
 
 		a = MakeModel(aText);
-		RevertB(*a, *b, chunks, All(chunks));
+		RevertB(*a, *b, chunks, All(chunks), "Copy change");
 		CHECK(Text(*b) == aText);
 
 		// One chunk at a time, from the last one, gives the same.
 		a = MakeModel(aText);
 		b = MakeModel(bText);
 		for (size_t i = chunks.size(); i-- > 0;) {
-			ApplyToA(*a, *b, chunks, {i});
+			ApplyToA(*a, *b, chunks, {i}, "Copy change");
 		}
 		CHECK(Text(*a) == bText);
 
@@ -227,10 +228,10 @@ TEST_CASE("randomized transfers")
 		const std::vector<Chunk> swapped = SwapSides(chunks);
 		a = MakeModel(aText);
 		b = MakeModel(bText);
-		ApplyToA(*b, *a, swapped, All(swapped));
+		ApplyToA(*b, *a, swapped, All(swapped), "Copy change");
 		CHECK(Text(*b) == aText);
 		b = MakeModel(bText);
-		RevertB(*b, *a, swapped, All(swapped));
+		RevertB(*b, *a, swapped, All(swapped), "Copy change");
 		CHECK(Text(*a) == bText);
 	}
 }

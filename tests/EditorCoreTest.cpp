@@ -684,6 +684,37 @@ TEST_CASE("undoing much typing redraws only the typed lines")
 }
 
 
+TEST_CASE("edits are undo steps named after the operation")
+{
+	BReference<TextModel> model = MakeModel("abc\ndef");
+	EditorCore core(model);
+	auto undoName = [&model]() {
+		ModelLock lock(*model);
+		return model->UndoName();
+	};
+
+	Place(core, 1);
+	core.InsertText("x");
+	CHECK(undoName() == "Typing");
+	core.Delete(Deletion::CharacterLeft);
+	CHECK(undoName() == "Delete");
+	core.Paste("y");
+	CHECK(undoName() == "Paste");
+	core.ChangeIndent(true);
+	CHECK(undoName() == "Indent");
+	core.SetSelection({0, 2});
+	core.DeleteSelection("Cut");
+	CHECK(undoName() == "Cut");
+	core.MoveText({0, 2}, 5);
+	CHECK(undoName() == "Move");
+	core.InsertTextAt(0, "z");
+	CHECK(undoName() == "Drop");
+
+	REQUIRE(core.Undo());
+	CHECK(undoName() == "Move");
+}
+
+
 TEST_CASE("read-only view")
 {
 	BReference<TextModel> model = MakeModel("abc\ndef");
@@ -701,7 +732,7 @@ TEST_CASE("read-only view")
 	core.Paste("y");
 	core.ChangeIndent(true);
 	core.SetSelection({0, 2});
-	core.DeleteSelection();
+	core.DeleteSelection("Cut");
 	core.MoveText({0, 2}, 5);
 	core.InsertTextAt(0, "z");
 	CHECK(Text(*model) == "abc\ndef");

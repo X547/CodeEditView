@@ -495,7 +495,7 @@ CodeEditView *DiffView::FocusedView() const
 
 
 void DiffView::CopyChunks(const std::vector<size_t> &indexes, int toPane, int selectionPane,
-	const LineRange *selection)
+	const LineRange *selection, std::string_view undoName)
 {
 	if (indexes.empty()) {
 		return;
@@ -509,15 +509,15 @@ void DiffView::CopyChunks(const std::vector<size_t> &indexes, int toPane, int se
 	try {
 		if (toPane == 0) {
 			if (selectionInRight) {
-				ApplyToA(left, right, fChunks, indexes, selection);
+				ApplyToA(left, right, fChunks, indexes, undoName, selection);
 			} else {
-				RevertB(right, left, SwapSides(fChunks), indexes, selection);
+				RevertB(right, left, SwapSides(fChunks), indexes, undoName, selection);
 			}
 		} else {
 			if (selectionInRight) {
-				RevertB(left, right, fChunks, indexes, selection);
+				RevertB(left, right, fChunks, indexes, undoName, selection);
 			} else {
-				ApplyToA(right, left, SwapSides(fChunks), indexes, selection);
+				ApplyToA(right, left, SwapSides(fChunks), indexes, undoName, selection);
 			}
 		}
 	} catch (const std::exception &e) {
@@ -531,7 +531,7 @@ void DiffView::CopyChunks(const std::vector<size_t> &indexes, int toPane, int se
 }
 
 
-void DiffView::CopyChanges(int toPane)
+void DiffView::CopyChanges(int toPane, std::string_view undoName)
 {
 	if (!HasModels()) {
 		return;
@@ -544,7 +544,7 @@ void DiffView::CopyChanges(int toPane)
 	bool empty;
 	const LineRange range = SelectedLines(view, empty);
 	const std::vector<size_t> indexes = TouchedChunks(fChunks, range, pane == 0);
-	CopyChunks(indexes, toPane, pane, empty ? nullptr : &range);
+	CopyChunks(indexes, toPane, pane, empty ? nullptr : &range, undoName);
 }
 
 
@@ -553,7 +553,7 @@ void DiffView::CopyChunk(size_t index, int toPane)
 	if (!HasModels() || !fCopyTo[toPane] || fDiffPending || index >= fChunks.size()) {
 		return;
 	}
-	CopyChunks({index}, toPane, 1, nullptr);
+	CopyChunks({index}, toPane, 1, nullptr, "Copy change");
 }
 
 

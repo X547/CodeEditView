@@ -558,7 +558,7 @@ void StepEditor::MessageReceived(BMessage *message)
 			break;
 		case kMsgTakeChange:
 			if (File *file = Selected(); file != nullptr && !file->wholeFile && !file->deleted) {
-				fDiffView->CopyChanges(1);
+				fDiffView->CopyChanges(1, "Take change");
 			}
 			break;
 		case B_UNDO:

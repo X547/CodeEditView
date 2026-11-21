@@ -32,7 +32,7 @@ bool UndoStack::CanCoalesce(ObserverId owner, EditKind kind, const Step &step) c
 }
 
 
-void UndoStack::BeginGroup(ObserverId owner, EditKind kind, const Selection &before, Step step)
+void UndoStack::BeginGroup(std::string_view name, ObserverId owner, EditKind kind, const Selection &before, Step step)
 {
 	fRedo.clear();
 	if (CanCoalesce(owner, kind, step)) {
@@ -44,6 +44,7 @@ void UndoStack::BeginGroup(ObserverId owner, EditKind kind, const Selection &bef
 	group.id = fNextId++;
 	group.owner = owner;
 	group.kind = kind;
+	group.name = name;
 	group.before = before;
 	group.after = before;
 	group.steps.push_back(std::move(step));

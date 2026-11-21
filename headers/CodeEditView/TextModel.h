@@ -34,6 +34,7 @@ namespace CodeEdit {
 class EditorCore;
 class SyntaxState;
 class SyntaxWorker;
+class UndoScript;
 class UndoStack;
 
 
@@ -54,8 +55,13 @@ struct Selection {
 };
 
 
-// Consecutive edit groups of the same kind and owner that continue each other
-// are merged into one undo step.
+// The selection after the edit: text inserted at its edges stays outside of
+// it, a caret moves after text inserted at it.
+Selection MapSelection(const Selection &selection, const EditRecord &edit);
+
+
+// Consecutive undo steps of the same kind and owner that continue each other
+// are merged into one.
 enum class EditKind {
 	Other,
 	Typing,
@@ -139,10 +145,14 @@ private:
 	std::unique_ptr<MarkSet> fSharedMarks;
 
 	std::unique_ptr<UndoStack> fUndo;
+	// The open undo script; nested scripts only count the depth.
 	int32_t fGroupDepth {};
 	ObserverId fGroupOwner {};
 	EditKind fGroupKind {};
+	std::string fGroupName;
 	Selection fGroupBefore;
+	// The selection after the edits so far.
+	Selection fGroupAfter;
 	bool fGroupHasSteps {};
 
 	LineEnding fLineEnding = LineEnding::LF;
@@ -159,9 +169,12 @@ private:
 	friend class SyntaxWorker;
 	friend class MarkSet;
 	friend class DecorationSet;
+	friend class UndoScript;
 
 	void AssertLocked() const;
 	void CheckRange(size_t offset, size_t length) const;
+	void BeginGroup(std::string_view name, ObserverId owner, EditKind kind, const Selection &before);
+	void EndGroup();
 	EditRecord ApplyTextEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
 	EditRecord ApplyEdit(size_t offset, size_t length, std::string_view text, std::string &removed);
 	void ResetText(const Rope &text);
@@ -184,9 +197,8 @@ public:
 	const Rope &Text() const;
 	uint64_t Revision() const;
 
-	// Text editing.
-	void BeginGroup(ObserverId owner, EditKind kind, const Selection &before);
-	void EndGroup(const Selection &after);
+	// Text editing. An edit outside of an UndoScript is an undo step of its
+	// own, without name and owner.
 	void Replace(size_t offset, size_t length, std::string_view text);
 	void Insert(size_t offset, std::string_view text) {Replace(offset, 0, text);}
 	void Erase(size_t offset, size_t length) {Replace(offset, length, {});}
@@ -197,6 +209,10 @@ public:
 	bool CanRedo() const;
 	std::optional<UndoResult> Undo();
 	std::optional<UndoResult> Redo();
+	// Names of the steps Undo() and Redo() would take back or make again;
+	// empty if there is none or it has no name.
+	std::string UndoName() const;
+	std::string RedoName() const;
 	void BreakUndoCoalescing();
 	bool IsModified() const;
 	void SetSavePoint();
@@ -237,6 +253,38 @@ public:
 	uint64_t SyntaxRevision() const;
 	// Definitions of the last syntax tree; empty without one.
 	std::vector<OutlineItem> Outline() const;
+};
+
+
+// The edits of a model made while a script exists are one undo step with the
+// script's name, like a script of operations in BlackBox. Undoing it restores
+// the selection before of the owner, the view that made the edits
+// (CodeEditView::EditOwner()); redoing it restores the selection after,
+// which is the selection before mapped through the edits unless set.
+//
+// Scripts nest: the edits of an inner script belong to the outermost one,
+// which gives the name, owner and kind. A script without edits makes no undo
+// step. The model must stay locked while the script exists.
+class UndoScript {
+private:
+	TextModel &fModel;
+
+public:
+	UndoScript(
+		TextModel &model,
+		std::string_view name,
+		ObserverId owner,
+		const Selection &before,
+		EditKind kind = EditKind::Other
+	);
+	~UndoScript();
+
+	UndoScript(const UndoScript &other) = delete;
+	UndoScript &operator=(const UndoScript &other) = delete;
+
+	// The selection after the edits so far; later edits move it.
+	Selection After() const {return fModel.fGroupAfter;}
+	void SetAfter(const Selection &after) {fModel.fGroupAfter = after;}
 };
 
 

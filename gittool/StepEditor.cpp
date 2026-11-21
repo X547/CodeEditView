@@ -612,7 +612,7 @@ CodeEditView *StepEditor::TargetEditor()
 	if (CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this)) {
 		return focused;
 	}
-	return fDiffView->View(1);
+	return fDiffView->FocusedView();
 }
 
 

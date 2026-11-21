@@ -99,7 +99,6 @@ private:
 	void ApplySettings();
 	void SavePosition();
 	void RestorePosition();
-	CodeEditView *FocusedView() const;
 	void CopyChunks(const std::vector<size_t> &indexes, int toPane, int selectionPane, const LineRange *selection,
 		std::string_view undoName);
 
@@ -113,6 +112,9 @@ public:
 	bool HasModels() const {return fModels[0].IsSet() && fModels[1].IsSet();}
 	const std::string &Key() const {return fKey;}
 	CodeEditView *View(int pane) const {return fViews[pane];}
+	// The focused pane, else the right one: the target of editor commands
+	// (CodeEdit::EditorCommands) when the focus is not in an editor.
+	CodeEditView *FocusedView() const;
 	const std::vector<Chunk> &Chunks() const {return fChunks;}
 
 	void SetLabel(int pane, const char *text);

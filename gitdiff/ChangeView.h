@@ -130,9 +130,9 @@ public:
 	// lines, word wrap and the diff algorithm; next and previous change.
 	void AddViewItems(BMenu *menu);
 	void AddNavigationItems(BMenu *menu);
-	// Handles the commands of those items, and passes editing commands
-	// (undo, copy etc.) to the focused editor. Returns whether it handled
-	// the message.
+	// Handles the commands of those items. Returns whether it handled the
+	// message. Editing commands (undo, copy etc.) are editor commands
+	// (CodeEdit::EditorCommands) of the window.
 	bool HandleCommand(BMessage *message);
 
 	void AttachedToWindow() override;

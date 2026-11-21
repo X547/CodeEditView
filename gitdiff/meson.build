@@ -25,11 +25,11 @@ gitDiffUi = static_library(
 		'MessageEditor.cpp',
 		'PathMenu.cpp',
 	),
-	dependencies: [gitDiffCoreDep]
+	dependencies: [gitDiffCoreDep, findKitDep]
 )
 gitDiffUiDep = declare_dependency(
 	link_with: gitDiffUi,
-	dependencies: [gitDiffCoreDep, cpp.find_library('tracker')]
+	dependencies: [gitDiffCoreDep, findKitDep, cpp.find_library('tracker')]
 )
 
 if get_option('gitdiff')

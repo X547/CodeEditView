@@ -90,12 +90,16 @@ private:
 	void Commit();
 	void CommitNow(bool writeIndex);
 	bool HasModifiedDocuments() const;
+	// Of the editor commands: the focused editor (a pane or the message),
+	// else a pane.
+	CodeEditView *TargetEditor();
 
 public:
 	// Takes the repository; shows the file at relativePath if not empty.
 	DiffWindow(std::unique_ptr<Repository> repository, const std::string &relativePath);
 	~DiffWindow() override;
 
+	void MenusBeginning() override;
 	void MessageReceived(BMessage *message) override;
 	void WindowActivated(bool active) override;
 	bool QuitRequested() override;

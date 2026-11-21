@@ -1,4 +1,4 @@
-#include <CodeEditView/EditorCommands.h>
+#include "EditCommands.h"
 
 #include <string>
 
@@ -17,7 +17,7 @@ namespace CodeEdit {
 namespace EditorCommands {
 
 
-// Undo, redo, the clipboard and select all, executed by the view itself.
+// Executed by the view itself.
 class EditCommandSet: public EditorCommandSet {
 private:
 	static bool HasSelection(CodeEditView &view);
@@ -112,11 +112,15 @@ void EditCommandSet::UpdateItem(BMenuItem &item, CodeEditView *view)
 }
 
 
-void AddEditItems(BMenu *menu)
+EditorCommandSet &BuiltInEditCommands()
 {
 	static EditCommandSet sCommands;
-	Register(&sCommands);
+	return sCommands;
+}
 
+
+void AddEditItems(BMenu *menu)
+{
 	menu->AddItem(new BMenuItem("Undo", new BMessage(B_UNDO), 'Z'));
 	menu->AddItem(new BMenuItem("Redo", new BMessage(B_REDO), 'Z', B_SHIFT_KEY));
 	menu->AddSeparatorItem();

@@ -12,6 +12,8 @@
 
 #include <CodeEditView/CodeEditView.h>
 
+#include "EditCommands.h"
+
 
 namespace CodeEdit {
 
@@ -37,6 +39,10 @@ static EditorCommandSet *FindSet(uint32 what)
 		if (set->Handles(what)) {
 			return set;
 		}
+	}
+	EditorCommandSet &builtIn = BuiltInEditCommands();
+	if (builtIn.Handles(what)) {
+		return &builtIn;
 	}
 	return nullptr;
 }

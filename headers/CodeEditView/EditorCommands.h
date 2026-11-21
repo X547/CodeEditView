@@ -69,10 +69,11 @@ void UpdateMenu(BMenu *menu, CodeEditView *view);
 // Executes the message if a registered set handles it.
 bool Dispatch(BMessage *message, CodeEditView *view);
 
-// Adds the undo, redo, clipboard and select all items to the menu and
-// registers their commands (B_UNDO, B_REDO, B_CUT, B_COPY, B_PASTE,
-// B_SELECT_ALL). Undo and redo are labeled with the name of the undo step
-// (UndoScript) and disabled without one.
+// Adds the undo, redo, clipboard and select all items to the menu. Their
+// commands (B_UNDO, B_REDO, B_CUT, B_COPY, B_PASTE, B_SELECT_ALL) are built
+// in: Dispatch() and UpdateMenu() handle them without registration. Undo and
+// redo are labeled with the name of the undo step (UndoScript) and disabled
+// without one.
 void AddEditItems(BMenu *menu);
 
 

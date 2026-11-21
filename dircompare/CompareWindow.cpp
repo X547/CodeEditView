@@ -20,12 +20,15 @@
 #include <SplitView.h>
 
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/EditorCommands.h>
+#include <CodeEditView/TextCommands.h>
 
 #include <DiffView.h>
 #include <Progress.h>
 
 #include "DirTreeView.h"
 #include "FileOps.h"
+#include "FindCommands.h"
 #include "Messages.h"
 
 
@@ -163,15 +166,14 @@ BMenuBar *CompareWindow::CreateMenuBar()
 	menuBar->AddItem(file);
 
 	BMenu *edit = new BMenu("Edit");
-	edit->AddItem(Item("Undo", B_UNDO, 'Z'));
-	edit->AddItem(Item("Redo", B_REDO, 'Z', B_SHIFT_KEY));
+	CodeEdit::EditorCommands::AddEditItems(edit);
 	edit->AddSeparatorItem();
-	edit->AddItem(Item("Cut", B_CUT, 'X'));
-	edit->AddItem(Item("Copy", B_COPY, 'C'));
-	edit->AddItem(Item("Paste", B_PASTE, 'V'));
-	edit->AddSeparatorItem();
-	edit->AddItem(Item("Select all", B_SELECT_ALL, 'A'));
+	CodeEdit::TextCommands::AddItems(edit);
 	menuBar->AddItem(edit);
+
+	BMenu *search = new BMenu("Search");
+	FindKit::AddFindItems(search);
+	menuBar->AddItem(search);
 
 	BMenu *changes = new BMenu("Changes");
 	changes->AddItem(Item("Copy change to left", kMsgCopyChanges, B_LEFT_ARROW, B_OPTION_KEY, 0));
@@ -708,6 +710,9 @@ void CompareWindow::SwapSidesNow()
 void CompareWindow::WindowActivated(bool active)
 {
 	BWindow::WindowActivated(active);
+	if (active) {
+		CodeEdit::EditorCommands::SetActiveHost(this);
+	}
 	// Unmodified sides follow changes on disk; their models notify the view.
 	if (active && fPair != nullptr) {
 		fPair->Load();
@@ -839,22 +844,28 @@ void CompareWindow::MessageReceived(BMessage *message)
 		case kMsgSetAlgorithm:
 			fDiffView->SetAlgorithm(static_cast<DiffAlgorithm>(message->GetInt32("algorithm", 0)));
 			break;
-		case B_UNDO:
-		case B_REDO:
-		case B_CUT:
-		case B_COPY:
-		case B_PASTE:
-		case B_SELECT_ALL: {
-			BView *focus = CurrentFocus();
-			if (dynamic_cast<CodeEditView*>(focus) != nullptr) {
-				PostMessage(message, focus);
+		default:
+			if (!CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
+				BWindow::MessageReceived(message);
 			}
 			break;
-		}
-		default:
-			BWindow::MessageReceived(message);
-			break;
 	}
+}
+
+
+CodeEditView *CompareWindow::TargetEditor()
+{
+	if (CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this)) {
+		return focused;
+	}
+	return fDiffView->FocusedView();
+}
+
+
+void CompareWindow::MenusBeginning()
+{
+	CodeEdit::EditorCommands::UpdateMenu(KeyMenuBar(), TargetEditor());
+	BWindow::MenusBeginning();
 }
 
 

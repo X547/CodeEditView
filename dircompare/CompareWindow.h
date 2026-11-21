@@ -16,6 +16,7 @@
 
 class BMenuBar;
 class BMenuItem;
+class CodeEditView;
 
 namespace DiffKit {
 class DiffView;
@@ -90,12 +91,15 @@ private:
 	void SwapSidesNow();
 	void CopyEntryNow(int fromPane, int toPane, const std::string &path);
 	void DeleteEntryNow(int pane, const std::string &path);
+	// Of the editor commands: the focused pane, else the right one.
+	CodeEditView *TargetEditor();
 
 public:
 	// Compares two directories, or two files.
 	CompareWindow(const std::string &left, const std::string &right);
 	~CompareWindow() override;
 
+	void MenusBeginning() override;
 	void MessageReceived(BMessage *message) override;
 	void WindowActivated(bool active) override;
 	bool QuitRequested() override;

@@ -8,6 +8,7 @@
 #include <MenuItem.h>
 
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/EditorCommands.h>
 
 #include "ChangeView.h"
 #include "CodeEditLink.h"
@@ -315,7 +316,17 @@ void CommitWindow::MenusBeginning()
 	BMenuBar *menuBar = KeyMenuBar();
 	menuBar->FindItem(kMsgOpenInCodeEdit)->SetEnabled(SelectedVersion(false).has_value());
 	menuBar->FindItem(kMsgOpenParentInCodeEdit)->SetEnabled(SelectedVersion(true).has_value());
+	CodeEdit::EditorCommands::UpdateMenu(menuBar, TargetEditor());
 	BWindow::MenusBeginning();
+}
+
+
+CodeEditView *CommitWindow::TargetEditor()
+{
+	if (CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this)) {
+		return focused;
+	}
+	return fDiffView->FocusedView();
 }
 
 
@@ -367,7 +378,9 @@ void CommitWindow::MessageReceived(BMessage *message)
 			break;
 		}
 		default:
-			BWindow::MessageReceived(message);
+			if (!CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
+				BWindow::MessageReceived(message);
+			}
 			break;
 	}
 }

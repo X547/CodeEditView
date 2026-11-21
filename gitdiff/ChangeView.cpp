@@ -349,19 +349,6 @@ bool ChangeView::HandleCommand(BMessage *message)
 		case kMsgChangeViewPreviousChange:
 			fDiff->GoToChunk(message->what == kMsgChangeViewNextChange);
 			return true;
-		case B_UNDO:
-		case B_REDO:
-		case B_CUT:
-		case B_COPY:
-		case B_PASTE:
-		case B_SELECT_ALL: {
-			BView *focus = Window() != nullptr ? Window()->CurrentFocus() : nullptr;
-			if (dynamic_cast<CodeEditView*>(focus) == nullptr) {
-				return false;
-			}
-			Window()->PostMessage(message, focus);
-			return true;
-		}
 		default:
 			return false;
 	}

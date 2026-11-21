@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <AppDefs.h>
 #include <MenuItem.h>
 #include <Message.h>
 
@@ -54,6 +55,15 @@ TEST_CASE("editor commands are dispatched to the registered set")
 	EditorCommands::Unregister(&set);
 	CHECK_FALSE(EditorCommands::Dispatch(&command, nullptr));
 	CHECK(set.executed == 1);
+}
+
+
+TEST_CASE("undo and clipboard commands are built in")
+{
+	BMessage undo(B_UNDO);
+	BMessage copy(B_COPY);
+	CHECK(EditorCommands::Dispatch(&undo, nullptr));
+	CHECK(EditorCommands::Dispatch(&copy, nullptr));
 }
 
 

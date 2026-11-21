@@ -22,10 +22,13 @@
 #include <TextView.h>
 
 #include <CodeEditView/CodeEditView.h>
+#include <CodeEditView/EditorCommands.h>
+#include <CodeEditView/TextCommands.h>
 
 #include "Ask.h"
 #include "ChangeView.h"
 #include "CodeEditLink.h"
+#include "FindCommands.h"
 #include "MessageEditor.h"
 #include "Messages.h"
 #include "PathMenu.h"
@@ -120,6 +123,8 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 	fMessage = fChangeView->Message();
 
 	BMenu *fileMenu = nullptr;
+	BMenu *editMenu = nullptr;
+	BMenu *searchMenu = nullptr;
 	BMenu *changesMenu = nullptr;
 	BMenu *viewMenu = nullptr;
 	BMenuBar *menuBar = new BMenuBar("menuBar");
@@ -137,14 +142,10 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 			.AddItem("Quit", kMsgQuitApplication, 'Q')
 		.End()
 		.AddMenu("Edit")
-			.AddItem("Undo", B_UNDO, 'Z')
-			.AddItem("Redo", B_REDO, 'Z', B_SHIFT_KEY)
-			.AddSeparator()
-			.AddItem("Cut", B_CUT, 'X')
-			.AddItem("Copy", B_COPY, 'C')
-			.AddItem("Paste", B_PASTE, 'V')
-			.AddSeparator()
-			.AddItem("Select all", B_SELECT_ALL, 'A')
+			.GetMenu(editMenu)
+		.End()
+		.AddMenu("Search")
+			.GetMenu(searchMenu)
 		.End()
 		.AddMenu("Changes")
 			.AddItem("Stage/unstage chunk or selected lines", kMsgStage, 'T')
@@ -159,6 +160,10 @@ DiffWindow::DiffWindow(std::unique_ptr<Repository> repository, const std::string
 		.End();
 	fChangeView->AddNavigationItems(changesMenu);
 	fChangeView->AddViewItems(viewMenu);
+	CodeEdit::EditorCommands::AddEditItems(editMenu);
+	editMenu->AddSeparatorItem();
+	CodeEdit::TextCommands::AddItems(editMenu);
+	FindKit::AddFindItems(searchMenu);
 
 	// Any file of the working tree, after "Refresh".
 	fileMenu->AddItem(new BMenuItem(new PathMenu("Show file", std::make_shared<FolderPathSource>(fRepository->Workdir()),
@@ -608,9 +613,26 @@ void DiffWindow::WindowActivated(bool active)
 {
 	BWindow::WindowActivated(active);
 	if (active) {
+		CodeEdit::EditorCommands::SetActiveHost(this);
 		UpdateChangeId();
 		ScheduleRefresh();
 	}
+}
+
+
+CodeEditView *DiffWindow::TargetEditor()
+{
+	if (CodeEditView *focused = CodeEdit::EditorCommands::FocusedEditor(this)) {
+		return focused;
+	}
+	return fDiffView->FocusedView();
+}
+
+
+void DiffWindow::MenusBeginning()
+{
+	CodeEdit::EditorCommands::UpdateMenu(KeyMenuBar(), TargetEditor());
+	BWindow::MenusBeginning();
 }
 
 
@@ -726,7 +748,9 @@ void DiffWindow::MessageReceived(BMessage *message)
 			ChangeIdToggled();
 			break;
 		default:
-			BWindow::MessageReceived(message);
+			if (!CodeEdit::EditorCommands::Dispatch(message, TargetEditor())) {
+				BWindow::MessageReceived(message);
+			}
 			break;
 	}
 }

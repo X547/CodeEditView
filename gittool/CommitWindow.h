@@ -14,6 +14,7 @@
 
 
 class BMenu;
+class CodeEditView;
 
 
 namespace DiffKit {
@@ -66,6 +67,8 @@ private:
 	const FileChange *SelectedChange() const;
 	std::optional<std::pair<git_oid, std::string>> SelectedVersion(bool parent) const;
 	void OpenInCodeEdit(bool parent);
+	// Of the editor commands (copy, select all).
+	CodeEditView *TargetEditor();
 
 public:
 	// Throws GitError if the commit cannot be read.

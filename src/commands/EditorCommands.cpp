@@ -16,6 +16,12 @@
 namespace CodeEdit {
 
 
+void EditorCommandSet::UpdateItem(BMenuItem &item, CodeEditView *view)
+{
+	item.SetEnabled(IsEnabled(item.Message()->what, view));
+}
+
+
 namespace EditorCommands {
 
 
@@ -91,7 +97,7 @@ void UpdateMenu(BMenu *menu, CodeEditView *view)
 		}
 		EditorCommandSet *set = FindSet(item->Message()->what);
 		if (set != nullptr) {
-			item->SetEnabled(set->IsEnabled(item->Message()->what, view));
+			set->UpdateItem(*item, view);
 		}
 	}
 }

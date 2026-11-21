@@ -218,8 +218,8 @@ public:
 	~CodeEditView() override;
 
 	CodeEdit::TextModel *Model() const;
-	// Owner for edit groups made on this view's behalf
-	// (TextModel::BeginGroup()): undoing them restores this view's selection.
+	// Owner for undo scripts made on this view's behalf (UndoScript):
+	// undoing them restores this view's selection.
 	CodeEdit::ObserverId EditOwner() const;
 	// Shows another model (nullptr: a new empty one). Settings, theme and
 	// mark styles stay; selection, folds, decorations, mark and decoration

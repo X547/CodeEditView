@@ -161,15 +161,6 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 		.End()
 		.AddMenu("Edit")
 			.GetMenu(editMenu)
-			.AddItem("Undo", B_UNDO, 'Z')
-			.AddItem("Redo", B_REDO, 'Z', B_SHIFT_KEY)
-			.AddSeparator()
-			.AddItem("Cut", B_CUT, 'X')
-			.AddItem("Copy", B_COPY, 'C')
-			.AddItem("Paste", B_PASTE, 'V')
-			.AddSeparator()
-			.AddItem("Select all", B_SELECT_ALL, 'A')
-			.AddSeparator()
 		.End()
 		.AddMenu("Search")
 			.GetMenu(searchMenu)
@@ -188,6 +179,8 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.AddSeparator()
 			.AddItem("Open windows in the same stack", kMsgToggleStacking)
 		.End();
+	CodeEdit::EditorCommands::AddEditItems(editMenu);
+	editMenu->AddSeparatorItem();
 	CodeEdit::TextCommands::AddItems(editMenu);
 	FindKit::AddFindItems(searchMenu);
 	// Before the Window menu.
@@ -1191,14 +1184,6 @@ void SourceWindow::MessageReceived(BMessage *message)
 			break;
 		case kMsgActivate:
 			Activate();
-			break;
-		case B_UNDO:
-		case B_REDO:
-		case B_CUT:
-		case B_COPY:
-		case B_PASTE:
-		case B_SELECT_ALL:
-			PostMessage(message, fEditView);
 			break;
 		default:
 			if (!CodeEdit::EditorCommands::Dispatch(message, fEditView)) {

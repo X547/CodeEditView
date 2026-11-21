@@ -5,6 +5,7 @@
 
 
 class BMenu;
+class BMenuItem;
 class BMessage;
 class BWindow;
 class CodeEditView;
@@ -26,9 +27,9 @@ namespace CodeEdit {
 //   MessageReceived(message):
 //     if (EditorCommands::Dispatch(message, EditorCommands::FocusedEditor(this))) return;
 //
-// plus the menu items of each command set (e.g. FindKit::AddFindItems()). A
-// host with several editors may pass its own choice of view (e.g. the last
-// focused one) instead of FocusedEditor().
+// plus the menu items of each command set (e.g. EditorCommands::AddEditItems(),
+// FindKit::AddFindItems()). A host with several editors may pass its own
+// choice of view (e.g. the last focused one) instead of FocusedEditor().
 //
 // Tool windows (panels) never execute commands and never become the active
 // host: they post commands to ActiveHost(), so the commands act on the
@@ -41,6 +42,10 @@ public:
 	// view is nullptr if there is no target editor.
 	virtual bool IsEnabled(uint32 what, CodeEditView *view) = 0;
 	virtual void Execute(BMessage *message, CodeEditView *view) = 0;
+	// Updates a menu item of a command of the set before the menu is shown;
+	// enables it as IsEnabled() says unless overridden (e.g. to change the
+	// label).
+	virtual void UpdateItem(BMenuItem &item, CodeEditView *view);
 };
 
 
@@ -63,6 +68,12 @@ BMessenger ActiveHost();
 void UpdateMenu(BMenu *menu, CodeEditView *view);
 // Executes the message if a registered set handles it.
 bool Dispatch(BMessage *message, CodeEditView *view);
+
+// Adds the undo, redo, clipboard and select all items to the menu and
+// registers their commands (B_UNDO, B_REDO, B_CUT, B_COPY, B_PASTE,
+// B_SELECT_ALL). Undo and redo are labeled with the name of the undo step
+// (UndoScript) and disabled without one.
+void AddEditItems(BMenu *menu);
 
 
 } // EditorCommands

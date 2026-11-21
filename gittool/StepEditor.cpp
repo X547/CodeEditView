@@ -19,6 +19,7 @@
 
 #include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
+#include <CodeEditView/TextCommands.h>
 #include <CodeEditView/TextModel.h>
 
 #include "Ask.h"
@@ -157,6 +158,7 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 
 	BButton *cancel = new BButton("Cancel", new BMessage(kMsgDialogCancel));
 	BButton *ok = new BButton(input.mode == StepEditMode::Split ? "Split" : "OK", new BMessage(kMsgDialogOk));
+	BMenu *editMenu = nullptr;
 	BMenu *searchMenu = nullptr;
 	BMenu *changesMenu = nullptr;
 	BMenu *viewMenu = nullptr;
@@ -169,14 +171,7 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 			.AddItem("Close without changes", kMsgDialogCancel, 'W')
 		.End()
 		.AddMenu("Edit")
-			.AddItem("Undo", B_UNDO, 'Z')
-			.AddItem("Redo", B_REDO, 'Z', B_SHIFT_KEY)
-			.AddSeparator()
-			.AddItem("Cut", B_CUT, 'X')
-			.AddItem("Copy", B_COPY, 'C')
-			.AddItem("Paste", B_PASTE, 'V')
-			.AddSeparator()
-			.AddItem("Select all", B_SELECT_ALL, 'A')
+			.GetMenu(editMenu)
 		.End()
 		.AddMenu("Search")
 			.GetMenu(searchMenu)
@@ -193,6 +188,9 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 		.End();
 	fChangeView->AddNavigationItems(changesMenu);
 	fChangeView->AddViewItems(viewMenu);
+	CodeEdit::EditorCommands::AddEditItems(editMenu);
+	editMenu->AddSeparatorItem();
+	CodeEdit::TextCommands::AddItems(editMenu);
 	FindKit::AddFindItems(searchMenu);
 	if (input.mode == StepEditMode::Edit) {
 		// Any file of the commit or of its parent, as the "Other file" field.
@@ -559,16 +557,6 @@ void StepEditor::MessageReceived(BMessage *message)
 		case kMsgTakeChange:
 			if (File *file = Selected(); file != nullptr && !file->wholeFile && !file->deleted) {
 				fDiffView->CopyChanges(1, "Take change");
-			}
-			break;
-		case B_UNDO:
-		case B_REDO:
-		case B_CUT:
-		case B_COPY:
-		case B_PASTE:
-		case B_SELECT_ALL:
-			if (CodeEditView *editor = TargetEditor()) {
-				PostMessage(message, editor);
 			}
 			break;
 		case kMsgAddFile: {

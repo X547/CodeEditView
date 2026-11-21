@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <MenuItem.h>
 #include <Message.h>
 
 #include <CodeEditView/EditorCommands.h>
@@ -53,6 +54,15 @@ TEST_CASE("editor commands are dispatched to the registered set")
 	EditorCommands::Unregister(&set);
 	CHECK_FALSE(EditorCommands::Dispatch(&command, nullptr));
 	CHECK(set.executed == 1);
+}
+
+
+TEST_CASE("menu items are enabled as their command set says")
+{
+	TestCommandSet set;
+	BMenuItem item("Test", new BMessage(kMsgTestCommand));
+	set.UpdateItem(item, nullptr);
+	CHECK_FALSE(item.IsEnabled());
 }
 
 

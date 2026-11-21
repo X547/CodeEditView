@@ -1261,7 +1261,7 @@ bool SourceWindow::QuitRequested()
 {
 	StudioApp &app = StudioApp::Get();
 	const Locator &locator = fDocument->GetLocator();
-	if (!fCloseAfterSave && fDocument->IsModified() && !fDocument->IsReadOnly()
+	if (!fCloseAfterSave && !fDiscardConfirmed && fDocument->IsModified() && !fDocument->IsReadOnly()
 		&& app.CountWindowsShowing(locator) <= 1) {
 		// The window stays open and asks; the answer closes it, or asks the
 		// application to quit again if the request came from there.
@@ -1273,7 +1273,10 @@ bool SourceWindow::QuitRequested()
 			Ask(this, question, "Cancel", "Don't save", "Save", [this, fromApplication](int32 button) {
 				fAskingClose = false;
 				if (button == 1) {
-					// The registry keeps the document; it takes the file again.
+					// The registry keeps the document; it takes the file again
+					// in the background. The window closes without waiting for
+					// that.
+					fDiscardConfirmed = true;
 					StudioApp::Get().Registry().Reload(fDocument, true);
 					if (fromApplication) {
 						be_app->PostMessage(B_QUIT_REQUESTED);

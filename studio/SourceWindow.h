@@ -63,6 +63,8 @@ private:
 	// Closing asks about unsaved changes without blocking.
 	bool fAskingClose {};
 	bool fCloseAfterSave {};
+	// "Don't save" was chosen: closing does not ask again.
+	bool fDiscardConfirmed {};
 	// A file was chosen in the save panel since it was shown for save as.
 	bool fSaveAsChosen {};
 

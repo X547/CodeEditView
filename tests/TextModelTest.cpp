@@ -367,6 +367,24 @@ TEST_CASE("the selection after an undo script follows the edits")
 }
 
 
+TEST_CASE("changing the line ending or BOM is an unsaved change")
+{
+	TextModel model;
+	ModelLock lock(model);
+	model.SetText("a\n");
+	model.SetLineEnding(LineEnding::LF);
+	CHECK_FALSE(model.IsModified());
+	model.SetLineEnding(LineEnding::CRLF);
+	CHECK(model.IsModified());
+	model.SetSavePoint();
+	CHECK_FALSE(model.IsModified());
+	model.SetHasBom(true);
+	CHECK(model.IsModified());
+	model.SetText("b\n");
+	CHECK_FALSE(model.IsModified());
+}
+
+
 TEST_CASE("typing and backspace are coalesced")
 {
 	TextModel model;

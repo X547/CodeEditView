@@ -5,6 +5,7 @@ workspaceKit = static_library(
 	files(
 		'Document.cpp',
 		'DocumentWatcher.cpp',
+		'FileOptions.cpp',
 		'FileProvider.cpp',
 		'Fingerprint.cpp',
 		'GitProvider.cpp',

@@ -179,6 +179,93 @@ TEST_CASE("the MIME type of a file gives the language")
 }
 
 
+TEST_CASE("file options are kept in the file's attributes")
+{
+	TempDirectory directory;
+	directory.Write("notes", "a\n");
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(Locator::File(directory / "notes"));
+	registry.WaitIdle();
+	REQUIRE(document->HasAttributes());
+	CHECK(document->Attributes().options == FileOptions());
+	CHECK(LanguageName(*document).empty());
+
+	FileAttributes attributes;
+	attributes.mimeType = "text/x-makefile";
+	attributes.options.tabWidth = 8;
+	attributes.options.insertSpaces = true;
+	attributes.options.indentSize = 2;
+	registry.SetFileSettings(document, attributes, CodeEdit::LineEnding::LF, false);
+	CHECK(LanguageName(*document) == "make");
+	CHECK_FALSE(document->IsModified());
+	registry.WaitIdle();
+	CHECK(document->Status().error.empty());
+	{
+		BNode node((directory / "notes").c_str());
+		char type[B_MIME_TYPE_LENGTH];
+		REQUIRE(BNodeInfo(&node).GetType(type) == B_OK);
+		CHECK(std::string(type) == "text/x-makefile");
+	}
+
+	// The language chosen wins over the type; saving keeps the attributes.
+	attributes.options.language = "jam";
+	registry.SetFileSettings(document, attributes, CodeEdit::LineEnding::LF, false);
+	registry.WaitIdle();
+	CHECK(LanguageName(*document) == "jam");
+	Type(*document, "b\n");
+	registry.Save(document);
+	registry.WaitIdle();
+	CHECK(document->Status().error.empty());
+	CHECK_FALSE(document->Status().changedElsewhere);
+
+	// A document opened anew reads them.
+	document.Unset();
+	registry.CloseUnused();
+	BReference<Document> reopened = registry.Open(Locator::File(directory / "notes"));
+	registry.WaitIdle();
+	CHECK(reopened->Attributes().mimeType == "text/x-makefile");
+	CHECK(reopened->Attributes().options == attributes.options);
+	CHECK(LanguageName(*reopened) == "jam");
+
+	// Plain text chosen.
+	attributes.options.language = "";
+	registry.SetFileSettings(reopened, attributes, CodeEdit::LineEnding::LF, false);
+	CHECK(LanguageName(*reopened).empty());
+	registry.WaitIdle();
+}
+
+
+TEST_CASE("line endings and BOM set are unsaved changes")
+{
+	TempDirectory directory;
+	directory.Write("a.txt", "one\ntwo\n");
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(Locator::File(directory / "a.txt"));
+	registry.WaitIdle();
+
+	registry.SetFileSettings(document, document->Attributes(), CodeEdit::LineEnding::CRLF, true);
+	CHECK(document->IsModified());
+	registry.Save(document);
+	registry.WaitIdle();
+	CHECK_FALSE(document->IsModified());
+	CHECK(directory.Read("a.txt") == "\xef\xbb\xbfone\r\ntwo\r\n");
+}
+
+
+TEST_CASE("file options of files without attributes last as long as the document")
+{
+	DocumentRegistry registry;
+	BReference<Document> document = registry.NewUntitled();
+	CHECK_FALSE(document->HasAttributes());
+	FileAttributes attributes;
+	attributes.options.tabWidth = 2;
+	registry.SetFileSettings(document, attributes, CodeEdit::LineEnding::LF, false);
+	registry.WaitIdle();
+	CHECK(document->Attributes().options.tabWidth == 2);
+	CHECK(document->Status().error.empty());
+}
+
+
 TEST_CASE("documents of new, binary and mixed files")
 {
 	TempDirectory directory;

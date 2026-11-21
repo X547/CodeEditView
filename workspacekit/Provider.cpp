@@ -45,6 +45,22 @@ std::string Provider::Write(const Locator &locator, std::string_view data, const
 }
 
 
+bool Provider::HasAttributes(const Locator &locator) const
+{
+	(void)locator;
+	return false;
+}
+
+
+std::string Provider::WriteAttributes(const Locator &locator, const FileAttributes &attributes,
+	const std::string &knownVersion)
+{
+	(void)attributes;
+	(void)knownVersion;
+	throw ProviderError("Files of " + locator.DisplayName() + " have no attributes");
+}
+
+
 //#pragma mark - Providers
 
 Providers &Providers::Default()

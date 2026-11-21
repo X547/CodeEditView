@@ -11,6 +11,59 @@
 namespace Workspace {
 
 
+TEST_CASE("file options as attribute data")
+{
+	FileOptions options;
+	CHECK(UnflattenFileOptions(FlattenFileOptions(options)) == options);
+	options.language = "cpp";
+	options.tabWidth = 8;
+	options.indentSize = 2;
+	options.insertSpaces = true;
+	CHECK(UnflattenFileOptions(FlattenFileOptions(options)) == options);
+	options.language = "";
+	CHECK(UnflattenFileOptions(FlattenFileOptions(options)) == options);
+
+	CHECK_FALSE(UnflattenFileOptions("").has_value());
+	CHECK_FALSE(UnflattenFileOptions("not a message").has_value());
+	const std::string data = FlattenFileOptions(options);
+	CHECK_FALSE(UnflattenFileOptions(std::string_view(data).substr(0, data.size() / 2)).has_value());
+}
+
+
+TEST_CASE("file provider attributes")
+{
+	class NullSink: public DataSink {
+	public:
+		void Restart() final {}
+		void Append(std::string_view data) final {(void)data;}
+	};
+
+	TempDirectory directory;
+	FileProvider provider;
+	const Locator locator = Locator::File(directory / "a.txt");
+	CHECK(provider.HasAttributes(locator));
+	const std::string version = provider.Write(locator, "one\n", "", false);
+
+	NullSink sink;
+	CHECK_FALSE(provider.Read(locator, sink).options.has_value());
+
+	FileAttributes attributes;
+	attributes.mimeType = "text/plain";
+	attributes.options.tabWidth = 3;
+	const std::string after = provider.WriteAttributes(locator, attributes, version);
+	const FileInfo info = provider.Read(locator, sink);
+	CHECK(info.mimeType == "text/plain");
+	CHECK(info.options == attributes.options);
+	// The version to expect is the file's: saving does not conflict.
+	CHECK(info.version == after);
+	CHECK_NOTHROW(provider.Write(locator, "two\n", after, false));
+	CHECK(provider.Read(locator, sink).options == attributes.options);
+
+	// Changed elsewhere before: the known version stays, saving conflicts.
+	CHECK(provider.WriteAttributes(locator, attributes, "other") == "other");
+}
+
+
 TEST_CASE("file provider")
 {
 	TempDirectory directory;

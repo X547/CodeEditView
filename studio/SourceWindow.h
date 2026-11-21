@@ -95,6 +95,9 @@ private:
 	void UpdateToolBar();
 	void OpenInclude(BMessage *message);
 	void ToggleLocked();
+	void ShowFileOptions();
+	// From the file options dialog.
+	void ApplyFileOptions(BMessage *message);
 	void Follow(int32 session, int32 coverage);
 	void GoToUncovered(bool forward);
 	BMessenger SessionMessenger() const;

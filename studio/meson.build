@@ -7,6 +7,7 @@ codeEdit = executable(
 		'CoverageSummaryWindow.cpp',
 		'DocumentsWindow.cpp',
 		'EntryIcons.cpp',
+		'FileOptionsWindow.cpp',
 		'LazyMenu.cpp',
 		'LocatorFolderMenu.cpp',
 		'LocatorPanel.cpp',

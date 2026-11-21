@@ -374,6 +374,7 @@ void TextModel::ResetText(const Rope &text)
 		fDecorationSets[i]->RestorePoints(fText, decorationPoints[i]);
 	}
 	fUndo->Clear();
+	fFormatChanged = false;
 }
 
 
@@ -459,7 +460,7 @@ void TextModel::BreakUndoCoalescing()
 bool TextModel::IsModified() const
 {
 	AssertLocked();
-	return fUndo->IsModified();
+	return fUndo->IsModified() || fFormatChanged;
 }
 
 
@@ -467,6 +468,7 @@ void TextModel::SetSavePoint()
 {
 	AssertLocked();
 	fUndo->SetSavePoint();
+	fFormatChanged = false;
 }
 
 
@@ -676,7 +678,10 @@ LineEnding TextModel::GetLineEnding() const
 void TextModel::SetLineEnding(LineEnding lineEnding)
 {
 	AssertLocked();
-	fLineEnding = lineEnding;
+	if (lineEnding != fLineEnding) {
+		fLineEnding = lineEnding;
+		fFormatChanged = true;
+	}
 }
 
 
@@ -690,7 +695,10 @@ bool TextModel::HasBom() const
 void TextModel::SetHasBom(bool hasBom)
 {
 	AssertLocked();
-	fHasBom = hasBom;
+	if (hasBom != fHasBom) {
+		fHasBom = hasBom;
+		fFormatChanged = true;
+	}
 }
 
 

@@ -66,6 +66,7 @@ private:
 	const Locator fLocator;
 	const BReference<CodeEdit::TextModel> fModel;
 	const bool fWritable;
+	const bool fHasAttributes;
 
 	mutable BLocker fLock;
 	DocumentStatus fStatus;
@@ -73,11 +74,16 @@ private:
 	// Of the bytes last read or saved; the model holds the only copy of the
 	// text.
 	std::optional<Fingerprint> fLoaded;
+	FileAttributes fAttributes;
 
 	friend class DocumentRegistry;
 
+	// The language of the text: chosen in the options, else of the MIME type,
+	// else of the path; empty for plain text. Requires fLock.
+	std::string Language() const;
+
 public:
-	Document(const Locator &locator, bool writable);
+	Document(const Locator &locator, bool writable, bool hasAttributes);
 
 	const Locator &GetLocator() const {return fLocator;}
 	CodeEdit::TextModel *Model() const {return fModel.Get();}
@@ -86,6 +92,15 @@ public:
 	bool IsReadOnly() const;
 	// Unsaved edits; locks the model.
 	bool IsModified() const;
+	// The MIME type and options as last read or set
+	// (DocumentRegistry::SetFileSettings()).
+	FileAttributes Attributes() const;
+	// The file keeps its attributes; otherwise they last as long as the
+	// document.
+	bool HasAttributes() const {return fHasAttributes;}
+	// The language the document gets without one chosen in its options:
+	// that of the MIME type, else of the path; empty for plain text.
+	std::string LanguageFor(const std::string &mimeType) const;
 };
 
 
@@ -132,6 +147,14 @@ public:
 	// and listeners get kNoticeDocumentMoved.
 	BReference<Document> NewUntitled();
 	std::vector<BReference<Document>> All();
+
+	// Sets the MIME type and options of the document, and the line ending and
+	// BOM of its text unless it is read-only; listeners get
+	// kNoticeDocumentChanged. Where the file keeps attributes and exists,
+	// they are written to it in the background; a failure is reported in the
+	// status error.
+	void SetFileSettings(Document *document, const FileAttributes &attributes, CodeEdit::LineEnding lineEnding,
+		bool hasBom);
 
 	// Reads the file again. With unsaved edits, the text is kept and the
 	// document marked changed elsewhere, unless force is set (revert: the

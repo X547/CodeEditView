@@ -80,6 +80,14 @@ static DiffKit::ChunkSource WrittenSource(const TextSnapshot &snapshot, ContentS
 }
 
 
+// An empty name is plain text.
+static void SetModelLanguage(TextModel &model, const std::string &language)
+{
+	ModelLock lock(model);
+	model.SetLanguage(language.empty() ? nullptr : language.c_str());
+}
+
+
 static TextSnapshot SourceSnapshot(Document &document)
 {
 	TextModel &model = *document.Model();
@@ -90,14 +98,40 @@ static TextSnapshot SourceSnapshot(Document &document)
 
 //#pragma mark - Document
 
-Document::Document(const Locator &locator, bool writable):
+Document::Document(const Locator &locator, bool writable, bool hasAttributes):
 	fLocator(locator),
 	fModel(new TextModel(), true),
 	fWritable(writable),
+	fHasAttributes(hasAttributes),
 	fLock("Document")
 {
-	ModelLock lock(*fModel);
-	fModel->SetLanguage(CodeEdit::LanguageForPath(locator.Leaf().c_str()));
+	SetModelLanguage(*fModel, Language());
+}
+
+
+std::string Document::Language() const
+{
+	if (fAttributes.options.language.has_value()) {
+		return *fAttributes.options.language;
+	}
+	return LanguageFor(fAttributes.mimeType);
+}
+
+
+std::string Document::LanguageFor(const std::string &mimeType) const
+{
+	const char *language = CodeEdit::LanguageForMimeType(mimeType);
+	if (language == nullptr) {
+		language = CodeEdit::LanguageForPath(fLocator.Leaf().c_str());
+	}
+	return language != nullptr ? language : "";
+}
+
+
+FileAttributes Document::Attributes() const
+{
+	BAutolock lock(fLock);
+	return fAttributes;
 }
 
 
@@ -207,7 +241,8 @@ BReference<Document> DocumentRegistry::Open(const Locator &requested)
 			document = it->second;
 		} else {
 			const bool writable = untitled || (provider != nullptr && provider->IsWritable(locator));
-			document.SetTo(new Document(locator, writable), true);
+			const bool hasAttributes = provider != nullptr && provider->HasAttributes(locator);
+			document.SetTo(new Document(locator, writable, hasAttributes), true);
 			fDocuments.emplace(locator, document);
 			if (untitled) {
 				document->fStatus.state = DocumentState::Ready;
@@ -251,7 +286,7 @@ BReference<Document> DocumentRegistry::NewUntitled()
 		while (fDocuments.contains(Locator::Untitled(number))) {
 			number++;
 		}
-		document.SetTo(new Document(Locator::Untitled(number), true), true);
+		document.SetTo(new Document(Locator::Untitled(number), true, false), true);
 		document->fStatus.state = DocumentState::Ready;
 		document->fLoaded = FingerprintBuilder().Result();
 		fDocuments.emplace(document->GetLocator(), document);
@@ -277,6 +312,58 @@ std::vector<BReference<Document>> DocumentRegistry::All()
 		documents.push_back(document);
 	}
 	return documents;
+}
+
+
+void DocumentRegistry::SetFileSettings(Document *target, const FileAttributes &attributes,
+	CodeEdit::LineEnding lineEnding, bool hasBom)
+{
+	BReference<Document> document(target);
+	const bool readOnly = document->IsReadOnly();
+	std::string language;
+	bool write;
+	{
+		BAutolock lock(document->fLock);
+		document->fAttributes = attributes;
+		language = document->Language();
+		write = document->fHasAttributes && document->fStatus.exists;
+	}
+	SetModelLanguage(*document->Model(), language);
+	if (!readOnly) {
+		TextModel &model = *document->Model();
+		ModelLock lock(model);
+		model.SetLineEnding(lineEnding);
+		model.SetHasBom(hasBom);
+	}
+	Notify(kNoticeDocumentChanged, *document);
+	if (!write) {
+		return;
+	}
+
+	fQueue.Post([this, document, attributes] {
+		const Locator &locator = document->GetLocator();
+		std::string knownVersion;
+		{
+			BAutolock lock(document->fLock);
+			knownVersion = document->fVersion;
+		}
+		std::string error;
+		std::string version;
+		try {
+			version = fProviders.Get(locator).WriteAttributes(locator, attributes, knownVersion);
+		} catch (const ProviderError &providerError) {
+			error = providerError.what();
+		}
+		{
+			BAutolock lock(document->fLock);
+			if (!error.empty()) {
+				document->fStatus.error = error;
+			} else if (document->fVersion == knownVersion) {
+				document->fVersion = version;
+			}
+		}
+		Notify(kNoticeDocumentChanged, *document);
+	});
 }
 
 
@@ -333,6 +420,7 @@ bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fin
 	TextLoader *text, bool binary, bool force)
 {
 	bool unchanged;
+	std::string language;
 	{
 		BAutolock lock(document.fLock);
 		if (!file.exists && document.fStatus.exists) {
@@ -344,6 +432,16 @@ bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fin
 			document.fVersion.clear();
 			return true;
 		}
+		// The MIME type takes priority over the path, which gave the language
+		// so far, the options over both. Without attributes, the options
+		// chosen stay.
+		if (file.exists) {
+			document.fAttributes.mimeType = file.mimeType;
+			if (document.fHasAttributes) {
+				document.fAttributes.options = file.options.value_or(FileOptions());
+			}
+		}
+		language = document.Language();
 		unchanged = document.fLoaded == fingerprint;
 		if (unchanged) {
 			document.fStatus.state = DocumentState::Ready;
@@ -355,14 +453,10 @@ bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fin
 	}
 
 	TextModel &model = *document.Model();
+	SetModelLanguage(model, language);
 	std::string problem;
 	{
 		ModelLock lock(model);
-		// The MIME type takes priority over the path, which gave the language
-		// so far.
-		if (const char *language = CodeEdit::LanguageForMimeType(file.mimeType)) {
-			model.SetLanguage(language);
-		}
 		// The same data again: the text stays unless forced to drop edits.
 		if (unchanged && (!force || !model.IsModified())) {
 			return true;
@@ -529,7 +623,8 @@ BReference<Document> DocumentRegistry::Replaced(const Locator &target, bool crea
 		if (it != fDocuments.end()) {
 			document = it->second;
 		} else if (create) {
-			document.SetTo(new Document(target, true), true);
+			const Provider *provider = fProviders.Find(target.Kind());
+			document.SetTo(new Document(target, true, provider != nullptr && provider->HasAttributes(target)), true);
 			fDocuments.emplace(target, document);
 		}
 	}

@@ -17,6 +17,9 @@ public:
 	FileInfo Read(const Locator &locator, DataSink &sink) override;
 	std::string Write(const Locator &locator, const DiffKit::ChunkSource &source,
 		const std::string &expectedVersion, bool overwrite) override;
+	bool HasAttributes(const Locator &locator) const override;
+	std::string WriteAttributes(const Locator &locator, const FileAttributes &attributes,
+		const std::string &knownVersion) override;
 	std::vector<DirEntry> List(const Locator &directory) override;
 
 	// The version of a local file; empty if it does not exist.

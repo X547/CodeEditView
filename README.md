@@ -228,7 +228,14 @@ way: choosing a file opens it from the commit, choosing a directory opens
 Open from Git there.
 Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
-Without arguments, the Documents window lists the open documents.
+Without arguments, the Documents window lists the open documents (also
+Window > Documents).
+The info button of the tool bar shows the file options: language (or
+automatic, from the file type or name), indentation with tabs or spaces,
+tab and indent width, file type, line endings and UTF-8 BOM. A local file
+keeps them in its attributes (`CodeEdit:options` and the file type); files
+of Git commits and new documents keep them until closed. Changing the line
+endings or the BOM is an unsaved change.
 
 Debug > Session > New session starts a debug session, with its own control
 window (launch or attach) and tool windows (Debug > Console, Threads, Stack,

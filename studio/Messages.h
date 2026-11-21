@@ -44,6 +44,14 @@ constexpr uint32 kMsgNewDocument = 'CSnd';
 constexpr uint32 kMsgShowOpenGit = 'CSog';
 constexpr uint32 kMsgShowOpenLocation = 'CSoL';
 constexpr uint32 kMsgShowDocuments = 'CSsd';
+// To a source window: shows the file options dialog of its document.
+constexpr uint32 kMsgShowFileOptions = 'CSfo';
+// From the file options dialog to its source window: "mimeType" (string,
+// empty for none), "language" (string, empty for plain text; missing:
+// automatic), "tabWidth", "indentSize" (int32; 0: the tab width),
+// "insertSpaces" (bool), "lineEnding" (int32: CodeEdit::LineEnding), "bom"
+// (bool).
+constexpr uint32 kMsgFileOptionsChosen = 'CSfc';
 constexpr uint32 kMsgToggleStacking = 'CSts';
 // To the application after a window closed.
 constexpr uint32 kMsgWindowClosed = 'CSwc';

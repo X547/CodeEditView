@@ -39,6 +39,7 @@
 #include "Coverage.h"
 #include "CoverageMessages.h"
 #include "CoverageRun.h"
+#include "FileOptionsWindow.h"
 #include "FindCommands.h"
 #include "LocatorFolderMenu.h"
 #include "Messages.h"
@@ -372,7 +373,7 @@ BMenuBar *SourceWindow::CreateToolBar()
 	toolBar->AddItem(new IconMenuItem("find-again", "Find again", new BMessage(FindKit::kMsgFindAgain)));
 	toolBar->AddSeparatorItem();
 	toolBar->AddItem(fLockButton);
-	toolBar->AddItem(new IconMenuItem("documents", "Documents", new BMessage(kMsgShowDocuments)));
+	toolBar->AddItem(new IconMenuItem("documents", "File options", new BMessage(kMsgShowFileOptions)));
 	toolBar->AddItem(fOutlineButton);
 	return toolBar;
 }
@@ -701,13 +702,42 @@ void SourceWindow::UpdateStatus()
 	fStatus->SetText(text.c_str());
 	fStatus->SetToolTip(text.c_str());
 
+	// The indentation of the document's options.
+	const Workspace::FileOptions options = fDocument->Attributes().options;
 	CodeEdit::EditorSettings settings = fEditView->Settings();
-	const bool readOnly = fLocked || fDocument->IsReadOnly() || status.state != DocumentState::Ready;
-	if (settings.readOnly != readOnly) {
-		settings.readOnly = readOnly;
+	settings.readOnly = fLocked || fDocument->IsReadOnly() || status.state != DocumentState::Ready;
+	settings.tabWidth = options.tabWidth;
+	settings.indentSize = options.indentSize;
+	settings.insertSpacesForTab = options.insertSpaces;
+	if (!(settings == fEditView->Settings())) {
 		fEditView->SetSettings(settings);
 	}
 	UpdateToolBar();
+}
+
+
+void SourceWindow::ShowFileOptions()
+{
+	FileOptionsWindow *window = new FileOptionsWindow(fDocument, BMessenger(this), this);
+	DiffKit::PlaceOver(window, Frame());
+	window->Show();
+}
+
+
+void SourceWindow::ApplyFileOptions(BMessage *message)
+{
+	Workspace::FileAttributes attributes;
+	attributes.mimeType = message->GetString("mimeType", "");
+	Workspace::FileOptions &options = attributes.options;
+	const char *language = nullptr;
+	if (message->FindString("language", &language) == B_OK) {
+		options.language = language;
+	}
+	options.tabWidth = static_cast<uint32>(std::max<int32>(message->GetInt32("tabWidth", 4), 1));
+	options.indentSize = static_cast<uint32>(std::max<int32>(message->GetInt32("indentSize", 0), 0));
+	options.insertSpaces = message->GetBool("insertSpaces", false);
+	const auto lineEnding = static_cast<CodeEdit::LineEnding>(message->GetInt32("lineEnding", 0));
+	StudioApp::Get().Registry().SetFileSettings(fDocument, attributes, lineEnding, message->GetBool("bom", false));
 }
 
 
@@ -1173,6 +1203,12 @@ void SourceWindow::MessageReceived(BMessage *message)
 			window->Show();
 			break;
 		}
+		case kMsgShowFileOptions:
+			ShowFileOptions();
+			break;
+		case kMsgFileOptionsChosen:
+			ApplyFileOptions(message);
+			break;
 		case kMsgShowDocuments: {
 			BMessage forward(*message);
 			forward.AddRect("openerFrame", Frame());

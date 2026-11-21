@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <string.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -9,11 +10,16 @@
 #include <Mime.h>
 #include <Node.h>
 #include <NodeInfo.h>
+#include <fs_attr.h>
 
 #include "FileIO.h"
 
 
 namespace Workspace {
+
+
+// Larger option attributes are not read.
+static constexpr off_t kMaxOptionsSize = 64 * 1024;
 
 
 bool FileProvider::IsWritable(const Locator &) const
@@ -71,6 +77,15 @@ FileInfo FileProvider::Read(const Locator &locator, DataSink &sink)
 		if (node.InitCheck() == B_OK && info.InitCheck() == B_OK && info.GetType(type) == B_OK) {
 			result.mimeType = type;
 		}
+		attr_info options;
+		if (node.InitCheck() == B_OK && node.GetAttrInfo(kFileOptionsAttribute, &options) == B_OK
+			&& options.type == B_MESSAGE_TYPE && options.size > 0 && options.size <= kMaxOptionsSize) {
+			std::string data(options.size, '\0');
+			if (node.ReadAttr(kFileOptionsAttribute, B_MESSAGE_TYPE, 0, data.data(), data.size())
+				== static_cast<ssize_t>(data.size())) {
+				result.options = UnflattenFileOptions(data);
+			}
+		}
 		return result;
 	} catch (const DiffKit::FileError &error) {
 		throw ProviderError(error.what());
@@ -91,6 +106,39 @@ std::string FileProvider::Write(const Locator &locator, const DiffKit::ChunkSour
 		throw ProviderError(error.what());
 	}
 	return Version(path);
+}
+
+
+bool FileProvider::HasAttributes(const Locator &locator) const
+{
+	(void)locator;
+	return true;
+}
+
+
+std::string FileProvider::WriteAttributes(const Locator &locator, const FileAttributes &attributes,
+	const std::string &knownVersion)
+{
+	const std::string &path = locator.Path();
+	const std::string before = Version(path);
+	BNode node(path.c_str());
+	BNodeInfo info(&node);
+	if (node.InitCheck() != B_OK) {
+		throw ProviderError("Cannot open " + path + ": " + strerror(node.InitCheck()));
+	}
+	if (info.InitCheck() != B_OK) {
+		throw ProviderError("Cannot open " + path + ": " + strerror(info.InitCheck()));
+	}
+	const char *type = attributes.mimeType.empty() ? nullptr : attributes.mimeType.c_str();
+	if (info.SetType(type) != B_OK) {
+		throw ProviderError("Cannot set the file type of " + path);
+	}
+	const std::string data = FlattenFileOptions(attributes.options);
+	if (node.WriteAttr(kFileOptionsAttribute, B_MESSAGE_TYPE, 0, data.data(), data.size())
+		!= static_cast<ssize_t>(data.size())) {
+		throw ProviderError("Cannot write the options of " + path);
+	}
+	return before == knownVersion ? Version(path) : knownVersion;
 }
 
 

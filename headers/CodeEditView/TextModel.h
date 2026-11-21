@@ -157,6 +157,8 @@ private:
 
 	LineEnding fLineEnding = LineEnding::LF;
 	bool fHasBom {};
+	// The line ending or BOM changed since the save point.
+	bool fFormatChanged {};
 
 	std::unique_ptr<SyntaxState> fSyntax;
 	uint64_t fSyntaxRevision {};
@@ -241,6 +243,8 @@ public:
 	void Load(const TextSnapshot &snapshot);
 	void Save(BPositionIO &stream) const;
 	TextSnapshot Snapshot() const;
+	// Changing the line ending or the BOM is an unsaved change (IsModified())
+	// until SetSavePoint() or a load; it is not undone.
 	LineEnding GetLineEnding() const;
 	void SetLineEnding(LineEnding lineEnding);
 	bool HasBom() const;

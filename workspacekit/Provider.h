@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "FileIO.h"
+#include "FileOptions.h"
 #include "Locator.h"
 
 
@@ -38,6 +39,16 @@ struct FileInfo {
 	// The file's MIME type (BEOS:TYPE attribute); empty if it has none or
 	// the provider has no attributes.
 	std::string mimeType;
+	// None if the file has none or the provider has no attributes.
+	std::optional<FileOptions> options;
+};
+
+
+// What a file keeps besides its data.
+struct FileAttributes {
+	// Empty: none.
+	std::string mimeType;
+	FileOptions options;
 };
 
 
@@ -97,6 +108,16 @@ public:
 	// file's version is not expectedVersion (empty: the file must not exist).
 	virtual std::string Write(const Locator &locator, const DiffKit::ChunkSource &source,
 		const std::string &expectedVersion, bool overwrite) = 0;
+
+	// Files of the locator have attributes (FileAttributes) that
+	// WriteAttributes() can set.
+	virtual bool HasAttributes(const Locator &locator) const;
+	// Sets the attributes of an existing file. Returns the version to expect
+	// from now on: the version after writing if the file was at knownVersion
+	// before (writing attributes may change the version), else knownVersion.
+	// Throws ProviderError without attributes.
+	virtual std::string WriteAttributes(const Locator &locator, const FileAttributes &attributes,
+		const std::string &knownVersion);
 
 	// The same with the whole data at once.
 	FileData Read(const Locator &locator);

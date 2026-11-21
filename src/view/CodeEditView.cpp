@@ -2194,7 +2194,8 @@ void CodeEditView::TrackSelection(BPoint where)
 
 // How hard the pointer pushes for auto-scrolling: while selecting, its
 // distance outside the bounds; while dragging over the view, its depth into
-// the edge zone.
+// the edge zone. The sticky lines do not count: they come and go while
+// scrolling, which would change the speed under a still pointer.
 BPoint CodeEditView::AutoScrollPressure(BPoint where) const
 {
 	const BRect bounds = Bounds();
@@ -2205,9 +2206,6 @@ BPoint CodeEditView::AutoScrollPressure(BPoint where) const
 			std::min(1.5f * fLineHeight, bounds.Height() / 4)
 		);
 	}
-
-	// Lines under the sticky lines are not shown.
-	inner.top = std::max(inner.top, std::min(bounds.top + fStickyHeight, inner.bottom));
 
 	BPoint pressure(0, 0);
 	if (where.x < inner.left) {

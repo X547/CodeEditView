@@ -370,6 +370,72 @@ TEST_CASE("outline of a devicetree")
 }
 
 
+TEST_CASE("outline of javascript, typescript and css")
+{
+	const std::string_view javaScript =
+		"class Foo {\n"
+		"  bar(a, b) {}\n"
+		"  baz = (x) => x;\n"
+		"}\n"
+		"function top() {}\n"
+		"const arrow = y => y;\n"
+		"let value = 1;\n";
+	EditorCore javaScriptCore(MakeModel(javaScript, "javascript"));
+	const std::vector<OutlineItem> javaScriptOutline = javaScriptCore.Outline();
+	REQUIRE(javaScriptOutline.size() == 3);
+	CHECK(javaScriptOutline[0].kind == OutlineKind::Class);
+	CHECK(javaScriptOutline[0].label == "Foo");
+	REQUIRE(javaScriptOutline[0].children.size() == 2);
+	CHECK(javaScriptOutline[0].children[0].kind == OutlineKind::Function);
+	CHECK(javaScriptOutline[0].children[0].label == "bar(a, b)");
+	CHECK(javaScriptOutline[0].children[1].label == "baz(x)");
+	CHECK(javaScriptOutline[1].label == "top()");
+	CHECK(javaScriptOutline[2].kind == OutlineKind::Function);
+	CHECK(javaScriptOutline[2].label == "arrow(y)");
+	CHECK(javaScriptOutline[2].nameStart == javaScript.find("arrow"));
+
+	EditorCore typeScriptCore(MakeModel(
+		"interface Shape { area(): number; }\n"
+		"type Id = string;\n"
+		"enum Color { Red }\n"
+		"namespace NS { export function f(): void {} }\n"
+		"abstract class Base { abstract g(): void; }\n",
+		"typescript"
+	));
+	const std::vector<OutlineItem> typeScriptOutline = typeScriptCore.Outline();
+	REQUIRE(typeScriptOutline.size() == 5);
+	CHECK(typeScriptOutline[0].kind == OutlineKind::Class);
+	CHECK(typeScriptOutline[0].label == "Shape");
+	CHECK(typeScriptOutline[1].kind == OutlineKind::Struct);
+	CHECK(typeScriptOutline[1].label == "Id");
+	CHECK(typeScriptOutline[2].kind == OutlineKind::Enum);
+	CHECK(typeScriptOutline[3].kind == OutlineKind::Namespace);
+	CHECK(typeScriptOutline[3].label == "NS");
+	REQUIRE(typeScriptOutline[3].children.size() == 1);
+	CHECK(typeScriptOutline[3].children[0].label == "f()");
+	CHECK(typeScriptOutline[4].kind == OutlineKind::Class);
+	CHECK(typeScriptOutline[4].label == "Base");
+
+	const std::string_view css =
+		"a, .b > c { color: red; }\n"
+		"@media (max-width: 600px) {\n"
+		"  #x { margin: 0; }\n"
+		"}\n"
+		"@keyframes spin { from { opacity: 0; } }\n";
+	EditorCore cssCore(MakeModel(css, "css"));
+	const std::vector<OutlineItem> cssOutline = cssCore.Outline();
+	REQUIRE(cssOutline.size() == 3);
+	CHECK(cssOutline[0].kind == OutlineKind::Struct);
+	CHECK(cssOutline[0].label == "a, .b > c");
+	CHECK(cssOutline[1].kind == OutlineKind::Namespace);
+	CHECK(cssOutline[1].label == "@media (max-width: 600px)");
+	CHECK(cssOutline[1].nameEnd == css.find(" {\n  #x"));
+	REQUIRE(cssOutline[1].children.size() == 1);
+	CHECK(cssOutline[1].children[0].label == "#x");
+	CHECK(cssOutline[2].label == "@keyframes spin");
+}
+
+
 TEST_CASE("outline without a syntax tree")
 {
 	EditorCore core(MakeModel(kSample, nullptr));

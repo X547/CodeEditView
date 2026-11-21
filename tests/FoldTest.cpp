@@ -303,6 +303,49 @@ TEST_CASE("fold candidates of other languages")
 	);
 	EditorCore deviceTreeCore(deviceTree);
 	CHECK(deviceTreeCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
+
+	// An end tag on its own line stays visible; an element on one line does
+	// not fold.
+	BReference<TextModel> html = MakeModel(
+		"<ul>\n"
+		"  <li>a</li>\n"
+		"  <li>\n"
+		"    b\n"
+		"  </li>\n"
+		"</ul>\n"
+		"<!--\n"
+		"x -->\n",
+		"html"
+	);
+	EditorCore htmlCore(html);
+	CHECK(htmlCore.FoldCandidates(0, 8) == std::vector<FoldRange> {{0, 4}, {2, 3}, {6, 7}});
+
+	BReference<TextModel> css = MakeModel(
+		"@media print {\n"
+		"  a {\n"
+		"    color: red;\n"
+		"  }\n"
+		"}\n",
+		"css"
+	);
+	EditorCore cssCore(css);
+	CHECK(cssCore.FoldCandidates(0, 5) == std::vector<FoldRange> {{0, 3}, {1, 2}});
+
+	BReference<TextModel> javaScript = MakeModel(
+		"function f(\n"
+		"  a,\n"
+		") {\n"
+		"  return [\n"
+		"    1,\n"
+		"  ];\n"
+		"}\n"
+		"const x = <div>\n"
+		"  y\n"
+		"</div>;\n",
+		"javascript"
+	);
+	EditorCore javaScriptCore(javaScript);
+	CHECK(javaScriptCore.FoldCandidates(0, 10) == std::vector<FoldRange> {{0, 1}, {2, 5}, {3, 4}, {7, 8}});
 }
 
 

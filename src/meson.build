@@ -62,6 +62,42 @@ highlightQueries = [
 		output: 'DeviceTreeHighlights.inc',
 		command: [python, embedText, '@OUTPUT@', 'kDeviceTreeHighlights', '@INPUT@']
 	),
+	custom_target(
+		'html-highlights',
+		input: files('syntax/queries/html-highlights.scm'),
+		output: 'HtmlHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kHtmlHighlights', '@INPUT@']
+	),
+	custom_target(
+		'css-highlights',
+		input: files('syntax/queries/css-highlights.scm'),
+		output: 'CssHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kCssHighlights', '@INPUT@']
+	),
+	# The TypeScript grammars extend the JavaScript one; the TypeScript and
+	# JSX patterns come after the shared ones to override them.
+	custom_target(
+		'javascript-highlights',
+		input: files('syntax/queries/ecma-highlights.scm', 'syntax/queries/jsx-highlights.scm'),
+		output: 'JavaScriptHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kJavaScriptHighlights', '@INPUT@']
+	),
+	custom_target(
+		'typescript-highlights',
+		input: files('syntax/queries/ecma-highlights.scm', 'syntax/queries/typescript-highlights.scm'),
+		output: 'TypeScriptHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kTypeScriptHighlights', '@INPUT@']
+	),
+	custom_target(
+		'tsx-highlights',
+		input: files(
+			'syntax/queries/ecma-highlights.scm',
+			'syntax/queries/typescript-highlights.scm',
+			'syntax/queries/jsx-highlights.scm'
+		),
+		output: 'TsxHighlights.inc',
+		command: [python, embedText, '@OUTPUT@', 'kTsxHighlights', '@INPUT@']
+	),
 ]
 
 codeEditViewSources = files(
@@ -106,7 +142,8 @@ codeEditViewLib = shared_library(
 	highlightQueries,
 	include_directories: [publicInc, privateInc],
 	dependencies: [beDep, treeSitterDep, treeSitterCDep, treeSitterCppDep, treeSitterBashDep, treeSitterMesonDep, treeSitterJamDep,
-		treeSitterComponentPascalDep, treeSitterPythonDep, treeSitterMakeDep, treeSitterCMakeDep, treeSitterDeviceTreeDep],
+		treeSitterComponentPascalDep, treeSitterPythonDep, treeSitterMakeDep, treeSitterCMakeDep, treeSitterDeviceTreeDep,
+		treeSitterHtmlDep, treeSitterCssDep, treeSitterJavaScriptDep, treeSitterTypeScriptDep],
 	version: meson.project_version(),
 	install: true,
 	install_dir: libInstallDir

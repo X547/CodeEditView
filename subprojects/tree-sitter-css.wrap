@@ -1,0 +1,7 @@
+[wrap-file]
+directory = tree-sitter-css-0.25.0
+lead_directory_missing = true
+source_url = https://github.com/tree-sitter/tree-sitter-css/releases/download/v0.25.0/tree-sitter-css.tar.gz
+source_filename = tree-sitter-css-0.25.0.tar.gz
+source_hash = 6e34c5a7f7a829a2f2077b782653bf3233db91b71f78f297797ec4ad20a0a494
+patch_directory = tree-sitter-css

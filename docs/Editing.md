@@ -104,6 +104,8 @@ commands, and the Edit menu has Shift left and Shift right.
 ## Syntax highlighting
 
 Highlighting and the outline of definitions are available for C, C++, shell
-scripts (sh, Bash), Meson, Jam, Component Pascal, Python, Make, CMake and
-Devicetree sources. The language is chosen by the file type, then by the file
-name; in CodeEdit it can also be set per file.
+scripts (sh, Bash), Meson, Jam, Component Pascal, Python, Make, CMake,
+Devicetree, HTML, CSS, JavaScript (with JSX), TypeScript and TSX sources. The
+language is chosen by the file type, then by the file name; in CodeEdit it can
+also be set per file. In HTML files, the contents of `<script>` and `<style>`
+elements are shown as plain text.

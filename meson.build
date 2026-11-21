@@ -32,6 +32,11 @@ treeSitterMesonDep = subproject('tree-sitter-meson', default_options: grammarOpt
 treeSitterPythonDep = subproject('tree-sitter-python', default_options: grammarOptions).get_variable('tree_sitter_python_dep')
 treeSitterCMakeDep = subproject('tree-sitter-cmake', default_options: grammarOptions).get_variable('tree_sitter_cmake_dep')
 treeSitterDeviceTreeDep = subproject('tree-sitter-devicetree', default_options: grammarOptions).get_variable('tree_sitter_devicetree_dep')
+treeSitterHtmlDep = subproject('tree-sitter-html', default_options: grammarOptions).get_variable('tree_sitter_html_dep')
+treeSitterCssDep = subproject('tree-sitter-css', default_options: grammarOptions).get_variable('tree_sitter_css_dep')
+treeSitterJavaScriptDep = subproject('tree-sitter-javascript', default_options: grammarOptions).get_variable('tree_sitter_javascript_dep')
+# TypeScript and TSX.
+treeSitterTypeScriptDep = subproject('tree-sitter-typescript', default_options: grammarOptions).get_variable('tree_sitter_typescript_dep')
 # Kept in this repository: subprojects/tree-sitter-jam,
 # subprojects/tree-sitter-componentpascal and subprojects/tree-sitter-make
 # (patched).

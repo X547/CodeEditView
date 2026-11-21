@@ -87,6 +87,30 @@ static std::optional<TSNode> FunctionDeclarator(TSNode definition)
 }
 
 
+// JavaScript: "name(parameters)" of a function or an arrow function, whose
+// single parameter may have no parentheses.
+static std::string FunctionLabel(TSNode name, TSNode function, const Rope &text)
+{
+	std::string parameters = "()";
+	const TSNode list = ChildByField(function, "parameters");
+	const TSNode single = ChildByField(function, "parameter");
+	if (!ts_node_is_null(list)) {
+		parameters = NodeText(list, text);
+	} else if (!ts_node_is_null(single)) {
+		parameters = "(" + NodeText(single, text) + ")";
+	}
+	return Compact(NodeText(name, text) + parameters);
+}
+
+
+// JavaScript: a function value of a declaration or class field.
+static bool IsFunctionValue(TSNode value)
+{
+	return !ts_node_is_null(value)
+		&& (NodeType(value) == "arrow_function" || NodeType(value) == "function_expression");
+}
+
+
 static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 {
 	OutlineItem item;
@@ -208,6 +232,78 @@ static std::optional<OutlineItem> MakeItem(TSNode node, const Rope &text)
 	} else if (type == "enum_specifier") {
 		item.kind = OutlineKind::Enum;
 		anonymous = "(anonymous enum)";
+	} else if (type == "function_declaration" || type == "generator_function_declaration"
+		|| type == "method_definition") {
+		// JavaScript and TypeScript
+		item.kind = OutlineKind::Function;
+		if (!ts_node_is_null(name)) {
+			item.label = FunctionLabel(name, node, text);
+		}
+	} else if (type == "lexical_declaration" || type == "variable_declaration") {
+		// JavaScript: "const name = (parameters) => ...", named by the first
+		// variable holding a function.
+		item.kind = OutlineKind::Function;
+		const uint32_t count = ts_node_named_child_count(node);
+		for (uint32_t i = 0; i < count && ts_node_is_null(name); i++) {
+			const TSNode declarator = ts_node_named_child(node, i);
+			const TSNode value = ChildByField(declarator, "value");
+			if (NodeType(declarator) == "variable_declarator" && IsFunctionValue(value)) {
+				name = ChildByField(declarator, "name");
+				item.label = FunctionLabel(name, value, text);
+			}
+		}
+	} else if (type == "field_definition" || type == "public_field_definition") {
+		// A class field holding a function; "property" in JavaScript, "name"
+		// in TypeScript.
+		item.kind = OutlineKind::Function;
+		if (ts_node_is_null(name)) {
+			name = ChildByField(node, "property");
+		}
+		const TSNode value = ChildByField(node, "value");
+		if (ts_node_is_null(name) || !IsFunctionValue(value)) {
+			return std::nullopt;
+		}
+		item.label = FunctionLabel(name, value, text);
+	} else if (type == "class_declaration" || type == "abstract_class_declaration"
+		|| type == "interface_declaration") {
+		// JavaScript and TypeScript
+		item.kind = OutlineKind::Class;
+	} else if (type == "enum_declaration") {
+		// TypeScript
+		item.kind = OutlineKind::Enum;
+	} else if (type == "type_alias_declaration") {
+		// TypeScript
+		item.kind = OutlineKind::Struct;
+	} else if (type == "internal_module") {
+		// TypeScript "namespace"; "module" is handled with Component Pascal.
+		item.kind = OutlineKind::Namespace;
+	} else if (type == "rule_set") {
+		// CSS: the selectors.
+		item.kind = OutlineKind::Struct;
+		name = ts_node_named_child(node, 0);
+		if (ts_node_is_null(name) || NodeType(name) != "selectors") {
+			return std::nullopt;
+		}
+	} else if (type == "media_statement" || type == "supports_statement" || type == "keyframes_statement") {
+		// CSS: the at-rule up to its block.
+		item.kind = OutlineKind::Namespace;
+		const uint32_t count = ts_node_named_child_count(node);
+		if (count == 0) {
+			return std::nullopt;
+		}
+		const TSNode block = ts_node_named_child(node, count - 1);
+		if (NodeType(block) != "block" && NodeType(block) != "keyframe_block_list") {
+			return std::nullopt;
+		}
+		const std::string header = text.Substring(item.start, ts_node_start_byte(block) - item.start);
+		size_t length = header.size();
+		while (length > 0 && isspace(static_cast<unsigned char>(header[length - 1]))) {
+			length--;
+		}
+		item.label = Compact(header);
+		item.nameStart = item.start;
+		item.nameEnd = item.start + length;
+		return item;
 	} else {
 		return std::nullopt;
 	}

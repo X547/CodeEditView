@@ -110,6 +110,11 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::find(languages.begin(), languages.end(), "make") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "cmake") != languages.end());
 	CHECK(std::find(languages.begin(), languages.end(), "devicetree") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "html") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "css") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "javascript") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "typescript") != languages.end());
+	CHECK(std::find(languages.begin(), languages.end(), "tsx") != languages.end());
 	for (const std::string &name : languages) {
 		const Language *language = Language::ForName(name);
 		REQUIRE(language != nullptr);
@@ -147,6 +152,15 @@ TEST_CASE("languages and capture styles")
 	CHECK(std::string_view(LanguageForPath("soc.DTSI")) == "devicetree");
 	CHECK(std::string_view(LanguageForPath("fix.dtso")) == "devicetree");
 	CHECK(std::string_view(LanguageForPath("boards/nrf52840dk.overlay")) == "devicetree");
+	CHECK(std::string_view(LanguageForPath("docs/index.html")) == "html");
+	CHECK(std::string_view(LanguageForPath("INDEX.HTM")) == "html");
+	CHECK(std::string_view(LanguageForPath("style.css")) == "css");
+	CHECK(std::string_view(LanguageForPath("app.js")) == "javascript");
+	CHECK(std::string_view(LanguageForPath("module.mjs")) == "javascript");
+	CHECK(std::string_view(LanguageForPath("App.jsx")) == "javascript");
+	CHECK(std::string_view(LanguageForPath("src/main.ts")) == "typescript");
+	CHECK(std::string_view(LanguageForPath("config.mts")) == "typescript");
+	CHECK(std::string_view(LanguageForPath("src/App.tsx")) == "tsx");
 	CHECK(LanguageForPath("README") == nullptr);
 	CHECK(LanguageForPath("x.build") == nullptr);
 	CHECK(LanguageForPath("notes.txt") == nullptr);
@@ -164,6 +178,10 @@ TEST_CASE("languages from MIME types")
 {
 	CHECK(std::string_view(LanguageForMimeType("text/x-jamfile")) == "jam");
 	CHECK(std::string_view(LanguageForMimeType("Text/X-Makefile")) == "make");
+	CHECK(std::string_view(LanguageForMimeType("text/html")) == "html");
+	CHECK(std::string_view(LanguageForMimeType("text/css")) == "css");
+	CHECK(std::string_view(LanguageForMimeType("text/javascript")) == "javascript");
+	CHECK(std::string_view(LanguageForMimeType("application/javascript")) == "javascript");
 	CHECK(LanguageForMimeType("text/plain") == nullptr);
 	CHECK(LanguageForMimeType("") == nullptr);
 
@@ -617,6 +635,212 @@ TEST_CASE("devicetree highlighting")
 	CHECK(StyleAt(core, 10, 0) == HighlightStyle::Constant);
 	CHECK(StyleAt(core, 10, 1) == HighlightStyle::Constant);
 	CHECK(StyleAt(core, 10, 9) == HighlightStyle::Default);
+}
+
+
+TEST_CASE("html highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"<!DOCTYPE html>\n"
+		"<!-- note -->\n"
+		"<p class=\"a\">x &amp; y</p>\n"
+		"<br/>\n"
+		"<script>if (a) {}</script>\n",
+		"html"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 2) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 3) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 2, 8) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 2, 9) == HighlightStyle::String);
+	CHECK(StyleAt(core, 2, 12) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 13) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 2, 15) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 2, 22) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 2, 24) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 3) == HighlightStyle::Punctuation);
+	// The script is not parsed.
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 8) == HighlightStyle::Default);
+}
+
+
+TEST_CASE("css highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"@media screen {\n"
+		"  a.b:hover > #c::before { color: #fff !important; }\n"
+		"}\n"
+		"/* note */\n"
+		".x { margin: 1.5em calc(2px + 3px); content: \"\\201C\"; }\n",
+		"css"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Preprocessor);
+	CHECK(StyleAt(core, 0, 14) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 2) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 1, 3) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 4) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 1, 5) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 6) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 1, 12) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 1, 15) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 1, 18) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 1, 27) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 1, 32) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 1, 35) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 1, 39) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 1, 51) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 0) == HighlightStyle::Comment);
+	CHECK(StyleAt(core, 4, 1) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 5) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 13) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 4, 16) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 4, 19) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 23) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 4, 28) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 4, 36) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 4, 45) == HighlightStyle::String);
+	CHECK(StyleAt(core, 4, 46) == HighlightStyle::Character);
+}
+
+
+TEST_CASE("javascript highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"import { a } from \"./m.js\";\n"
+		"const MAX_SIZE = 10, re = /x+/g;\n"
+		"class Foo extends Bar {\n"
+		"  get size() { return this.n; }\n"
+		"}\n"
+		"function f(x) { return new Foo(`a${x}b`); }\n"
+		"const g = async (y) => console.log(y ?? null);\n"
+		"// note\n"
+		"let el = <div className=\"c\">&amp;<Foo /></div>;\n",
+		"javascript"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 7) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 0, 9) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 0, 13) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 18) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Keyword);
+	// All capitals: a constant.
+	CHECK(StyleAt(core, 1, 6) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 1, 15) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 1, 17) == HighlightStyle::Number);
+	CHECK(StyleAt(core, 1, 21) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 1, 26) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 28) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 29) == HighlightStyle::String);
+	CHECK(StyleAt(core, 1, 30) == HighlightStyle::String);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 6) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 2, 10) == HighlightStyle::Keyword);
+	// Capitalized: a class.
+	CHECK(StyleAt(core, 2, 18) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 3, 2) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 6) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 22) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 3, 26) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 27) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 23) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 27) == HighlightStyle::Type);
+	// A template string apart from its substitution.
+	CHECK(StyleAt(core, 5, 31) == HighlightStyle::String);
+	CHECK(StyleAt(core, 5, 32) == HighlightStyle::String);
+	CHECK(StyleAt(core, 5, 33) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 35) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 5, 36) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 37) == HighlightStyle::String);
+	CHECK(StyleAt(core, 5, 38) == HighlightStyle::String);
+	CHECK(StyleAt(core, 6, 6) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 6, 10) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 6, 20) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 23) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 6, 31) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 6, 37) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 6, 40) == HighlightStyle::Constant);
+	CHECK(StyleAt(core, 7, 0) == HighlightStyle::Comment);
+	// JSX: elements like HTML, components as types.
+	CHECK(StyleAt(core, 8, 9) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 8, 10) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 8, 14) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 8, 24) == HighlightStyle::String);
+	CHECK(StyleAt(core, 8, 27) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 8, 28) == HighlightStyle::Character);
+	CHECK(StyleAt(core, 8, 33) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 8, 34) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 8, 38) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 8, 40) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 8, 42) == HighlightStyle::Keyword);
+}
+
+
+TEST_CASE("typescript highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"interface Point { x: number; readonly y?: string }\n"
+		"type Id = string | number;\n"
+		"enum Color { Red, Green }\n"
+		"function id<T>(value: T): T { return value; }\n"
+		"abstract class Shape implements Base { abstract area(): number; }\n"
+		"let n = f<Id>(1) as any;\n",
+		"typescript"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 10) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 0, 21) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 0, 29) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 42) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 1, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 1, 5) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 1, 10) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 1, 17) == HighlightStyle::Operator);
+	CHECK(StyleAt(core, 2, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 2, 5) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 2, 13) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 3, 9) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 3, 11) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 3, 12) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 3, 15) == HighlightStyle::Default);
+	CHECK(StyleAt(core, 4, 0) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 15) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 21) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 4, 32) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 4, 48) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 8) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 5, 9) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 5, 10) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 5, 17) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 5, 20) == HighlightStyle::BuiltinType);
+}
+
+
+TEST_CASE("tsx highlighting")
+{
+	BReference<TextModel> model = MakeParsedModel(
+		"const App = (p: Props): JSX.Element => <div>{p.x as string}</div>;\n",
+		"tsx"
+	);
+	EditorCore core(model);
+	CHECK(StyleAt(core, 0, 6) == HighlightStyle::Function);
+	CHECK(StyleAt(core, 0, 16) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 0, 24) == HighlightStyle::Type);
+	CHECK(StyleAt(core, 0, 39) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 0, 40) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 49) == HighlightStyle::Keyword);
+	CHECK(StyleAt(core, 0, 52) == HighlightStyle::BuiltinType);
+	CHECK(StyleAt(core, 0, 59) == HighlightStyle::Punctuation);
+	CHECK(StyleAt(core, 0, 61) == HighlightStyle::Keyword);
 }
 
 

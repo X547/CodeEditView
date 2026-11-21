@@ -1,0 +1,7 @@
+[wrap-file]
+directory = tree-sitter-typescript-0.23.2
+lead_directory_missing = true
+source_url = https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-typescript.tar.xz
+source_filename = tree-sitter-typescript-0.23.2.tar.xz
+source_hash = 2d324af0616a692cc6fcaea35442a816decb2ef0d05242953cb1feb15a5dc72d
+patch_directory = tree-sitter-typescript

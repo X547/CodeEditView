@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,10 +29,11 @@ private:
 	std::vector<HighlightStyle> fCaptureStyles;
 
 	// Text predicates of a highlight pattern: the captured text must be one
-	// of the values (#eq? and #any-of?).
+	// of the values (#eq? and #any-of?) or match the pattern (#match?).
 	struct Predicate {
 		uint32_t captureId {};
 		std::vector<std::string> values;
+		std::optional<std::regex> pattern;
 	};
 	std::vector<std::vector<Predicate>> fPatternPredicates;
 

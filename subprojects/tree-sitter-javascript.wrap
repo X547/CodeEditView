@@ -1,0 +1,7 @@
+[wrap-file]
+directory = tree-sitter-javascript-0.25.0
+lead_directory_missing = true
+source_url = https://github.com/tree-sitter/tree-sitter-javascript/releases/download/v0.25.0/tree-sitter-javascript.tar.gz
+source_filename = tree-sitter-javascript-0.25.0.tar.gz
+source_hash = 3385229430f686c6ff6e756168d7e05a01da4c45acb7708239edc9fa9ee41514
+patch_directory = tree-sitter-javascript

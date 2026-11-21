@@ -115,7 +115,9 @@ auto-indent, word wrap, read-only, margins, hard wrap and sticky scope
 lines, per view.
 
 **Syntax.** C, C++, shell (sh, Bash), Meson, Jam, Component Pascal, Python,
-Make, CMake and Devicetree are built in. Choose a language with
+Make, CMake, Devicetree, HTML, CSS, JavaScript (with JSX), TypeScript and
+TSX are built in; scripts and styles inside HTML are not highlighted yet.
+Choose a language with
 `TextModel::SetLanguage()`; `LanguageForPath()`, `LanguageForMimeType()` and
 `LanguageForFile()` find one. Parsing runs incrementally in the background;
 colors come from a `CodeEdit::Theme` (the default follows Pe).

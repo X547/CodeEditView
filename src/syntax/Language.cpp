@@ -20,12 +20,17 @@
 #include "CMakeHighlights.inc"
 #include "ComponentPascalHighlights.inc"
 #include "CppHighlights.inc"
+#include "CssHighlights.inc"
 #include "DeviceTreeHighlights.inc"
+#include "HtmlHighlights.inc"
 #include "JamHighlights.inc"
+#include "JavaScriptHighlights.inc"
 #include "MakeHighlights.inc"
 #include "MesonHighlights.inc"
 #include "PythonHighlights.inc"
 #include "ShellHighlights.inc"
+#include "TsxHighlights.inc"
+#include "TypeScriptHighlights.inc"
 
 
 extern "C" const TSLanguage *tree_sitter_c();
@@ -38,6 +43,11 @@ extern "C" const TSLanguage *tree_sitter_python();
 extern "C" const TSLanguage *tree_sitter_make();
 extern "C" const TSLanguage *tree_sitter_cmake();
 extern "C" const TSLanguage *tree_sitter_devicetree();
+extern "C" const TSLanguage *tree_sitter_html();
+extern "C" const TSLanguage *tree_sitter_css();
+extern "C" const TSLanguage *tree_sitter_javascript();
+extern "C" const TSLanguage *tree_sitter_typescript();
+extern "C" const TSLanguage *tree_sitter_tsx();
 
 
 namespace CodeEdit {
@@ -94,6 +104,41 @@ static constexpr const char *kCMakeNavigation = R"scm(
 
 static constexpr const char *kDeviceTreeNavigation = R"scm(
 (node) @definition
+)scm";
+
+// HTML has no definitions.
+static constexpr const char *kHtmlNavigation = "";
+
+static constexpr const char *kCssNavigation = R"scm(
+(rule_set) @definition
+(media_statement) @definition
+(supports_statement) @definition
+(keyframes_statement) @definition
+)scm";
+
+// JavaScript, the base of TypeScript and TSX. Functions are also variables
+// and class fields holding a function.
+static constexpr const char *kEcmaNavigation = R"scm(
+(function_declaration) @definition
+(generator_function_declaration) @definition
+(class_declaration) @definition
+(method_definition) @definition
+(lexical_declaration (variable_declarator value: [(arrow_function) (function_expression)])) @definition
+(variable_declaration (variable_declarator value: [(arrow_function) (function_expression)])) @definition
+)scm";
+
+static constexpr const char *kJavaScriptNavigation = R"scm(
+(field_definition value: [(arrow_function) (function_expression)]) @definition
+)scm";
+
+static constexpr const char *kTypeScriptNavigation = R"scm(
+(public_field_definition value: [(arrow_function) (function_expression)]) @definition
+(abstract_class_declaration) @definition
+(interface_declaration) @definition
+(enum_declaration) @definition
+(type_alias_declaration) @definition
+(internal_module) @definition
+(module) @definition
 )scm";
 
 
@@ -228,6 +273,47 @@ static constexpr const char *kDeviceTreeFolds = R"scm(
 (preproc_ifdef) @fold
 )scm";
 
+// Elements without an end tag, such as <li> closed by the next one, do not
+// fold.
+static constexpr const char *kHtmlFolds = R"scm(
+(element (end_tag) @fold.end) @fold
+(script_element (end_tag) @fold.end) @fold
+(style_element (end_tag) @fold.end) @fold
+(comment) @fold
+)scm";
+
+static constexpr const char *kCssFolds = R"scm(
+(block) @fold
+(keyframe_block_list) @fold
+(comment) @fold
+)scm";
+
+static constexpr const char *kEcmaFolds = R"scm(
+(statement_block) @fold
+(class_body) @fold
+(switch_body) @fold
+(switch_case) @fold
+(object) @fold
+(object_pattern) @fold
+(array) @fold
+(arguments) @fold
+(formal_parameters) @fold
+(named_imports) @fold
+(template_string) @fold
+(comment) @fold
+)scm";
+
+static constexpr const char *kTypeScriptFolds = R"scm(
+(interface_body) @fold
+(object_type) @fold
+(enum_body) @fold
+)scm";
+
+static constexpr const char *kJsxFolds = R"scm(
+(jsx_element close_tag: (jsx_closing_element) @fold.end) @fold
+(jsx_self_closing_element) @fold
+)scm";
+
 
 struct FileExtension {
 	std::string_view extension;
@@ -267,6 +353,20 @@ static constexpr FileExtension kFileExtensions[] = {
 	{"dtso",  "devicetree"},
 	// Zephyr board overlays.
 	{"overlay", "devicetree"},
+	{"html",  "html"},
+	{"htm",   "html"},
+	{"xhtml", "html"},
+	{"shtml", "html"},
+	{"css",   "css"},
+	// The JavaScript grammar includes JSX.
+	{"js",    "javascript"},
+	{"mjs",   "javascript"},
+	{"cjs",   "javascript"},
+	{"jsx",   "javascript"},
+	{"ts",    "typescript"},
+	{"mts",   "typescript"},
+	{"cts",   "typescript"},
+	{"tsx",   "tsx"},
 };
 
 // Files known by their whole name, compared case-sensitively.
@@ -299,8 +399,14 @@ struct MimeType {
 
 // MIME types of the Haiku MIME database; they take priority over the path.
 static constexpr MimeType kMimeTypes[] = {
-	{"text/x-jamfile",  "jam"},
-	{"text/x-makefile", "make"},
+	{"text/x-jamfile",           "jam"},
+	{"text/x-makefile",          "make"},
+	{"text/html",               "html"},
+	{"application/xhtml+xml",    "html"},
+	{"text/css",                 "css"},
+	{"text/javascript",          "javascript"},
+	{"application/javascript",   "javascript"},
+	{"application/x-javascript", "javascript"},
 };
 
 // The Jam rules of the Haiku build have no extension.
@@ -356,12 +462,17 @@ void Language::ParsePredicates()
 			Assert(length >= 3 && predicate[0].type == TSQueryPredicateStepTypeString
 				&& predicate[1].type == TSQueryPredicateStepTypeCapture, "unsupported query predicate");
 			const std::string name = stringValue(predicate[0]);
-			Assert(name == "eq?" || name == "any-of?", "unsupported query predicate");
+			Assert(name == "eq?" || name == "any-of?" || name == "match?", "unsupported query predicate");
 			Predicate entry;
 			entry.captureId = predicate[1].value_id;
 			for (uint32_t j = 2; j < length; j++) {
 				Assert(predicate[j].type == TSQueryPredicateStepTypeString, "unsupported query predicate");
 				entry.values.push_back(stringValue(predicate[j]));
+			}
+			if (name == "match?") {
+				Assert(entry.values.size() == 1, "unsupported query predicate");
+				entry.pattern.emplace(entry.values.front(), std::regex::ECMAScript | std::regex::optimize);
+				entry.values.clear();
 			}
 			fPatternPredicates[pattern].push_back(std::move(entry));
 		}
@@ -380,7 +491,11 @@ bool Language::MatchesPredicates(const TSQueryMatch &match, const Rope &text) co
 			const uint32_t start = ts_node_start_byte(capture.node);
 			const uint32_t end = std::min<uint32_t>(ts_node_end_byte(capture.node), text.Length());
 			const std::string value = text.Substring(start, end > start ? end - start : 0);
-			if (std::find(predicate.values.begin(), predicate.values.end(), value) == predicate.values.end()) {
+			if (predicate.pattern.has_value()) {
+				if (!std::regex_search(value, *predicate.pattern)) {
+					return false;
+				}
+			} else if (std::find(predicate.values.begin(), predicate.values.end(), value) == predicate.values.end()) {
 				return false;
 			}
 		}
@@ -426,8 +541,22 @@ const std::vector<const Language*> &Language::All()
 	static const Language sCMake("cmake", tree_sitter_cmake(), kCMakeHighlights, kCMakeNavigation, kCMakeFolds);
 	static const Language sDeviceTree("devicetree", tree_sitter_devicetree(),
 		kDeviceTreeHighlights, kDeviceTreeNavigation, kDeviceTreeFolds);
+	static const Language sHtml("html", tree_sitter_html(), kHtmlHighlights, kHtmlNavigation, kHtmlFolds);
+	static const Language sCss("css", tree_sitter_css(), kCssHighlights, kCssNavigation, kCssFolds);
+	// TypeScript and TSX extend JavaScript; the queries are combined.
+	static const std::string sJavaScriptNavigation = std::string(kEcmaNavigation) + kJavaScriptNavigation;
+	static const std::string sTypeScriptNavigation = std::string(kEcmaNavigation) + kTypeScriptNavigation;
+	static const std::string sJavaScriptFolds = std::string(kEcmaFolds) + kJsxFolds;
+	static const std::string sTypeScriptFolds = std::string(kEcmaFolds) + kTypeScriptFolds;
+	static const std::string sTsxFolds = sTypeScriptFolds + kJsxFolds;
+	static const Language sJavaScript("javascript", tree_sitter_javascript(),
+		kJavaScriptHighlights, sJavaScriptNavigation, sJavaScriptFolds);
+	static const Language sTypeScript("typescript", tree_sitter_typescript(),
+		kTypeScriptHighlights, sTypeScriptNavigation, sTypeScriptFolds);
+	static const Language sTsx("tsx", tree_sitter_tsx(), kTsxHighlights, sTypeScriptNavigation, sTsxFolds);
 	static const std::vector<const Language*> sAll = {
-		&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal, &sPython, &sMake, &sCMake, &sDeviceTree
+		&sC, &sCpp, &sShell, &sMeson, &sJam, &sComponentPascal, &sPython, &sMake, &sCMake, &sDeviceTree,
+		&sHtml, &sCss, &sJavaScript, &sTypeScript, &sTsx
 	};
 	return sAll;
 }

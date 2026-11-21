@@ -630,7 +630,7 @@ void StudioApp::ReadyToRun()
 	BAutolock lock(fWindowLock);
 	if (fWindows.empty() && fCoverages.empty()) {
 		lock.Unlock();
-		ShowDocumentsWindow();
+		NewDocument(nullptr);
 	}
 }
 

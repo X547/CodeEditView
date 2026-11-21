@@ -9,9 +9,10 @@ namespace CodeEdit {
 namespace EditorCommands {
 
 
-// Undo, redo, the clipboard and select all: handled by every host, after the
-// registered sets.
+// Command sets handled by every host, after the registered sets: undo, redo,
+// the clipboard and select all; shift, folding and bookmarks.
 EditorCommandSet &BuiltInEditCommands();
+EditorCommandSet &BuiltInViewCommands();
 
 
 } // EditorCommands

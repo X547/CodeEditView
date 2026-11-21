@@ -235,6 +235,79 @@ TEST_CASE("file options are kept in the file's attributes")
 }
 
 
+static std::vector<size_t> Bookmarks(Document &document)
+{
+	CodeEdit::TextModel &model = *document.Model();
+	ModelLock lock(model);
+	std::vector<size_t> lines;
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
+		if (mark.kind == CodeEdit::kMarkBookmark) {
+			lines.push_back(mark.line);
+		}
+	}
+	return lines;
+}
+
+
+static void AddBookmark(Document &document, size_t line)
+{
+	ModelLock lock(*document.Model());
+	document.Model()->SharedMarks().AddMark(CodeEdit::kMarkBookmark, line);
+}
+
+
+TEST_CASE("bookmarks are kept in the file's attributes")
+{
+	TempDirectory directory;
+	directory.Write("a.txt", "0\n1\n2\n3\n");
+	const Locator locator = Locator::File(directory / "a.txt");
+	DocumentRegistry registry;
+	BReference<Document> document = registry.Open(locator);
+	registry.WaitIdle();
+	CHECK(Bookmarks(*document).empty());
+
+	// Set on unchanged text: stored at once. Without other marks, the
+	// document closes when unused.
+	AddBookmark(*document, 2);
+	registry.StoreBookmarks(document);
+	registry.WaitIdle();
+	CHECK(document->Status().error.empty());
+	document.Unset();
+	registry.CloseUnused();
+	CHECK(registry.Find(locator).Get() == nullptr);
+	document = registry.Open(locator);
+	registry.WaitIdle();
+	CHECK(Bookmarks(*document) == std::vector<size_t> {2});
+
+	SECTION("lines of edited text are stored when saved") {
+		Type(*document, "new\n");
+		AddBookmark(*document, 0);
+		CHECK(Bookmarks(*document) == std::vector<size_t> {0, 3});
+		registry.StoreBookmarks(document);
+		registry.Save(document);
+		registry.WaitIdle();
+		CHECK(document->Status().error.empty());
+		CHECK_FALSE(document->Status().changedElsewhere);
+		document.Unset();
+		registry.CloseUnused();
+		document = registry.Open(locator);
+		registry.WaitIdle();
+		CHECK(Text(*document) == "new\n0\n1\n2\n3\n");
+		CHECK(Bookmarks(*document) == std::vector<size_t> {0, 3});
+	}
+
+	SECTION("discarded edits keep the stored bookmarks") {
+		Type(*document, "new\n");
+		AddBookmark(*document, 0);
+		registry.StoreBookmarks(document);
+		registry.Reload(document, true);
+		registry.WaitIdle();
+		CHECK(Text(*document) == "0\n1\n2\n3\n");
+		CHECK(Bookmarks(*document) == std::vector<size_t> {2});
+	}
+}
+
+
 TEST_CASE("line endings and BOM set are unsaved changes")
 {
 	TempDirectory directory;

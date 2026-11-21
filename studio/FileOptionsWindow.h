@@ -19,7 +19,7 @@ namespace Studio {
 
 
 // The options of one document, kept with its file: language, indentation,
-// MIME type, line endings and BOM. OK sends kMsgFileOptionsChosen to the
+// word wrap, MIME type, line endings and BOM. OK sends kMsgFileOptionsChosen to the
 // target (the document's source window), which applies them. Modal to the
 // owner window only.
 class FileOptionsWindow: public BWindow {
@@ -32,6 +32,7 @@ private:
 	BMenuField *fIndentField {};
 	BSpinner *fTabWidth {};
 	BSpinner *fIndentWidth {};
+	BCheckBox *fWordWrap {};
 	BMenuField *fLineEndingField {};
 	BCheckBox *fBom {};
 

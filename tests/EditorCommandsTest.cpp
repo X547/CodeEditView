@@ -4,6 +4,7 @@
 #include <MenuItem.h>
 #include <Message.h>
 
+#include <CodeEditView/CodeEditView.h>
 #include <CodeEditView/EditorCommands.h>
 
 
@@ -64,6 +65,16 @@ TEST_CASE("undo and clipboard commands are built in")
 	BMessage copy(B_COPY);
 	CHECK(EditorCommands::Dispatch(&undo, nullptr));
 	CHECK(EditorCommands::Dispatch(&copy, nullptr));
+}
+
+
+TEST_CASE("shift, folding and bookmark commands are built in")
+{
+	for (const uint32 what : {kMsgIndentLess, kMsgFoldAll, kMsgToggleBookmark, kMsgNextBookmark,
+		kMsgClearBookmarks}) {
+		BMessage message(what);
+		CHECK(EditorCommands::Dispatch(&message, nullptr));
+	}
 }
 
 

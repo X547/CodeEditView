@@ -49,6 +49,15 @@ public:
 };
 
 
+// Bookmarks of the target editor's document (kMarkBookmark marks of
+// TextModel::SharedMarks()): set or remove one on the caret line, go to the
+// next or previous one (wrapping around at the ends), remove all.
+constexpr uint32 kMsgToggleBookmark = 'CEbt';
+constexpr uint32 kMsgNextBookmark = 'CEbn';
+constexpr uint32 kMsgPreviousBookmark = 'CEbp';
+constexpr uint32 kMsgClearBookmarks = 'CEbc';
+
+
 namespace EditorCommands {
 
 
@@ -75,6 +84,13 @@ bool Dispatch(BMessage *message, CodeEditView *view);
 // redo are labeled with the name of the undo step (UndoScript) and disabled
 // without one.
 void AddEditItems(BMenu *menu);
+
+// Items of more built-in commands: shift left and right (kMsgIndentLess,
+// kMsgIndentMore), folding (kMsgToggleFold, kMsgFoldAll, kMsgUnfoldAll) and
+// bookmarks (kMsgToggleBookmark etc.).
+void AddShiftItems(BMenu *menu);
+void AddFoldItems(BMenu *menu);
+void AddBookmarkItems(BMenu *menu);
 
 
 } // EditorCommands

@@ -40,9 +40,10 @@ static EditorCommandSet *FindSet(uint32 what)
 			return set;
 		}
 	}
-	EditorCommandSet &builtIn = BuiltInEditCommands();
-	if (builtIn.Handles(what)) {
-		return &builtIn;
+	for (EditorCommandSet *builtIn: {&BuiltInEditCommands(), &BuiltInViewCommands()}) {
+		if (builtIn->Handles(what)) {
+			return builtIn;
+		}
 	}
 	return nullptr;
 }

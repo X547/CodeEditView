@@ -55,12 +55,38 @@ The **info button** of the tool bar opens the options of the file:
 - **File type** (MIME type) of the file.
 - **Indent with** tabs or spaces, **Tab width**, and **Indent width** (when
   indenting with spaces).
+- **Wrap long lines** at the window width (also **View > Word wrap**).
 - **Line endings** (LF, CRLF or CR) and **UTF-8 byte order mark**, used when
   the file is saved. Changing them counts as an unsaved change.
 
 OK applies them to all windows of the file. A file on disk keeps the options
 in its attributes, so they are there the next time it is opened; for files
 of Git commits and new documents they last until the file is closed.
+**View > Word wrap** changes the same option without the dialog.
+
+
+## Shifting, folding and bookmarks
+
+**Edit > Shift left** (Cmd + [) and **Shift right** (Cmd + ]) remove or add
+one indentation level on the selected lines.
+
+**View > Fold/unfold** (Cmd + .) folds the selected lines, or folds and
+unfolds the block at the caret; **Fold all** and **Unfold all** fold every
+block or none.
+
+Bookmarks mark lines you want to come back to; they are shown in the gutter.
+
+| View menu | Keys |
+|---|---|
+| Toggle bookmark (on the caret line) | Cmd + M |
+| Next bookmark | Cmd + Opt + Down |
+| Previous bookmark | Cmd + Opt + Up |
+| Remove all bookmarks | |
+
+Bookmarks belong to the file and are shown in all its windows. A file on
+disk keeps them in its attributes, as they are when it is saved, so they are
+there the next time it is opened. Files of Git commits and new documents
+keep them until closed.
 
 
 ## Finding your way

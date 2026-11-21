@@ -1,5 +1,7 @@
 #include "FileOptions.h"
 
+#include <algorithm>
+
 #include <DataIO.h>
 #include <Message.h>
 
@@ -11,6 +13,23 @@ namespace Workspace {
 static constexpr uint32_t kMaxWidth = 64;
 
 
+static std::string Flatten(const BMessage &message)
+{
+	std::string data(message.FlattenedSize(), '\0');
+	if (message.Flatten(data.data(), data.size()) != B_OK) {
+		return {};
+	}
+	return data;
+}
+
+
+static bool Unflatten(std::string_view data, BMessage &message)
+{
+	BMemoryIO stream(data.data(), data.size());
+	return !data.empty() && message.Unflatten(&stream) == B_OK;
+}
+
+
 std::string FlattenFileOptions(const FileOptions &options)
 {
 	BMessage message;
@@ -20,20 +39,15 @@ std::string FlattenFileOptions(const FileOptions &options)
 	message.AddInt32("tabWidth", static_cast<int32>(options.tabWidth));
 	message.AddInt32("indentSize", static_cast<int32>(options.indentSize));
 	message.AddBool("insertSpaces", options.insertSpaces);
-
-	std::string data(message.FlattenedSize(), '\0');
-	if (message.Flatten(data.data(), data.size()) != B_OK) {
-		return {};
-	}
-	return data;
+	message.AddBool("wordWrap", options.wordWrap);
+	return Flatten(message);
 }
 
 
 std::optional<FileOptions> UnflattenFileOptions(std::string_view data)
 {
 	BMessage message;
-	BMemoryIO stream(data.data(), data.size());
-	if (data.empty() || message.Unflatten(&stream) != B_OK) {
+	if (!Unflatten(data, message)) {
 		return std::nullopt;
 	}
 	FileOptions options;
@@ -50,7 +64,38 @@ std::optional<FileOptions> UnflattenFileOptions(std::string_view data)
 		options.indentSize = static_cast<uint32_t>(indentSize);
 	}
 	options.insertSpaces = message.GetBool("insertSpaces", false);
+	options.wordWrap = message.GetBool("wordWrap", false);
 	return options;
+}
+
+
+std::string FlattenBookmarks(const std::vector<size_t> &lines)
+{
+	BMessage message;
+	for (const size_t line : lines) {
+		message.AddInt64("line", static_cast<int64>(line));
+	}
+	return Flatten(message);
+}
+
+
+// Sorted, without duplicates.
+std::vector<size_t> UnflattenBookmarks(std::string_view data)
+{
+	std::vector<size_t> lines;
+	BMessage message;
+	if (!Unflatten(data, message)) {
+		return lines;
+	}
+	int64 line = 0;
+	for (int32 i = 0; message.FindInt64("line", i, &line) == B_OK; i++) {
+		if (line >= 0) {
+			lines.push_back(static_cast<size_t>(line));
+		}
+	}
+	std::sort(lines.begin(), lines.end());
+	lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+	return lines;
 }
 
 

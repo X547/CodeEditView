@@ -104,9 +104,11 @@ model->Replace(offset, length, text);
 **Commands and menus.** Host windows route menu commands to their editor
 with `CodeEdit::EditorCommands` (see `EditorCommands.h` for the three calls
 a window needs). `EditorCommands::AddEditItems()` adds Undo/Redo (named after
-the undo step), the clipboard and Select all; `TextCommands::AddItems()` the
-whole-file text commands; `FindKit::AddFindItems()` the Search menu. Each
-text command is a function in `src/commands`, one per file.
+the undo step), the clipboard and Select all; `AddShiftItems()`,
+`AddFoldItems()` and `AddBookmarkItems()` shifting, folding and bookmarks;
+`TextCommands::AddItems()` the whole-file text commands;
+`FindKit::AddFindItems()` the Search menu. Each text command is a function
+in `src/commands`, one per file.
 
 **Settings.** `EditorSettings` sets tab width, indentation with spaces,
 auto-indent, word wrap, read-only, margins, hard wrap and sticky scope

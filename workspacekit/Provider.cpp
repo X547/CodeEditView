@@ -61,6 +61,15 @@ std::string Provider::WriteAttributes(const Locator &locator, const FileAttribut
 }
 
 
+std::string Provider::WriteBookmarks(const Locator &locator, const std::vector<size_t> &lines,
+	const std::string &knownVersion)
+{
+	(void)lines;
+	(void)knownVersion;
+	throw ProviderError("Files of " + locator.DisplayName() + " have no attributes");
+}
+
+
 //#pragma mark - Providers
 
 Providers &Providers::Default()

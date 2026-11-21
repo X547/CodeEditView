@@ -72,6 +72,7 @@ codeEditViewSources = files(
 	'commands/LeadingSpacesToTabs.cpp',
 	'commands/TabsToSpaces.cpp',
 	'commands/TextCommands.cpp',
+	'commands/ViewCommands.cpp',
 	'layout/DisplayMap.cpp',
 	'layout/LineLayout.cpp',
 	'layout/RowIndex.cpp',

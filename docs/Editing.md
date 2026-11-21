@@ -95,7 +95,9 @@ Triangles in the gutter fold and unfold blocks of code; clicking the `…` after
 a folded line unfolds it. Cmd + . folds the selected lines, or folds and
 unfolds the block at the caret. Folds belong to each window.
 
-Breakpoints, bookmarks and other line marks are shown in the gutter.
+Breakpoints, bookmarks and other line marks are shown in the gutter. In
+CodeEdit, the View menu also has Fold all, Unfold all and the bookmark
+commands, and the Edit menu has Shift left and Shift right.
 
 
 ## Syntax highlighting

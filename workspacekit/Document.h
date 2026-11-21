@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -109,6 +110,9 @@ public:
 // be called with a model lock held.
 class DocumentRegistry {
 private:
+	using AttributeWriter = std::function<std::string(Provider &provider, const Locator &locator,
+		const std::string &knownVersion)>;
+
 	Providers &fProviders;
 	BLocker fLock;
 	std::map<Locator, BReference<Document>> fDocuments;
@@ -127,6 +131,7 @@ private:
 	BReference<Document> Replaced(const Locator &target, bool create);
 	void Replace(const Locator &target, const BReference<Document> &document, const CodeEdit::TextSnapshot &snapshot,
 		const BMessenger &reply, const BReference<Document> &untitled);
+	void WriteLater(const BReference<Document> &document, AttributeWriter write);
 
 public:
 	explicit DocumentRegistry(Providers &providers = Providers::Default());
@@ -155,6 +160,13 @@ public:
 	// status error.
 	void SetFileSettings(Document *document, const FileAttributes &attributes, CodeEdit::LineEnding lineEnding,
 		bool hasBom);
+	// The same, leaving the line ending and BOM as they are.
+	void SetFileAttributes(Document *document, const FileAttributes &attributes);
+	// Bookmarks (CodeEdit::kMarkBookmark marks of the model's shared marks)
+	// are kept with a file that keeps attributes: written when it is saved,
+	// read when its text is loaded. This writes them now if the text has no
+	// unsaved changes (otherwise saving does), e.g. after one was set.
+	void StoreBookmarks(Document *document);
 
 	// Reads the file again. With unsaved edits, the text is kept and the
 	// document marked changed elsewhere, unless force is set (revert: the
@@ -174,7 +186,8 @@ public:
 	// file is saved as by Save() with overwrite.
 	void SaveCopy(Document *document, const Locator &target, const BMessenger &reply);
 	// Forgets documents referenced by nobody else, without unsaved edits or
-	// shared marks (breakpoints).
+	// shared marks (breakpoints; bookmarks only where they are not kept with
+	// the file).
 	void CloseUnused();
 	// Waits until the background work queued so far is done.
 	void WaitIdle();

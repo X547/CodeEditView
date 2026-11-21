@@ -18,8 +18,33 @@
 namespace Workspace {
 
 
-// Larger option attributes are not read.
-static constexpr off_t kMaxOptionsSize = 64 * 1024;
+// Larger attributes of ours are not read.
+static constexpr off_t kMaxAttributeSize = 1024 * 1024;
+
+
+// The data of a B_MESSAGE_TYPE attribute; none if it is missing or too
+// large.
+static std::optional<std::string> ReadMessageAttribute(BNode &node, const char *name)
+{
+	attr_info info;
+	if (node.InitCheck() != B_OK || node.GetAttrInfo(name, &info) != B_OK || info.type != B_MESSAGE_TYPE
+		|| info.size <= 0 || info.size > kMaxAttributeSize) {
+		return std::nullopt;
+	}
+	std::string data(info.size, '\0');
+	if (node.ReadAttr(name, B_MESSAGE_TYPE, 0, data.data(), data.size()) != static_cast<ssize_t>(data.size())) {
+		return std::nullopt;
+	}
+	return data;
+}
+
+
+static void CheckOpened(const BNode &node, const std::string &path)
+{
+	if (node.InitCheck() != B_OK) {
+		throw ProviderError("Cannot open " + path + ": " + strerror(node.InitCheck()));
+	}
+}
 
 
 bool FileProvider::IsWritable(const Locator &) const
@@ -77,14 +102,11 @@ FileInfo FileProvider::Read(const Locator &locator, DataSink &sink)
 		if (node.InitCheck() == B_OK && info.InitCheck() == B_OK && info.GetType(type) == B_OK) {
 			result.mimeType = type;
 		}
-		attr_info options;
-		if (node.InitCheck() == B_OK && node.GetAttrInfo(kFileOptionsAttribute, &options) == B_OK
-			&& options.type == B_MESSAGE_TYPE && options.size > 0 && options.size <= kMaxOptionsSize) {
-			std::string data(options.size, '\0');
-			if (node.ReadAttr(kFileOptionsAttribute, B_MESSAGE_TYPE, 0, data.data(), data.size())
-				== static_cast<ssize_t>(data.size())) {
-				result.options = UnflattenFileOptions(data);
-			}
+		if (const std::optional<std::string> options = ReadMessageAttribute(node, kFileOptionsAttribute)) {
+			result.options = UnflattenFileOptions(*options);
+		}
+		if (const std::optional<std::string> bookmarks = ReadMessageAttribute(node, kBookmarksAttribute)) {
+			result.bookmarks = UnflattenBookmarks(*bookmarks);
 		}
 		return result;
 	} catch (const DiffKit::FileError &error) {
@@ -122,10 +144,8 @@ std::string FileProvider::WriteAttributes(const Locator &locator, const FileAttr
 	const std::string &path = locator.Path();
 	const std::string before = Version(path);
 	BNode node(path.c_str());
+	CheckOpened(node, path);
 	BNodeInfo info(&node);
-	if (node.InitCheck() != B_OK) {
-		throw ProviderError("Cannot open " + path + ": " + strerror(node.InitCheck()));
-	}
 	if (info.InitCheck() != B_OK) {
 		throw ProviderError("Cannot open " + path + ": " + strerror(info.InitCheck()));
 	}
@@ -137,6 +157,29 @@ std::string FileProvider::WriteAttributes(const Locator &locator, const FileAttr
 	if (node.WriteAttr(kFileOptionsAttribute, B_MESSAGE_TYPE, 0, data.data(), data.size())
 		!= static_cast<ssize_t>(data.size())) {
 		throw ProviderError("Cannot write the options of " + path);
+	}
+	return before == knownVersion ? Version(path) : knownVersion;
+}
+
+
+std::string FileProvider::WriteBookmarks(const Locator &locator, const std::vector<size_t> &lines,
+	const std::string &knownVersion)
+{
+	const std::string &path = locator.Path();
+	const std::string before = Version(path);
+	BNode node(path.c_str());
+	CheckOpened(node, path);
+	if (lines.empty()) {
+		const status_t status = node.RemoveAttr(kBookmarksAttribute);
+		if (status != B_OK && status != B_ENTRY_NOT_FOUND) {
+			throw ProviderError("Cannot remove the bookmarks of " + path + ": " + strerror(status));
+		}
+	} else {
+		const std::string data = FlattenBookmarks(lines);
+		if (node.WriteAttr(kBookmarksAttribute, B_MESSAGE_TYPE, 0, data.data(), data.size())
+			!= static_cast<ssize_t>(data.size())) {
+			throw ProviderError("Cannot write the bookmarks of " + path);
+		}
 	}
 	return before == knownVersion ? Version(path) : knownVersion;
 }

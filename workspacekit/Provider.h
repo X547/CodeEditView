@@ -41,6 +41,8 @@ struct FileInfo {
 	std::string mimeType;
 	// None if the file has none or the provider has no attributes.
 	std::optional<FileOptions> options;
+	// Lines of the bookmarks kept with the file, sorted.
+	std::vector<size_t> bookmarks;
 };
 
 
@@ -117,6 +119,10 @@ public:
 	// before (writing attributes may change the version), else knownVersion.
 	// Throws ProviderError without attributes.
 	virtual std::string WriteAttributes(const Locator &locator, const FileAttributes &attributes,
+		const std::string &knownVersion);
+	// Sets the bookmark lines of an existing file (none: removes them),
+	// returning the version to expect as WriteAttributes() does.
+	virtual std::string WriteBookmarks(const Locator &locator, const std::vector<size_t> &lines,
 		const std::string &knownVersion);
 
 	// The same with the whole data at once.

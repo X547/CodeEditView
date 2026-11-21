@@ -1,10 +1,12 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 
 namespace Workspace {
@@ -20,6 +22,7 @@ struct FileOptions {
 	// Width of one indentation level with spaces; 0: tabWidth.
 	uint32_t indentSize = 0;
 	bool insertSpaces {};
+	bool wordWrap {};
 
 	bool operator==(const FileOptions &other) const = default;
 };
@@ -27,11 +30,16 @@ struct FileOptions {
 
 // The attribute holding the options: a flattened BMessage.
 constexpr const char *kFileOptionsAttribute = "CodeEdit:options";
+// The attribute holding the lines of the bookmarks (0-based) as they were
+// when the file was last saved: a flattened BMessage.
+constexpr const char *kBookmarksAttribute = "CodeEdit:bookmarks";
 
-// The attribute's data; options with missing or invalid fields keep their
+// The attributes' data; options with missing or invalid fields keep their
 // defaults, data that is no message gives none.
 std::string FlattenFileOptions(const FileOptions &options);
 std::optional<FileOptions> UnflattenFileOptions(std::string_view data);
+std::string FlattenBookmarks(const std::vector<size_t> &lines);
+std::vector<size_t> UnflattenBookmarks(std::string_view data);
 
 
 } // Workspace

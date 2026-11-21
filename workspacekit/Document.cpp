@@ -80,6 +80,33 @@ static DiffKit::ChunkSource WrittenSource(const TextSnapshot &snapshot, ContentS
 }
 
 
+// Lines of the bookmarks, sorted. Requires the model lock.
+static std::vector<size_t> BookmarkLines(const TextModel &model)
+{
+	std::vector<size_t> lines;
+	for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
+		if (mark.kind == CodeEdit::kMarkBookmark) {
+			lines.push_back(mark.line);
+		}
+	}
+	return lines;
+}
+
+
+// Replaces the bookmarks; lines past the end are dropped. Requires the model
+// lock.
+static void SetBookmarks(TextModel &model, const std::vector<size_t> &lines)
+{
+	CodeEdit::MarkSet &marks = model.SharedMarks();
+	marks.RemoveMarks(CodeEdit::kMarkBookmark);
+	for (const size_t line : lines) {
+		if (line < model.Text().LineCount()) {
+			marks.AddMark(CodeEdit::kMarkBookmark, line, 0, CodeEdit::MarkDeletePolicy::MoveToEditLine);
+		}
+	}
+}
+
+
 // An empty name is plain text.
 static void SetModelLanguage(TextModel &model, const std::string &language)
 {
@@ -315,11 +342,22 @@ std::vector<BReference<Document>> DocumentRegistry::All()
 }
 
 
-void DocumentRegistry::SetFileSettings(Document *target, const FileAttributes &attributes,
+void DocumentRegistry::SetFileSettings(Document *document, const FileAttributes &attributes,
 	CodeEdit::LineEnding lineEnding, bool hasBom)
 {
+	if (!document->IsReadOnly()) {
+		TextModel &model = *document->Model();
+		ModelLock lock(model);
+		model.SetLineEnding(lineEnding);
+		model.SetHasBom(hasBom);
+	}
+	SetFileAttributes(document, attributes);
+}
+
+
+void DocumentRegistry::SetFileAttributes(Document *target, const FileAttributes &attributes)
+{
 	BReference<Document> document(target);
-	const bool readOnly = document->IsReadOnly();
 	std::string language;
 	bool write;
 	{
@@ -329,18 +367,45 @@ void DocumentRegistry::SetFileSettings(Document *target, const FileAttributes &a
 		write = document->fHasAttributes && document->fStatus.exists;
 	}
 	SetModelLanguage(*document->Model(), language);
-	if (!readOnly) {
+	Notify(kNoticeDocumentChanged, *document);
+	if (write) {
+		WriteLater(document, [attributes](Provider &provider, const Locator &locator, const std::string &version) {
+			return provider.WriteAttributes(locator, attributes, version);
+		});
+	}
+}
+
+
+void DocumentRegistry::StoreBookmarks(Document *target)
+{
+	BReference<Document> document(target);
+	{
+		BAutolock lock(document->fLock);
+		if (!document->fHasAttributes || !document->fStatus.exists || document->fStatus.saving) {
+			return;
+		}
+	}
+	std::vector<size_t> bookmarks;
+	{
 		TextModel &model = *document->Model();
 		ModelLock lock(model);
-		model.SetLineEnding(lineEnding);
-		model.SetHasBom(hasBom);
+		// Lines of an edited text are not those of the file.
+		if (model.IsModified()) {
+			return;
+		}
+		bookmarks = BookmarkLines(model);
 	}
-	Notify(kNoticeDocumentChanged, *document);
-	if (!write) {
-		return;
-	}
+	WriteLater(document, [bookmarks](Provider &provider, const Locator &locator, const std::string &version) {
+		return provider.WriteBookmarks(locator, bookmarks, version);
+	});
+}
 
-	fQueue.Post([this, document, attributes] {
+
+// In the I/O thread; write gets the version known and returns the one to
+// expect. A failure is reported in the status error.
+void DocumentRegistry::WriteLater(const BReference<Document> &document, AttributeWriter write)
+{
+	fQueue.Post([this, document, write = std::move(write)] {
 		const Locator &locator = document->GetLocator();
 		std::string knownVersion;
 		{
@@ -350,7 +415,7 @@ void DocumentRegistry::SetFileSettings(Document *target, const FileAttributes &a
 		std::string error;
 		std::string version;
 		try {
-			version = fProviders.Get(locator).WriteAttributes(locator, attributes, knownVersion);
+			version = write(fProviders.Get(locator), locator, knownVersion);
 		} catch (const ProviderError &providerError) {
 			error = providerError.what();
 		}
@@ -472,6 +537,10 @@ bool DocumentRegistry::Apply(Document &document, const FileInfo &file, const Fin
 		}
 		model.Load(*text);
 		model.SetSavePoint();
+		// The bookmarks kept with the file are of this text.
+		if (document.fHasAttributes) {
+			SetBookmarks(model, file.bookmarks);
+		}
 		// Saving must give back the same bytes, or editing would change
 		// lines the user did not touch.
 		if (binary) {
@@ -550,23 +619,35 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 
 	TextSnapshot snapshot;
 	uint64_t revision;
+	// The bookmarks of the text written.
+	std::vector<size_t> bookmarks;
 	{
 		TextModel &model = *document->Model();
 		ModelLock lock(model);
 		snapshot = model.Snapshot();
 		revision = model.Revision();
+		bookmarks = BookmarkLines(model);
 	}
 	Notify(kNoticeDocumentChanged, *document);
 
-	fQueue.Post([this, document, snapshot, revision, expectedVersion, overwrite] {
+	fQueue.Post([this, document, snapshot, revision, bookmarks, expectedVersion, overwrite] {
 		const Locator &locator = document->GetLocator();
 		std::string error;
 		bool conflict = false;
 		std::string version;
+		// Failing to write the bookmarks does not fail the save.
+		std::string bookmarksError;
 		ContentSink written(false);
 		try {
-			version = fProviders.Get(locator).Write(locator, WrittenSource(snapshot, written), expectedVersion,
-				overwrite);
+			Provider &provider = fProviders.Get(locator);
+			version = provider.Write(locator, WrittenSource(snapshot, written), expectedVersion, overwrite);
+			if (document->fHasAttributes) {
+				try {
+					version = provider.WriteBookmarks(locator, bookmarks, version);
+				} catch (const ProviderError &providerError) {
+					bookmarksError = providerError.what();
+				}
+			}
 		} catch (const VersionConflict &versionConflict) {
 			error = versionConflict.what();
 			conflict = true;
@@ -585,7 +666,7 @@ void DocumentRegistry::Save(Document *target, bool overwrite)
 		{
 			BAutolock lock(document->fLock);
 			document->fStatus.saving = false;
-			document->fStatus.error = error;
+			document->fStatus.error = error.empty() ? bookmarksError : error;
 			if (error.empty()) {
 				document->fLoaded = written.Result();
 				document->fVersion = version;
@@ -746,7 +827,17 @@ void DocumentRegistry::CloseUnused()
 		}
 		TextModel &model = *document->Model();
 		ModelLock modelLock(model);
-		return !model.IsModified() && model.SharedMarks().Marks(0, model.Text().NewlineCount()).empty();
+		if (model.IsModified()) {
+			return false;
+		}
+		// Bookmarks of a file are kept with it; other documents keep theirs
+		// while open.
+		for (const CodeEdit::MarkInfo &mark : model.SharedMarks().Marks(0, model.Text().NewlineCount())) {
+			if (mark.kind != CodeEdit::kMarkBookmark || !document->fHasAttributes) {
+				return false;
+			}
+		}
+		return true;
 	});
 }
 

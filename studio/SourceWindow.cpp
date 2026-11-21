@@ -75,6 +75,7 @@ static constexpr uint32 kMsgSaveCopyChosen = 'SWcc';
 static constexpr uint32 kMsgNewView = 'SWnv';
 static constexpr uint32 kMsgToggleOutline = 'SWto';
 static constexpr uint32 kMsgToggleSticky = 'SWst';
+static constexpr uint32 kMsgToggleWordWrap = 'SWww';
 static constexpr uint32 kMsgRefreshOutline = 'SWro';
 static constexpr uint32 kMsgFollowCoverage = 'SWfc';
 static constexpr uint32 kMsgNextUncovered = 'SWnu';
@@ -144,6 +145,7 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 	BMenuBar *menuBar = new BMenuBar("menuBar");
 	BMenu *editMenu = nullptr;
 	BMenu *searchMenu = nullptr;
+	BMenu *viewMenu = nullptr;
 	BLayoutBuilder::Menu<>(menuBar)
 		.AddMenu("File")
 			// Cmd+N is Debug > Step over.
@@ -167,12 +169,14 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 			.GetMenu(searchMenu)
 		.End()
 		.AddMenu("View")
+			.GetMenu(viewMenu)
 			.AddItem("Outline", kMsgToggleOutline, 'L', B_SHIFT_KEY)
 				.GetItem(fOutlineItem)
 			.AddItem("Sticky scopes", kMsgToggleSticky)
 				.GetItem(fStickyItem)
+			.AddItem("Word wrap", kMsgToggleWordWrap)
+				.GetItem(fWordWrapItem)
 			.AddSeparator()
-			.AddItem("Erase view (debug)", CodeEdit::kMsgEraseView, 'E', B_SHIFT_KEY)
 		.End()
 		.AddMenu("Window")
 			.AddItem("New view", kMsgNewView, 'N', B_SHIFT_KEY)
@@ -182,8 +186,15 @@ SourceWindow::SourceWindow(Document *document, BRect frame, int32 session, int32
 		.End();
 	CodeEdit::EditorCommands::AddEditItems(editMenu);
 	editMenu->AddSeparatorItem();
+	CodeEdit::EditorCommands::AddShiftItems(editMenu);
+	editMenu->AddSeparatorItem();
 	CodeEdit::TextCommands::AddItems(editMenu);
 	FindKit::AddFindItems(searchMenu);
+	CodeEdit::EditorCommands::AddFoldItems(viewMenu);
+	viewMenu->AddSeparatorItem();
+	CodeEdit::EditorCommands::AddBookmarkItems(viewMenu);
+	viewMenu->AddSeparatorItem();
+	viewMenu->AddItem(new BMenuItem("Erase view (debug)", new BMessage(CodeEdit::kMsgEraseView), 'E', B_SHIFT_KEY));
 	// Before the Window menu.
 	menuBar->AddItem(CreateDebugMenu(), menuBar->CountItems() - 1);
 	menuBar->AddItem(CreateCoverageMenu(), menuBar->CountItems() - 1);
@@ -702,13 +713,14 @@ void SourceWindow::UpdateStatus()
 	fStatus->SetText(text.c_str());
 	fStatus->SetToolTip(text.c_str());
 
-	// The indentation of the document's options.
+	// The indentation and wrapping of the document's options.
 	const Workspace::FileOptions options = fDocument->Attributes().options;
 	CodeEdit::EditorSettings settings = fEditView->Settings();
 	settings.readOnly = fLocked || fDocument->IsReadOnly() || status.state != DocumentState::Ready;
 	settings.tabWidth = options.tabWidth;
 	settings.indentSize = options.indentSize;
 	settings.insertSpacesForTab = options.insertSpaces;
+	settings.wordWrap = options.wordWrap;
 	if (!(settings == fEditView->Settings())) {
 		fEditView->SetSettings(settings);
 	}
@@ -736,6 +748,7 @@ void SourceWindow::ApplyFileOptions(BMessage *message)
 	options.tabWidth = static_cast<uint32>(std::max<int32>(message->GetInt32("tabWidth", 4), 1));
 	options.indentSize = static_cast<uint32>(std::max<int32>(message->GetInt32("indentSize", 0), 0));
 	options.insertSpaces = message->GetBool("insertSpaces", false);
+	options.wordWrap = message->GetBool("wordWrap", false);
 	const auto lineEnding = static_cast<CodeEdit::LineEnding>(message->GetInt32("lineEnding", 0));
 	StudioApp::Get().Registry().SetFileSettings(fDocument, attributes, lineEnding, message->GetBool("bom", false));
 }
@@ -1010,6 +1023,13 @@ void SourceWindow::MessageReceived(BMessage *message)
 		case kMsgToggleLocked:
 			ToggleLocked();
 			break;
+		case kMsgToggleWordWrap: {
+			// An option of the file: all its windows follow.
+			Workspace::FileAttributes attributes = fDocument->Attributes();
+			attributes.options.wordWrap = !attributes.options.wordWrap;
+			StudioApp::Get().Registry().SetFileAttributes(fDocument, attributes);
+			break;
+		}
 		case CodeEdit::kMsgEraseView:
 			PostMessage(message, fEditView);
 			break;
@@ -1224,6 +1244,15 @@ void SourceWindow::MessageReceived(BMessage *message)
 		default:
 			if (!CodeEdit::EditorCommands::Dispatch(message, fEditView)) {
 				BWindow::MessageReceived(message);
+				break;
+			}
+			switch (message->what) {
+				case CodeEdit::kMsgToggleBookmark:
+				case CodeEdit::kMsgClearBookmarks:
+					StudioApp::Get().Registry().StoreBookmarks(fDocument);
+					break;
+				default:
+					break;
 			}
 			break;
 	}
@@ -1241,6 +1270,7 @@ void SourceWindow::MenusBeginning()
 	menuBar->FindItem(kMsgSaveCopy)->SetEnabled(ready);
 	menuBar->FindItem(kMsgRevert)->SetEnabled(!status.saving && status.state != DocumentState::Loading);
 	menuBar->FindItem(kMsgToggleStacking)->SetMarked(StudioApp::Get().Stacking());
+	fWordWrapItem->SetMarked(fDocument->Attributes().options.wordWrap);
 	UpdateDebugMenu();
 	UpdateCoverageMenu();
 	BWindow::MenusBeginning();

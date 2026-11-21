@@ -21,7 +21,12 @@ TEST_CASE("file options as attribute data")
 	options.insertSpaces = true;
 	CHECK(UnflattenFileOptions(FlattenFileOptions(options)) == options);
 	options.language = "";
+	options.wordWrap = true;
 	CHECK(UnflattenFileOptions(FlattenFileOptions(options)) == options);
+
+	CHECK(UnflattenBookmarks(FlattenBookmarks({3, 1, 3, 10})) == std::vector<size_t> {1, 3, 10});
+	CHECK(UnflattenBookmarks(FlattenBookmarks({})).empty());
+	CHECK(UnflattenBookmarks("garbage").empty());
 
 	CHECK_FALSE(UnflattenFileOptions("").has_value());
 	CHECK_FALSE(UnflattenFileOptions("not a message").has_value());
@@ -61,6 +66,16 @@ TEST_CASE("file provider attributes")
 
 	// Changed elsewhere before: the known version stays, saving conflicts.
 	CHECK(provider.WriteAttributes(locator, attributes, "other") == "other");
+
+	const std::string current = provider.Read(locator, sink).version;
+	const std::string afterBookmarks = provider.WriteBookmarks(locator, {0, 4}, current);
+	FileInfo marked = provider.Read(locator, sink);
+	CHECK(marked.bookmarks == std::vector<size_t> {0, 4});
+	CHECK(marked.version == afterBookmarks);
+	provider.WriteBookmarks(locator, {}, afterBookmarks);
+	CHECK(provider.Read(locator, sink).bookmarks.empty());
+	// Removing none is fine too.
+	CHECK_NOTHROW(provider.WriteBookmarks(locator, {}, afterBookmarks));
 }
 
 

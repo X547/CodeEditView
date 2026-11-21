@@ -99,6 +99,8 @@ FileOptionsWindow::FileOptionsWindow(Workspace::Document *document, const BMesse
 	fIndentWidth = new BSpinner("indentWidth", nullptr, nullptr);
 	fIndentWidth->SetRange(1, kMaxWidth);
 	fIndentWidth->SetValue(static_cast<int32>(options.indentSize > 0 ? options.indentSize : options.tabWidth));
+	fWordWrap = new BCheckBox("wordWrap", "Wrap long lines", nullptr);
+	fWordWrap->SetValue(options.wordWrap ? B_CONTROL_ON : B_CONTROL_OFF);
 
 	BPopUpMenu *lineEndingMenu = new BPopUpMenu("lineEnding");
 	const std::pair<CodeEdit::LineEnding, const char *> lineEndings[] = {
@@ -133,8 +135,9 @@ FileOptionsWindow::FileOptionsWindow(Workspace::Document *document, const BMesse
 			.Add(fTabWidth, 1, 3)
 			.Add(new BStringView("indentWidthLabel", "Indent width:"), 0, 4)
 			.Add(fIndentWidth, 1, 4)
-			.AddMenuField(fLineEndingField, 0, 5)
-			.Add(fBom, 1, 6)
+			.Add(fWordWrap, 1, 5)
+			.AddMenuField(fLineEndingField, 0, 6)
+			.Add(fBom, 1, 7)
 		.End()
 		.Add(kept)
 		.AddGroup(B_HORIZONTAL)
@@ -250,6 +253,7 @@ void FileOptionsWindow::Accept()
 	chosen.AddInt32("indentSize", indentWidth == tabWidth ? 0 : indentWidth);
 	const BMessage *indent = MarkedMessage(fIndentField);
 	chosen.AddBool("insertSpaces", indent != nullptr && indent->GetBool("insertSpaces", false));
+	chosen.AddBool("wordWrap", fWordWrap->Value() == B_CONTROL_ON);
 	const BMessage *lineEnding = MarkedMessage(fLineEndingField);
 	chosen.AddInt32("lineEnding", lineEnding != nullptr ? lineEnding->GetInt32("lineEnding", 0) : 0);
 	chosen.AddBool("bom", fBom->Value() == B_CONTROL_ON);

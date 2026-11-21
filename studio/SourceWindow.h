@@ -38,6 +38,7 @@ private:
 	OutlineView *fOutline {};
 	BMenuItem *fOutlineItem {};
 	BMenuItem *fStickyItem {};
+	BMenuItem *fWordWrapItem {};
 	bool fOutlineRefreshPending {};
 	// The debug session and coverage run followed; 0 for none.
 	int32 fSession {};

@@ -228,8 +228,9 @@ way: choosing a file opens it from the commit, choosing a directory opens
 Open from Git there.
 Saving refuses to overwrite a file changed by another program unless
 confirmed; files changed elsewhere are reloaded, keeping unsaved changes.
-Without arguments, CodeEdit starts with a new untitled document. Window >
-Documents lists the open documents.
+Without arguments, CodeEdit starts with a new untitled document; launched
+again without documents while running (e.g. a middle click on its Deskbar
+item), it opens another one. Window > Documents lists the open documents.
 The info button of the tool bar shows the file options: language (or
 automatic, from the file type or name), indentation with tabs or spaces,
 tab and indent width, file type, line endings and UTF-8 BOM. A local file

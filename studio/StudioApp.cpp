@@ -725,7 +725,10 @@ void StudioApp::MessageReceived(BMessage *message)
 		case kMsgShowOpenFile:
 			ShowOpenFilePanel();
 			break;
+		// B_SILENT_RELAUNCH: launched again without documents, e.g. by a
+		// middle click on the Deskbar item.
 		case kMsgNewDocument:
+		case B_SILENT_RELAUNCH:
 			NewDocument(nullptr);
 			break;
 		case DiffKit::kMsgCodeEditOpenGitFile: {

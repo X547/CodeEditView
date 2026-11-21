@@ -442,15 +442,20 @@ void CodeEditView::ScrollToSelection()
 }
 
 
+// The caret keeps context rows around it, as when moved with the keyboard.
 void CodeEditView::GoToLocation(const CodeEdit::TextPoint &location)
 {
 	const size_t offset = fCore->OffsetOfLocation(location);
 	RevealLine(location.line);
 	SetSelection({offset, offset});
-	ScrollToSelection();
+	if (Window() != nullptr) {
+		ScrollToCaret(true);
+	}
 }
 
 
+// A line within the context rows of an edge (below the sticky lines at the
+// top) counts as near the edge: it is hard to notice there.
 void CodeEditView::RevealLine(size_t line)
 {
 	const size_t row = fCore->RevealLine(line);
@@ -461,9 +466,13 @@ void CodeEditView::RevealLine(size_t line)
 	const BRect bounds = Bounds();
 	const CodeEdit::PageInfo page = CurrentPage();
 	const size_t context = std::min<size_t>(fCore->Settings().contextLines, (page.visibleRows - 1) / 2);
-	if (row < page.topRow + context || row + context >= page.topRow + page.visibleRows) {
-		// Off screen or near an edge: show it a third down the view.
-		ScrollToDocument(bounds.left, (static_cast<double>(row) - floorf(page.visibleRows / 3.0f)) * fLineHeight);
+	const size_t above = StickyLinesOver(row) + context;
+	if (row < page.topRow + above || row + context >= page.topRow + page.visibleRows) {
+		// Off screen or near an edge: show it a third down the view, below
+		// the sticky lines and context rows.
+		const size_t third = static_cast<size_t>(floorf(page.visibleRows / 3.0f));
+		const size_t rowsAbove = std::min(std::max(third, above), page.visibleRows - 1);
+		ScrollToDocument(bounds.left, (static_cast<double>(row) - static_cast<double>(rowsAbove)) * fLineHeight);
 	}
 }
 
@@ -725,6 +734,22 @@ size_t CodeEditView::MaxStickyLines() const
 	}
 	const size_t visibleRows = static_cast<size_t>(std::max(0.0f, floorf((Bounds().Height() + 1) / fLineHeight)));
 	return std::min<size_t>(fCore->Settings().stickyLines, visibleRows / 2);
+}
+
+
+// The sticky lines that cover the top of the view when the row is near the
+// top: those of the scopes enclosing its line.
+size_t CodeEditView::StickyLinesOver(size_t row)
+{
+	const size_t maxSticky = MaxStickyLines();
+	if (maxSticky == 0) {
+		return 0;
+	}
+	const std::vector<CodeEdit::DisplayRow> rows = fCore->DisplayRows(row, 1);
+	if (rows.empty()) {
+		return 0;
+	}
+	return fCore->EnclosingScopes(rows.front().line, maxSticky).size();
 }
 
 
@@ -1366,14 +1391,7 @@ void CodeEditView::ScrollToCaret(bool keepContext)
 		? std::min<size_t>(fCore->Settings().contextLines, (visibleRows - 1) / 2)
 		: 0;
 	const double context = static_cast<double>(contextRows) * fLineHeight;
-
-	double sticky = 0;
-	if (const size_t maxSticky = MaxStickyLines(); maxSticky > 0) {
-		const std::vector<CodeEdit::DisplayRow> rows = fCore->DisplayRows(caret.row, 1);
-		if (!rows.empty()) {
-			sticky = static_cast<double>(fCore->EnclosingScopes(rows.front().line, maxSticky).size()) * fLineHeight;
-		}
-	}
+	const double sticky = static_cast<double>(StickyLinesOver(caret.row)) * fLineHeight;
 
 	double y = TopY();
 	const double caretTop = static_cast<double>(caret.row) * fLineHeight;

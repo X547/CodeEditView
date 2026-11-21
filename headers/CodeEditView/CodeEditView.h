@@ -199,6 +199,7 @@ private:
 	void UpdateAutoScroll(BPoint where);
 	void StopAutoScroll();
 	BPoint AutoScrollPressure(BPoint where) const;
+	size_t StickyLinesOver(size_t row);
 	void AutoScrollTick();
 	void StartDrag();
 	BRect SelectionFrame();

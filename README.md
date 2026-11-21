@@ -163,8 +163,8 @@ the index with Save. Between the panes, shapes connect the changed chunks;
 their arrows stage or unstage a chunk, which writes the index at once.
 Unchanged regions are folded, and the panes scroll together.
 
-Changes menu: Cmd+T stages or unstages the chunk at the caret or the
-selected lines, Cmd+R reverts them in the working tree buffer, Cmd+Shift+T
+Changes menu: Cmd+U stages or unstages the chunk at the caret or the
+selected lines, Cmd+R reverts them in the working tree buffer, Cmd+Shift+U
 stages or unstages the whole file (also a double click in the list),
 Cmd+Shift+Down/Up go to the next or previous change. Cmd+S saves the right
 pane (writes the index in the staged diff), Cmd+Shift+S saves all.

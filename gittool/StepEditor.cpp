@@ -177,7 +177,7 @@ StepEditor::StepEditor(BWindow *history, const std::string &repositoryPath, cons
 			.GetMenu(searchMenu)
 		.End()
 		.AddMenu("Changes")
-			.AddItem("Take change or selected lines from the left", kMsgTakeChange, 'T')
+			.AddItem("Take change or selected lines from the left", kMsgTakeChange, 'U')
 			.AddItem("Use the left version of the file", kMsgTakeLeft)
 			.AddItem("Delete the file", toggleDeleted)
 			.AddSeparator()

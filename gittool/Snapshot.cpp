@@ -4,6 +4,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 
 namespace GitTool {
@@ -196,8 +198,8 @@ static const char *OperationName(int state)
 }
 
 
-// Position, operation and change counts of an existing worktree.
-static void ReadWorktreeStatus(git_repository *repository, WorktreeInfo &worktree)
+// Position and operation of an existing worktree.
+static void ReadWorktreePosition(git_repository *repository, WorktreeInfo &worktree)
 {
 	RepositoryPtr opened = OpenWorktree(repository, worktree);
 	git_repository *worktreeRepository = opened.get();
@@ -214,7 +216,23 @@ static void ReadWorktreeStatus(git_repository *repository, WorktreeInfo &worktre
 		worktree.commit = commit;
 	}
 	worktree.operation = OperationName(git_repository_state(worktreeRepository));
+}
 
+
+void LoadWorktreeStatus(WorktreeInfo &worktree)
+{
+	// Its own handle: this runs on several threads at once, and a repository
+	// handle is not shared between threads.
+	git_repository *opened = nullptr;
+	Check(git_repository_open_ext(&opened, worktree.path.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr),
+		"Cannot open the worktree");
+	RepositoryPtr openedPtr(opened);
+	git_repository *worktreeRepository = opened;
+
+	worktree.staged = 0;
+	worktree.changed = 0;
+	worktree.untracked = 0;
+	worktree.conflicts = 0;
 	git_status_options options = GIT_STATUS_OPTIONS_INIT;
 	options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
 	options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
@@ -239,10 +257,54 @@ static void ReadWorktreeStatus(git_repository *repository, WorktreeInfo &worktre
 			worktree.changed++;
 		}
 	}
+	worktree.statusLoaded = true;
 }
 
 
-std::vector<WorktreeInfo> LoadWorktrees(git_repository *repository)
+void LoadWorktreeStatus(std::vector<WorktreeInfo> &worktrees)
+{
+	// Mostly file system calls. On Haiku, two threads take three quarters of
+	// the time of one; more contend in the kernel and take longer than one
+	// (6 worktrees of 26000 files, 12 cores).
+	constexpr size_t kMaxThreads = 2;
+	const size_t threadCount = std::min({worktrees.size(), kMaxThreads,
+		static_cast<size_t>(std::max(1u, std::thread::hardware_concurrency()))});
+	std::atomic<size_t> next {0};
+	auto work = [&worktrees, &next]() {
+		for (size_t i = next++; i < worktrees.size(); i = next++) {
+			WorktreeInfo &worktree = worktrees[i];
+			if (worktree.missing) {
+				continue;
+			}
+			try {
+				LoadWorktreeStatus(worktree);
+			} catch (const GitError &e) {
+				worktree.missing = true;
+			}
+		}
+	};
+	std::vector<std::thread> threads;
+	for (size_t i = 1; i < threadCount; i++) {
+		threads.emplace_back(work);
+	}
+	work();
+	for (std::thread &thread : threads) {
+		thread.join();
+	}
+}
+
+
+WorktreeInfo WithStatus(const WorktreeInfo &worktree)
+{
+	WorktreeInfo result = worktree;
+	if (!result.missing && !result.statusLoaded) {
+		LoadWorktreeStatus(result);
+	}
+	return result;
+}
+
+
+std::vector<WorktreeInfo> LoadWorktrees(git_repository *repository, bool withStatus)
 {
 	std::vector<WorktreeInfo> worktrees;
 	if (const char *workdir = git_repository_workdir(repository)) {
@@ -279,10 +341,13 @@ std::vector<WorktreeInfo> LoadWorktrees(git_repository *repository)
 			continue;
 		}
 		try {
-			ReadWorktreeStatus(repository, worktree);
+			ReadWorktreePosition(repository, worktree);
 		} catch (const GitError &e) {
 			worktree.missing = true;
 		}
+	}
+	if (withStatus) {
+		LoadWorktreeStatus(worktrees);
 	}
 	return worktrees;
 }
@@ -602,10 +667,10 @@ bool NaturalLess(const std::string &a, const std::string &b)
 }
 
 
-Snapshot Snapshot::Load(git_repository *repository)
+Snapshot Snapshot::Load(git_repository *repository, bool withStatus)
 {
 	Snapshot snapshot;
-	snapshot.worktrees = LoadWorktrees(repository);
+	snapshot.worktrees = LoadWorktrees(repository, withStatus);
 	snapshot.branches = LoadBranches(repository, snapshot.worktrees);
 	snapshot.remotes = LoadRemotes(repository);
 	snapshot.tags = LoadTags(repository);

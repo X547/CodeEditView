@@ -72,6 +72,13 @@ private:
 	// Snapshots are read on a thread; each request has a number, and work
 	// waiting for a refresh runs once a snapshot of its request arrives.
 	std::unique_ptr<DiffKit::BackgroundLoader<std::pair<uint64, Snapshot>>> fSnapshotLoader;
+	// The change counts of the worktrees take the longest: they are read
+	// after the snapshot is shown, for its request.
+	std::unique_ptr<DiffKit::BackgroundLoader<std::pair<uint64, std::vector<WorktreeInfo>>>> fStatusLoader;
+	// The first snapshot is being read; refreshes asked for meanwhile wait
+	// for it.
+	bool fFirstLoading {};
+	bool fRefreshAfterFirst {};
 	uint64 fRefreshRequest {};
 	// The request of the snapshot shown: older ones are not shown.
 	uint64 fShownRequest {};
@@ -108,6 +115,7 @@ private:
 	void LoadFirst();
 	void SnapshotLoaded();
 	void ShowSnapshot(uint64 request, Snapshot snapshot);
+	void StatusLoaded();
 	// Runs work once the snapshot of the latest refresh is shown.
 	void AfterRefresh(std::function<void()> work);
 	void ScheduleRefresh();

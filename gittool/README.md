@@ -31,8 +31,10 @@ changes made by other programs.
 
 ## Worktrees
 
-A worktree is a folder with checked-out files. Besides creating and removing
-worktrees, you can:
+A worktree is a folder with checked-out files. Its state column counts its
+conflicts, staged, changed and untracked files. Counting needs a look at every
+file, so in a large repository the counts come a moment after the lists and
+show "checking…" until then. Besides creating and removing worktrees, you can:
 
 - **Open in Git Diff**: stage, edit and commit its changes (see below).
 - **Open folder** in Tracker.

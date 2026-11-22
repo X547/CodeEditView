@@ -496,7 +496,8 @@ void RunBranchMove(
 	if (git_oid_equal(&oldId, &newId)) {
 		return;
 	}
-	for (const WorktreeInfo &worktree : LoadWorktrees(repository)) {
+	// Positions only: UpdateWorktreeFiles() checks the files itself.
+	for (const WorktreeInfo &worktree : LoadWorktrees(repository, false)) {
 		if (worktree.branch == branch) {
 			UpdateWorktreeFiles(repository, worktree, newId, context.resolution);
 		}

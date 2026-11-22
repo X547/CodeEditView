@@ -56,6 +56,7 @@ static constexpr bigtime_t kRefreshDelay = 300000;
 static constexpr size_t kTagLimit = 1000;
 
 static constexpr uint32 kMsgSnapshotLoaded = 'GTSL';
+static constexpr uint32 kMsgStatusLoaded = 'GTsl';
 static constexpr uint32 kMsgLoadFirst = 'GTLF';
 static constexpr uint32 kMsgTagFilter = 'GTtf';
 
@@ -383,7 +384,7 @@ static std::string StateText(const WorktreeInfo &worktree)
 		add(std::to_string(worktree.untracked) + " untracked");
 	}
 	if (text.empty()) {
-		text = "clean";
+		text = worktree.statusLoaded ? "clean" : "checking…";
 	}
 	if (worktree.locked) {
 		add("protected");
@@ -473,6 +474,8 @@ MainWindow::MainWindow(RepositoryPtr repository):
 
 	fSnapshotLoader = std::make_unique<DiffKit::BackgroundLoader<std::pair<uint64, Snapshot>>>(BMessenger(this),
 		kMsgSnapshotLoaded);
+	fStatusLoader = std::make_unique<DiffKit::BackgroundLoader<std::pair<uint64, std::vector<WorktreeInfo>>>>(
+		BMessenger(this), kMsgStatusLoaded);
 	fButtons = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
 	ShowCategoryButtons();
 
@@ -581,11 +584,15 @@ void MainWindow::UpdateTitle()
 void MainWindow::Refresh()
 {
 	fRefreshRunner.reset();
+	if (fFirstLoading) {
+		fRefreshAfterFirst = true;
+		return;
+	}
 	const uint64 request = ++fRefreshRequest;
 	const std::string path = fRepositoryPath;
 	fSnapshotLoader->Load([path, request]() {
 		RepositoryPtr repository = OpenRepository(path);
-		return std::pair<uint64, Snapshot>(request, Snapshot::Load(repository.get()));
+		return std::pair<uint64, Snapshot>(request, Snapshot::Load(repository.get(), false));
 	});
 }
 
@@ -615,11 +622,18 @@ void MainWindow::LoadFirst()
 	const uint64 request = ++fRefreshRequest;
 	const std::string path = fRepositoryPath;
 	std::shared_ptr<Snapshot> loaded = std::make_shared<Snapshot>();
+	fFirstLoading = true;
 	DiffKit::RunWithProgress(this, "Reading the repository", [path, loaded](DiffKit::Progress &progress) {
 		(void)progress;
 		RepositoryPtr repository = OpenRepository(path);
-		*loaded = Snapshot::Load(repository.get());
+		*loaded = Snapshot::Load(repository.get(), false);
 	}, [this, request, loaded](const std::string &error) {
+		fFirstLoading = false;
+		if (fRefreshAfterFirst) {
+			// Something changed on disk while it was read.
+			fRefreshAfterFirst = false;
+			Refresh();
+		}
 		if (!error.empty()) {
 			AppendLog("Cannot read the repository: " + error);
 			ShowError(error.c_str());
@@ -641,8 +655,23 @@ void MainWindow::ShowSnapshot(uint64 request, Snapshot snapshot)
 	if (sameTags) {
 		snapshot.tags = std::move(fSnapshot.tags);
 	}
+	// Until the new counts arrive, a worktree keeps the counts it had.
+	for (WorktreeInfo &worktree : snapshot.worktrees) {
+		const WorktreeInfo *shown = fSnapshot.FindWorktree(worktree.path);
+		if (shown != nullptr && shown->statusLoaded && !worktree.missing) {
+			worktree.staged = shown->staged;
+			worktree.changed = shown->changed;
+			worktree.untracked = shown->untracked;
+			worktree.conflicts = shown->conflicts;
+			worktree.statusLoaded = true;
+		}
+	}
 	fSnapshot = std::move(snapshot);
 	fLoaded = true;
+	fStatusLoader->Load([request, worktrees = fSnapshot.worktrees]() mutable {
+		LoadWorktreeStatus(worktrees);
+		return std::pair<uint64, std::vector<WorktreeInfo>>(request, std::move(worktrees));
+	});
 	FillCategories();
 	if (fCategory != Category::Tags || !sameTags) {
 		FillObjects();
@@ -664,6 +693,32 @@ void MainWindow::ShowSnapshot(uint64 request, Snapshot snapshot)
 		} catch (const std::exception &e) {
 			ShowError(e.what());
 		}
+	}
+}
+
+
+void MainWindow::StatusLoaded()
+{
+	std::string error;
+	std::optional<std::pair<uint64, std::vector<WorktreeInfo>>> loaded = fStatusLoader->Take(error);
+	if (!loaded.has_value() || loaded->first != fShownRequest) {
+		return;
+	}
+	for (const WorktreeInfo &read : loaded->second) {
+		for (WorktreeInfo &worktree : fSnapshot.worktrees) {
+			if (worktree.path == read.path) {
+				worktree.missing = read.missing;
+				worktree.staged = read.staged;
+				worktree.changed = read.changed;
+				worktree.untracked = read.untracked;
+				worktree.conflicts = read.conflicts;
+				worktree.statusLoaded = read.statusLoaded;
+			}
+		}
+	}
+	if (fCategory == Category::Worktrees) {
+		FillObjects();
+		ShowDetails();
 	}
 }
 
@@ -1470,7 +1525,9 @@ void MainWindow::RunWorktreeAction(Action action)
 		}
 		case Action::WorktreeRemove: {
 			const Plan plan = PlanRemoveWorktree(repository, worktree, false);
-			if (!plan.blocked.empty() && worktree.HasChanges() && !worktree.locked) {
+			// Blocked and destructive: the worktree has changes (the shown
+			// worktree may not have its counts yet).
+			if (!plan.blocked.empty() && plan.destructive && !worktree.locked) {
 				Form form("Remove worktree " + worktree.path, "OK");
 				form.AddLabel("The worktree has changes.")
 					.AddCheck("force", "Remove it anyway and discard them", false);
@@ -2307,6 +2364,9 @@ void MainWindow::MessageReceived(BMessage *message)
 		case kMsgSnapshotLoaded:
 			SnapshotLoaded();
 			break;
+		case kMsgStatusLoaded:
+			StatusLoaded();
+			break;
 		case kMsgLoadFirst:
 			LoadFirst();
 			break;
@@ -2363,7 +2423,9 @@ void MainWindow::MessageReceived(BMessage *message)
 void MainWindow::WindowActivated(bool active)
 {
 	BWindow::WindowActivated(active);
-	if (active) {
+	// Files may have changed while the window was inactive. A read under way
+	// (as the first one, when the window opens) sees them already.
+	if (active && !fFirstLoading &&!fSnapshotLoader->IsLoading() && !fStatusLoader->IsLoading()) {
 		ScheduleRefresh();
 	}
 }

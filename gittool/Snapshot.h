@@ -42,6 +42,9 @@ struct WorktreeInfo {
 	int changed {};
 	int untracked {};
 	int conflicts {};
+	// Whether the counts above were read: reading them takes the longest, so
+	// they can be read after the rest (LoadWorktreeStatus).
+	bool statusLoaded {};
 	// Unfinished merge, rebase, etc.; empty if none.
 	std::string operation;
 
@@ -115,7 +118,8 @@ struct Snapshot {
 	std::vector<RemoteInfo> remotes;
 	std::vector<TagInfo> tags;
 
-	static Snapshot Load(git_repository *repository);
+	// Without withStatus, the change counts of the worktrees are not read.
+	static Snapshot Load(git_repository *repository, bool withStatus = true);
 
 	const WorktreeInfo *FindWorktree(const std::string &path) const;
 	const WorktreeInfo *WorktreeOfBranch(const std::string &branch) const;
@@ -129,8 +133,17 @@ struct Snapshot {
 // Opens the repository containing path; for a linked worktree, the
 // repository of the main worktree (or the bare repository).
 RepositoryPtr OpenRepository(const std::string &path);
-// The worktrees with their status, as in Snapshot.
-std::vector<WorktreeInfo> LoadWorktrees(git_repository *repository);
+// The worktrees, as in Snapshot; with withStatus, with their change counts.
+std::vector<WorktreeInfo> LoadWorktrees(git_repository *repository, bool withStatus = true);
+// Reads the change counts of a worktree that is not missing. Each worktree
+// takes a full scan of its files: in a large repository, a fraction of a
+// second.
+void LoadWorktreeStatus(WorktreeInfo &worktree);
+// The same for each worktree that is not missing, several at a time; one
+// whose status cannot be read becomes missing.
+void LoadWorktreeStatus(std::vector<WorktreeInfo> &worktrees);
+// The worktree with its change counts read if they were not.
+WorktreeInfo WithStatus(const WorktreeInfo &worktree);
 // The recorded position of a linked worktree, readable even when its
 // folder is missing: the branch (empty if on a commit) and commit (none
 // for a branch without commits). False if it cannot be read.

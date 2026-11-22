@@ -486,15 +486,16 @@ Plan PlanCreateBranchHere(git_repository *repository, const Snapshot &snapshot, 
 }
 
 
-Plan PlanUnstageAll(git_repository *repository, const WorktreeInfo &worktree)
+Plan PlanUnstageAll(git_repository *repository, const WorktreeInfo &shownWorktree)
 {
 	(void)repository;
 	Plan plan;
-	plan.title = "Unstage all in worktree " + worktree.path;
-	if (worktree.missing) {
+	plan.title = "Unstage all in worktree " + shownWorktree.path;
+	if (shownWorktree.missing) {
 		plan.blocked = "The worktree folder is missing";
 		return plan;
 	}
+	const WorktreeInfo worktree = WithStatus(shownWorktree);
 	if (worktree.staged == 0 && worktree.conflicts == 0) {
 		plan.blocked = "Nothing is staged";
 		return plan;
@@ -576,7 +577,7 @@ Plan PlanRemoveWorktree(git_repository *repository, const WorktreeInfo &worktree
 		plan.blocked = "The worktree is protected; unprotect it first";
 		return plan;
 	}
-	if (!worktree.missing && worktree.HasChanges()) {
+	if (!worktree.missing && WithStatus(worktree).HasChanges()) {
 		RepositoryPtr opened = OpenWorktree(repository, worktree);
 		const std::vector<std::string> files = ChangedFiles(opened.get(), true);
 		if (!force) {

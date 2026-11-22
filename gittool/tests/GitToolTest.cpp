@@ -258,6 +258,60 @@ TEST_CASE("Snapshot lists worktrees, branches and tags", "[gittool]")
 }
 
 
+TEST_CASE("Worktree change counts can be read after the snapshot", "[gittool]")
+{
+	Fixture fixture;
+	Run(PlanCreateWorktree(fixture.Get(), fixture.Load(), fixture.Path("wt"),
+		{WorktreeStartKind::ExistingBranch, "feature", "", ""}), fixture.Get());
+	WriteFile(fixture.directory + "/b.txt", "b-changed\n");
+	WriteFile(fixture.Path("wt") + "/c.txt", "staged\n");
+	RepositoryPtr linked = OpenWorktree(fixture.Get(), *fixture.Load().FindWorktree(fixture.Path("wt")));
+	Stage(linked.get(), "c.txt");
+	WriteFile(fixture.Path("wt") + "/d.txt", "untracked\n");
+	linked.reset();
+	// A worktree whose folder is gone stays missing and is skipped.
+	Run(PlanCreateWorktree(fixture.Get(), fixture.Load(), fixture.Path("gone"),
+		{WorktreeStartKind::NewBranch, "gone", "main", ""}), fixture.Get());
+	std::filesystem::remove_all(fixture.Path("gone"));
+
+	Snapshot snapshot = Snapshot::Load(fixture.Get(), false);
+	REQUIRE(snapshot.worktrees.size() == 3);
+	for (const WorktreeInfo &worktree : snapshot.worktrees) {
+		CHECK_FALSE(worktree.statusLoaded);
+		CHECK_FALSE(worktree.HasChanges());
+	}
+	REQUIRE(snapshot.FindWorktree(fixture.Path("wt")) != nullptr);
+	REQUIRE(snapshot.FindWorktree(fixture.Path("gone")) != nullptr);
+	CHECK(snapshot.FindWorktree(fixture.Path("wt"))->branch == "feature");
+	CHECK(snapshot.FindWorktree(fixture.Path("gone"))->missing);
+
+	// A single worktree on demand.
+	const WorktreeInfo main = WithStatus(*snapshot.FindWorktree(fixture.directory));
+	CHECK(main.statusLoaded);
+	CHECK(main.changed == 1);
+
+	// All at once, as Load() with the status.
+	LoadWorktreeStatus(snapshot.worktrees);
+	const Snapshot full = fixture.Load();
+	for (const std::string &path : {fixture.directory, fixture.Path("wt")}) {
+		const WorktreeInfo &later = *snapshot.FindWorktree(path);
+		const WorktreeInfo &together = *full.FindWorktree(path);
+		CHECK(later.statusLoaded);
+		CHECK(together.statusLoaded);
+		CHECK(later.staged == together.staged);
+		CHECK(later.changed == together.changed);
+		CHECK(later.untracked == together.untracked);
+		CHECK(later.conflicts == together.conflicts);
+	}
+	const WorktreeInfo &linkedInfo = *snapshot.FindWorktree(fixture.Path("wt"));
+	CHECK(linkedInfo.staged == 1);
+	CHECK(linkedInfo.untracked == 1);
+	const WorktreeInfo &gone = *snapshot.FindWorktree(fixture.Path("gone"));
+	CHECK(gone.missing);
+	CHECK_FALSE(gone.statusLoaded);
+}
+
+
 TEST_CASE("Set commit of a branch without a worktree", "[gittool]")
 {
 	Fixture fixture;

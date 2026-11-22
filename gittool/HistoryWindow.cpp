@@ -471,14 +471,24 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 }
 
 
-void HistoryWindow::Reload()
+void HistoryWindow::ReloadThen(std::function<void()> then)
 {
-	try {
-		fSnapshot = Snapshot::Load(fRepository.get());
-		fLabels = ReferenceLabels(fRepository.get());
-	} catch (const std::exception &e) {
-		ShowError(e.what());
-	}
+	const std::string path = fRepositoryPath;
+	std::shared_ptr<Loaded> loaded = std::make_shared<Loaded>();
+	DiffKit::RunWithProgress(this, "Reading the repository", [path, loaded](DiffKit::Progress &progress) {
+		(void)progress;
+		RepositoryPtr repository = OpenRepository(path);
+		loaded->snapshot = Snapshot::Load(repository.get(), false);
+		loaded->labels = ReferenceLabels(repository.get());
+	}, [this, loaded, then = std::move(then)](const std::string &error) {
+		if (!error.empty()) {
+			ShowError(error.c_str());
+		} else {
+			fSnapshot = std::move(*loaded->snapshot);
+			fLabels = std::move(loaded->labels);
+		}
+		then();
+	});
 }
 
 
@@ -509,7 +519,7 @@ void HistoryWindow::LoadHistory(const std::string &spec, bool withSnapshot)
 			(void)progress;
 			RepositoryPtr repository = OpenRepository(path);
 			if (withSnapshot) {
-				loaded->snapshot = Snapshot::Load(repository.get());
+				loaded->snapshot = Snapshot::Load(repository.get(), false);
 				loaded->labels = ReferenceLabels(repository.get());
 			}
 			try {
@@ -1025,18 +1035,22 @@ void HistoryWindow::ChooseRebase()
 
 void HistoryWindow::Apply()
 {
-	Reload();
-	const Plan plan = fEdit->PlanApply(fSnapshot);
-	ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
-		RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
-			if (!error.empty()) {
-				ShowError(error.c_str());
-				return;
-			}
-			Reload();
-			fEdit.reset();
-			fPendingEdit = true;
-			ShowHistoryOf(fSpec);
+	ReloadThen([this]() {
+		if (fEdit == nullptr) {
+			return;
+		}
+		const Plan plan = fEdit->PlanApply(fSnapshot);
+		ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
+			RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
+				if (!error.empty()) {
+					ShowError(error.c_str());
+					return;
+				}
+				// The history read next comes with the snapshot and labels.
+				fEdit.reset();
+				fPendingEdit = true;
+				ShowHistoryOf(fSpec, true);
+			});
 		});
 	});
 }
@@ -1103,23 +1117,27 @@ void HistoryWindow::CreateReferenceAt(bool tag)
 	}
 	const std::string id = OidString(*commit);
 	form.Open(this, [this, tag, id](const Form &result) {
-		Reload();
-		try {
-			const Plan plan = tag
-				? PlanCreateTag(fRepository.get(), fSnapshot, result.Text("name"), id, result.Text("message"))
-				: PlanCreateBranch(fRepository.get(), fSnapshot, result.Text("name"), id, std::string());
-			ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
-				RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
-					if (!error.empty()) {
-						ShowError(error.c_str());
-					}
-					Reload();
-					FillList();
+		const std::string name = result.Text("name");
+		const std::string message = tag ? result.Text("message") : std::string();
+		ReloadThen([this, tag, id, name, message]() {
+			try {
+				const Plan plan = tag
+					? PlanCreateTag(fRepository.get(), fSnapshot, name, id, message)
+					: PlanCreateBranch(fRepository.get(), fSnapshot, name, id, std::string());
+				ConfirmPlan(this, plan, fRepository.get(), [this, plan](Resolution resolution) {
+					RunPlanWithProgress(this, fRepositoryPath, plan, resolution, [this](const std::string &error) {
+						if (!error.empty()) {
+							ShowError(error.c_str());
+						}
+						ReloadThen([this]() {
+							FillList();
+						});
+					});
 				});
-			});
-		} catch (const std::exception &e) {
-			ShowError(e.what());
-		}
+			} catch (const std::exception &e) {
+				ShowError(e.what());
+			}
+		});
 	});
 }
 

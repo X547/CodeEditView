@@ -79,8 +79,9 @@ private:
 	BButton *fReset {};
 	BButton *fApply {};
 
-	// Reads the snapshot and labels now (for operations).
-	void Reload();
+	// Reads the snapshot (without worktree change counts) and labels on a
+	// thread, then runs then (for operations); a read error is shown first.
+	void ReloadThen(std::function<void()> then);
 	// Shows the history of spec once it is read; withSnapshot reads the
 	// snapshot and labels too.
 	void ShowHistoryOf(const std::string &spec, bool withSnapshot = false);

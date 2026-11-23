@@ -1,7 +1,7 @@
 // Resources of the CodeEdit application: its signature, launch behavior,
 // the file types it opens (Tracker's "Open with" and preferred application)
-// and the icons of the tool bar. Added to the built executable and again to
-// the installed one by the install script.
+// and the icons of the tool bar. A source of the executable in meson.build,
+// added to it when it is linked and installed.
 
 resource app_signature "application/x-vnd.CodeEdit";
 

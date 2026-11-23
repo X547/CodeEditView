@@ -3,7 +3,9 @@ project(
 	'cpp',
 	version: '0.1.0',
 	license: 'MIT',
-	meson_version: '>= 1.0',
+	# With Haiku resource (.rdef) sources: the haiku-rdef branch of
+	# https://github.com/X547/meson.
+	meson_version: '>= 1.12.1',
 	default_options: [
 		'cpp_std=c++20',
 		'warning_level=2',

@@ -24,11 +24,16 @@ users:
 
 ## Building
 
-Requirements: `meson`, `ninja`, `python3`, `tree_sitter_devel` (0.25 or
-later), `libpcre2_devel`, `libgit2_1.9_devel` and `catch2_devel` (tests).
-Some grammars are Meson wraps, downloaded on the first `meson setup`. At run
+Requirements: Meson with Haiku resource support (the `haiku-rdef` branch
+of https://github.com/X547/meson; CodeEdit lists its `.rdef` file as a
+source), `ninja`, `python3`, `tree_sitter_devel` (0.25 or later),
+`libpcre2_devel`, `libgit2_1.9_devel` and `catch2_devel` (tests). Some
+grammars are Meson wraps, downloaded on the first `meson setup`. At run
 time, debugging needs GDB 14 or later with Python, and coverage needs
 `llvm-cov`.
+
+The Meson branch runs uninstalled: use `python3 <checkout>/meson.py` in
+place of `meson` below.
 
 ```sh
 meson setup build

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <set>
 #include <thread>
 
 
@@ -32,19 +33,26 @@ std::string OidString(const git_oid &id)
 }
 
 
-CommitInfo ReadCommit(git_repository *repository, const git_oid &id)
+static CommitInfo InfoOf(git_commit *commit)
 {
-	git_commit *commit = nullptr;
-	Check(git_commit_lookup(&commit, repository, &id), "Cannot read the commit");
-	CommitPtr commitPtr(commit);
 	CommitInfo info;
-	info.id = id;
+	info.id = *git_commit_id(commit);
 	const char *summary = git_commit_summary(commit);
 	info.summary = summary != nullptr ? summary : "";
 	const git_signature *author = git_commit_author(commit);
 	info.author = author != nullptr && author->name != nullptr ? author->name : "";
 	info.time = git_commit_time(commit);
+	info.parents = git_commit_parentcount(commit);
 	return info;
+}
+
+
+CommitInfo ReadCommit(git_repository *repository, const git_oid &id)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &id), "Cannot read the commit");
+	CommitPtr commitPtr(commit);
+	return InfoOf(commit);
 }
 
 
@@ -87,6 +95,92 @@ std::vector<CommitInfo> History(git_repository *repository, const git_oid &start
 		commits.push_back(ReadCommit(repository, id));
 	}
 	return commits;
+}
+
+
+// Follows the first parents from start while include says so, up to limit
+// commits; truncated tells whether there were more.
+template<typename Include>
+static std::vector<CommitInfo> FirstParentLine(git_repository *repository, const git_oid &start, size_t limit,
+	Include include, bool *truncated = nullptr)
+{
+	std::vector<CommitInfo> commits;
+	git_oid id = start;
+	while (include(id)) {
+		if (commits.size() >= limit) {
+			if (truncated != nullptr) {
+				*truncated = true;
+			}
+			break;
+		}
+		git_commit *commit = nullptr;
+		Check(git_commit_lookup(&commit, repository, &id), "Cannot read the history");
+		CommitPtr commitPtr(commit);
+		commits.push_back(InfoOf(commit));
+		if (git_commit_parentcount(commit) == 0) {
+			break;
+		}
+		id = *git_commit_parent_id(commit, 0);
+	}
+	return commits;
+}
+
+
+std::vector<CommitInfo> FirstParentHistory(git_repository *repository, const git_oid &start, size_t limit)
+{
+	return FirstParentLine(repository, start, limit, [](const git_oid &id) {
+		(void)id;
+		return true;
+	});
+}
+
+
+namespace {
+
+struct OidLess {
+	bool operator()(const git_oid &a, const git_oid &b) const {return git_oid_cmp(&a, &b) < 0;}
+};
+
+}
+
+
+std::vector<MergedBranch> MergedBranches(git_repository *repository, const git_oid &merge,
+	const std::vector<git_oid> &hidden, size_t limit)
+{
+	git_commit *commit = nullptr;
+	Check(git_commit_lookup(&commit, repository, &merge), "Cannot read the commit");
+	CommitPtr commitPtr(commit);
+	std::vector<git_oid> parents;
+	for (unsigned int i = 0; i < git_commit_parentcount(commit); i++) {
+		parents.push_back(*git_commit_parent_id(commit, i));
+	}
+	std::vector<MergedBranch> branches;
+	for (size_t i = 1; i < parents.size(); i++) {
+		MergedBranch branch;
+		branch.tip = parents[i];
+		branch.parent = i;
+		branch.hidden = hidden;
+		branch.hidden.insert(branch.hidden.end(), parents.begin(), parents.begin() + i);
+		// Everything the parent brings in; the first-parent line is taken
+		// from it.
+		git_revwalk *walk = nullptr;
+		Check(git_revwalk_new(&walk, repository), "Cannot read the history");
+		RevwalkPtr walkPtr(walk);
+		Check(git_revwalk_push(walk, &branch.tip), "Cannot read the history");
+		for (const git_oid &id : branch.hidden) {
+			Check(git_revwalk_hide(walk, &id), "Cannot read the history");
+		}
+		std::set<git_oid, OidLess> brought;
+		git_oid id;
+		while (git_revwalk_next(&id, walk) == 0) {
+			brought.insert(id);
+		}
+		branch.commits = FirstParentLine(repository, branch.tip, limit, [&brought](const git_oid &id) {
+			return brought.count(id) > 0;
+		}, &branch.truncated);
+		branches.push_back(std::move(branch));
+	}
+	return branches;
 }
 
 

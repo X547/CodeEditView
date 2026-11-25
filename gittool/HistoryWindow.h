@@ -3,7 +3,9 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -17,7 +19,9 @@
 
 class BButton;
 class BCheckBox;
+class BList;
 class BMenuField;
+class BRow;
 class BStringView;
 class BTextControl;
 
@@ -26,22 +30,53 @@ namespace GitTool {
 
 
 class CommitList;
+class CommitRow;
 
 
-// The history of a branch, remote copy, tag or commit. In edit mode (local
-// branches) the commits can be reordered by drag and drop, removed,
-// combined, reworded, edited, split and their conflicts resolved; commits
-// dropped from another history window are copied in. Apply rewrites the
-// branch once. Has its own repository handle.
+// The history of a branch, remote copy, tag or commit. In view mode with
+// merges as trees, the list shows the first-parent line, and each merge
+// expands to the commits it brings in (read when first expanded; under one
+// row per parent for an octopus merge), nested for the merges among them.
+// In edit mode (local branches) the commits can be reordered by drag and
+// drop, removed, combined, reworded, edited, split and their conflicts
+// resolved; commits dropped from another history window are copied in.
+// Apply rewrites the branch once. Has its own repository handle.
 class HistoryWindow: public BWindow {
 private:
+	// The branches of a merge, read on a thread.
+	struct MergeBranches {
+		std::vector<MergedBranch> branches;
+		std::string error;
+	};
+	struct BranchesLoad {
+		uint64_t generation {};
+		std::string merge;
+		MergeBranches result;
+	};
+	// Where the threads put what they read.
+	struct BranchesInbox {
+		std::mutex lock;
+		std::vector<BranchesLoad> loads;
+	};
+
 	std::string fRepositoryPath;
 	RepositoryPtr fRepository;
 	Snapshot fSnapshot;
 	// The shown history, in revision syntax.
 	std::string fSpec;
-	// View mode rows.
+	// Counts the histories read, so that what is read for an older one is
+	// dropped.
+	uint64_t fGeneration {};
+	// View mode rows: the first-parent line with merges as trees, else every
+	// commit.
+	bool fTree = true;
 	std::vector<CommitInfo> fCommits;
+	// Read branches of merges, by OidString of the merge.
+	std::map<std::string, MergeBranches> fBranches;
+	std::set<std::string> fLoadingBranches;
+	std::shared_ptr<BranchesInbox> fInbox = std::make_shared<BranchesInbox>();
+	// The expanded rows by RowKey, kept when the list is filled again.
+	std::set<std::string> fExpanded;
 	std::unique_ptr<HistoryEdit> fEdit;
 	std::unique_ptr<StatsLoader> fStats;
 	// Branches, remote copies and tags by commit (ReferenceLabels).
@@ -50,6 +85,7 @@ private:
 	// What is read on a thread: the history, and with it on opening the
 	// snapshot and the labels.
 	struct Loaded {
+		uint64_t generation {};
 		std::string spec;
 		std::vector<CommitInfo> commits;
 		std::string historyError;
@@ -66,6 +102,7 @@ private:
 	BMenuField *fRefField {};
 	BTextControl *fSpecField {};
 	BCheckBox *fEditMode {};
+	BCheckBox *fTreeMode {};
 	CommitList *fList {};
 	BStringView *fStatus {};
 	BButton *fShowChanges {};
@@ -88,6 +125,25 @@ private:
 	void LoadHistory(const std::string &spec, bool withSnapshot);
 	void HistoryLoaded(Loaded loaded);
 	void FillList();
+	// A row of a commit, not added yet.
+	CommitRow *MakeRow(const git_oid &commit, int32 step, const std::string &state, const std::string &summary,
+		const git_oid &statsCommit, const CommitInfo *known = nullptr);
+	// Adds rows under parent (none: at the top), the first with AddRow:
+	// AddRows needs a parent that has rows already.
+	void AddChildRows(BList &rows, BRow *parent);
+	// Adds the commits of one line of the tree under parent, with what is
+	// read of the branches of the merges among them; a note for none.
+	void AddLine(BRow *parent, const std::vector<CommitInfo> &commits, const std::vector<git_oid> &hidden,
+		bool truncated);
+	// The rows under a merge: its branches if read, else a placeholder.
+	void AddMergeRows(CommitRow *row);
+	// The key of a row in fExpanded; empty for a row that is not kept.
+	std::string RowKey(BRow *row) const;
+	void RowExpanded(BRow *row, bool expanded);
+	// Reads the branches of a merge on a thread, once.
+	void LoadBranches(const git_oid &merge, const std::vector<git_oid> &hidden);
+	void BranchesLoaded();
+	void ForEachRow(const std::function<void(BRow *row)> &function, BRow *parent = nullptr) const;
 	void UpdateControls();
 	std::vector<size_t> SelectedSteps() const;
 	std::vector<git_oid> SelectedCommits() const;

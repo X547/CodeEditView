@@ -647,6 +647,109 @@ TEST_CASE("Reference labels", "[gittool]")
 }
 
 
+// A commit with the tree of another and the given parents, without moving
+// any reference.
+static git_oid MakeCommit(git_repository *repository, const git_oid &treeOf, const char *message,
+	const std::vector<git_oid> &parentIds)
+{
+	git_commit *source = nullptr;
+	Check(git_commit_lookup(&source, repository, &treeOf), "source");
+	CommitPtr sourcePtr(source);
+	git_tree *tree = nullptr;
+	Check(git_commit_tree(&tree, source), "tree");
+	TreePtr treePtr(tree);
+	git_signature *signature = nullptr;
+	Check(git_signature_now(&signature, "Test", "test@example.com"), "signature");
+	SignaturePtr signaturePtr(signature);
+	std::vector<CommitPtr> parentPtrs;
+	std::vector<const git_commit*> parents;
+	for (const git_oid &id : parentIds) {
+		git_commit *parent = nullptr;
+		Check(git_commit_lookup(&parent, repository, &id), "parent");
+		parentPtrs.emplace_back(parent);
+		parents.push_back(parent);
+	}
+	git_oid commitId;
+	Check(git_commit_create(&commitId, repository, nullptr, signature, signature, nullptr, message, tree,
+		parents.size(), parents.data()), "commit");
+	return commitId;
+}
+
+
+static std::vector<std::string> Summaries(const std::vector<CommitInfo> &commits)
+{
+	std::vector<std::string> summaries;
+	for (const CommitInfo &commit : commits) {
+		summaries.push_back(commit.summary);
+	}
+	return summaries;
+}
+
+
+TEST_CASE("Merges as trees", "[gittool]")
+{
+	Fixture fixture;
+	git_repository *repository = fixture.Get();
+	const git_oid root = fixture.first;
+	const git_oid m1 = MakeCommit(repository, root, "m1", {root});
+	const git_oid a1 = MakeCommit(repository, root, "a1", {root});
+	const git_oid b1 = MakeCommit(repository, root, "b1", {root});
+	const git_oid n = MakeCommit(repository, root, "n", {a1, b1});
+	const git_oid a2 = MakeCommit(repository, root, "a2", {n});
+	const git_oid merge = MakeCommit(repository, root, "merge", {m1, a2});
+	// Parent 3 has parent 2: it brings in only x2.
+	const git_oid x1 = MakeCommit(repository, root, "x1", {root});
+	const git_oid x2 = MakeCommit(repository, root, "x2", {x1});
+	const git_oid octopus = MakeCommit(repository, root, "octopus", {merge, x1, x2});
+
+	const std::vector<CommitInfo> line = FirstParentHistory(repository, octopus, 100);
+	CHECK(Summaries(line) == std::vector<std::string> {"octopus", "merge", "m1", "first"});
+	CHECK(line[0].parents == 3);
+	CHECK(line[1].parents == 2);
+	CHECK(line[2].parents == 1);
+	CHECK(Summaries(FirstParentHistory(repository, octopus, 2)) == std::vector<std::string> {"octopus", "merge"});
+
+	SECTION("Merge with a nested merge") {
+		const std::vector<MergedBranch> branches = MergedBranches(repository, merge, {}, 100);
+		REQUIRE(branches.size() == 1);
+		CHECK(git_oid_equal(&branches[0].tip, &a2));
+		CHECK(branches[0].parent == 1);
+		CHECK(Summaries(branches[0].commits) == std::vector<std::string> {"a2", "n", "a1"});
+		CHECK_FALSE(branches[0].truncated);
+		CHECK(branches[0].commits[1].parents == 2);
+
+		const std::vector<MergedBranch> nested = MergedBranches(repository, n, branches[0].hidden, 100);
+		REQUIRE(nested.size() == 1);
+		CHECK(Summaries(nested[0].commits) == std::vector<std::string> {"b1"});
+		CHECK(nested[0].hidden.size() == 2);
+	}
+
+	SECTION("Octopus merge") {
+		const std::vector<MergedBranch> branches = MergedBranches(repository, octopus, {}, 100);
+		REQUIRE(branches.size() == 2);
+		CHECK(branches[0].parent == 1);
+		CHECK(Summaries(branches[0].commits) == std::vector<std::string> {"x1"});
+		CHECK(branches[1].parent == 2);
+		CHECK(git_oid_equal(&branches[1].tip, &x2));
+		CHECK(Summaries(branches[1].commits) == std::vector<std::string> {"x2"});
+	}
+
+	SECTION("Parent that is merged already") {
+		const git_oid again = MakeCommit(repository, root, "again", {octopus, a1});
+		const std::vector<MergedBranch> branches = MergedBranches(repository, again, {}, 100);
+		REQUIRE(branches.size() == 1);
+		CHECK(branches[0].commits.empty());
+	}
+
+	SECTION("Limit") {
+		const std::vector<MergedBranch> branches = MergedBranches(repository, merge, {}, 2);
+		REQUIRE(branches.size() == 1);
+		CHECK(Summaries(branches[0].commits) == std::vector<std::string> {"a2", "n"});
+		CHECK(branches[0].truncated);
+	}
+}
+
+
 TEST_CASE("Natural order", "[gittool]")
 {
 	CHECK(NaturalLess("v2", "v10"));

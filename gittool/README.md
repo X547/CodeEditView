@@ -141,6 +141,13 @@ submodules and files with filter attributes are shown read-only.
 **Changes…** shows what a commit changed, compared with any of its parents,
 and can open both versions of a file in CodeEdit.
 
+With **Merges as trees** (on by default), the list shows the first-parent
+line, and each merge expands to the commits it brings in: those its other
+parent has and its first parent does not. Merges among them expand the same
+way, to any depth. An octopus merge expands to one row per merged parent,
+each with that parent's commits. A merge's commits are read when it is first
+expanded. Turn **Merges as trees** off to list every commit, newest first.
+
 ### Editing history
 
 Turn on **Edit** in the history window of a local branch (or use **Edit

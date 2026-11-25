@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <exception>
 #include <set>
+#include <thread>
 
 #include <Alert.h>
 #include <Application.h>
@@ -38,6 +39,8 @@ using DiffKit::ShowError;
 
 static constexpr size_t kHistoryLimit = 1000;
 static constexpr uint32 kMsgLoadFirst = 'GThF';
+static constexpr uint32 kMsgTreeMode = 'GThT';
+static constexpr uint32 kMsgBranchesLoaded = 'GThB';
 
 
 enum {
@@ -66,6 +69,11 @@ public:
 	// replayed step.
 	git_oid statsCommit;
 
+	// A merge in the tree of merges, whose rows are its branches.
+	bool merge {};
+	// In the tree of merges: the commits shown elsewhere (MergedBranch).
+	std::vector<git_oid> hidden;
+
 	CommitRow(const git_oid &rowCommit, int32 rowStep, const git_oid &rowStatsCommit):
 		commit(rowCommit),
 		step(rowStep),
@@ -75,12 +83,36 @@ public:
 };
 
 
+// The branch of one parent of an octopus merge, in the tree of merges.
+class ParentRow: public BRow {
+public:
+	git_oid merge;
+	size_t parent;
+
+	ParentRow(const git_oid &rowMerge, size_t rowParent):
+		merge(rowMerge),
+		parent(rowParent)
+	{
+	}
+};
+
+
+// A line of text in the tree of merges, not a commit.
+class NoteRow: public BRow {
+};
+
+
 class StatsField: public BField {
 public:
-	git_oid commit;
+	git_oid commit {};
+	// False in a row that is not a commit.
+	bool shown {};
+
+	StatsField() = default;
 
 	explicit StatsField(const git_oid &fieldCommit):
-		commit(fieldCommit)
+		commit(fieldCommit),
+		shown(true)
 	{
 	}
 };
@@ -110,6 +142,9 @@ public:
 
 	void DrawField(BField *field, BRect rect, BView *parent) final
 	{
+		if (!static_cast<StatsField*>(field)->shown) {
+			return;
+		}
 		const git_oid &commit = static_cast<StatsField*>(field)->commit;
 		const std::optional<CommitStats> stats = StatsLoader::Cached(commit);
 		const rgb_color textColor = parent->HighColor();
@@ -178,6 +213,7 @@ private:
 	// Rows above which commits can be inserted: 0 to fDropLimit (after the
 	// last of them); -1 if the list takes no drops.
 	int32 fDropLimit = -1;
+	std::function<void(BRow *row, bool expanded)> fExpanded;
 
 	// The place for a drop at point (in the rows view): the index of the row
 	// the commits go above, by which half of a row the point is in.
@@ -290,6 +326,24 @@ public:
 	void SetDropLimit(int32 limit)
 	{
 		fDropLimit = limit;
+	}
+
+	// Called after a row is expanded or collapsed, by the user or not.
+	void SetExpandedHook(std::function<void(BRow *row, bool expanded)> hook)
+	{
+		fExpanded = std::move(hook);
+	}
+
+	// The latch and the arrow keys come here.
+	void ExpandOrCollapse(BRow *row, bool expand) final
+	{
+		if (row == nullptr || row->IsExpanded() == expand) {
+			return;
+		}
+		BColumnListView::ExpandOrCollapse(row, expand);
+		if (fExpanded) {
+			fExpanded(row, expand);
+		}
 	}
 
 	bool InitiateDrag(BPoint point, bool wasSelected) final
@@ -406,13 +460,17 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fSpecField = new BTextControl("spec", nullptr, spec.c_str(), nullptr);
 	BButton *show = new BButton("Show", new BMessage(kMsgHistoryOf));
 	fEditMode = new BCheckBox("edit", "Edit", new BMessage(kMsgEditMode));
+	fTreeMode = new BCheckBox("tree", "Merges as trees", new BMessage(kMsgTreeMode));
+	fTreeMode->SetValue(fTree ? B_CONTROL_ON : B_CONTROL_OFF);
+	fTreeMode->SetToolTip("Show the first-parent line; each merge expands to the commits it brings in");
 
 	fList = new CommitList();
 	fList->SetSelectionMode(B_MULTIPLE_SELECTION_LIST);
+	// The tree indents the first column: the summary, which has room for it.
 	fList->AddColumn(new BStringColumn("Edit", 110, 40, 300, B_TRUNCATE_END), kStateColumn);
+	fList->AddColumn(new BStringColumn("Summary", 380, 60, 2000, B_TRUNCATE_END), kSummaryColumn);
 	fList->AddColumn(new BStringColumn("Commit", 70, 40, 200, B_TRUNCATE_END), kCommitColumn);
 	fList->AddColumn(new BStringColumn("Branches and tags", 150, 40, 600, B_TRUNCATE_END), kLabelsColumn);
-	fList->AddColumn(new BStringColumn("Summary", 380, 60, 2000, B_TRUNCATE_END), kSummaryColumn);
 	fList->AddColumn(new StatsColumn("Added", 60, StatsColumn::Kind::Added, *fStats), kAddedColumn);
 	fList->AddColumn(new StatsColumn("Deleted", 60, StatsColumn::Kind::Deleted, *fStats), kDeletedColumn);
 	fList->AddColumn(new StatsColumn("Files", 45, StatsColumn::Kind::Files, *fStats), kFilesColumn);
@@ -421,6 +479,9 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 	fList->SetSortingEnabled(false);
 	fList->SetSelectionMessage(new BMessage(kMsgCommitSelected));
 	fList->SetInvocationMessage(new BMessage(kMsgCommitInvoked));
+	fList->SetExpandedHook([this](BRow *row, bool expanded) {
+		RowExpanded(row, expanded);
+	});
 
 	fStatus = new BStringView("status", "");
 	fStatus->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -443,6 +504,7 @@ HistoryWindow::HistoryWindow(const std::string &repositoryPath, const std::strin
 			.Add(fRefField)
 			.Add(fSpecField, 1)
 			.Add(show)
+			.Add(fTreeMode)
 			.Add(fEditMode)
 		.End()
 		.Add(fList)
@@ -507,15 +569,21 @@ void HistoryWindow::LoadHistory(const std::string &spec, bool withSnapshot)
 	fSpec = spec;
 	fSpecField->SetText(spec.c_str());
 	SetTitle(("History of " + spec).c_str());
+	fGeneration++;
 	fCommits.clear();
+	fBranches.clear();
+	fLoadingBranches.clear();
+	fExpanded.clear();
 	FillList();
 	fStatus->SetText("Reading the history" B_UTF8_ELLIPSIS);
 	fEditMode->SetEnabled(false);
 	const std::string path = fRepositoryPath;
+	const bool tree = fTree;
 	std::shared_ptr<Loaded> loaded = std::make_shared<Loaded>();
+	loaded->generation = fGeneration;
 	loaded->spec = spec;
 	DiffKit::RunWithProgress(this, "Reading the history of " + spec,
-		[path, spec, withSnapshot, loaded](DiffKit::Progress &progress) {
+		[path, spec, withSnapshot, tree, loaded](DiffKit::Progress &progress) {
 			(void)progress;
 			RepositoryPtr repository = OpenRepository(path);
 			if (withSnapshot) {
@@ -523,7 +591,9 @@ void HistoryWindow::LoadHistory(const std::string &spec, bool withSnapshot)
 				loaded->labels = ReferenceLabels(repository.get());
 			}
 			try {
-				loaded->commits = History(repository.get(), ResolveCommit(repository.get(), spec), kHistoryLimit);
+				const git_oid start = ResolveCommit(repository.get(), spec);
+				loaded->commits = tree ? FirstParentHistory(repository.get(), start, kHistoryLimit)
+					: History(repository.get(), start, kHistoryLimit);
 			} catch (const std::exception &e) {
 				loaded->historyError = e.what();
 			}
@@ -544,7 +614,7 @@ void HistoryWindow::HistoryLoaded(Loaded loaded)
 		fLabels = std::move(loaded.labels);
 		FillRefMenu(fRefField->Menu(), fSnapshot, loaded.spec);
 	}
-	if (loaded.spec != fSpec) {
+	if (loaded.generation != fGeneration) {
 		return;
 	}
 	fCommits = std::move(loaded.commits);
@@ -576,72 +646,298 @@ void HistoryWindow::FillList()
 	fList->SetDropLimit(fEdit != nullptr ? static_cast<int32>(fEdit->Steps().size()) : -1);
 
 	fStats->Clear();
-	// The rows are added together at the end: one by one, each addition
-	// takes time in proportion to the rows before it.
+	// The rows are added together: one by one, each addition takes time in
+	// proportion to the rows before it.
 	BList newRows;
-	auto addRow = [this, &newRows](const git_oid &commit, int32 step, const std::string &state,
-		const std::string &summary, const git_oid &statsCommit, const CommitInfo *known = nullptr) {
-		CommitRow *row = new CommitRow(commit, step, statsCommit);
-		CommitInfo info;
-		if (known != nullptr) {
-			info = *known;
-		} else {
-			try {
-				info = ReadCommit(fRepository.get(), commit);
-			} catch (const GitError &e) {
-			}
-		}
-		std::string labels;
-		const auto found = fLabels.find(OidString(statsCommit));
-		if (found != fLabels.end()) {
-			const std::vector<std::string> &names = found->second;
-			for (size_t i = 0; i < names.size() && i < kShownLabels; i++) {
-				labels += (i > 0 ? ", " : "") + names[i];
-			}
-			if (names.size() > kShownLabels) {
-				labels += " +" + std::to_string(names.size() - kShownLabels);
-			}
-		}
-		// BRow takes fields in the order of their indexes only.
-		row->SetField(new BStringField(state.c_str()), kStateColumn);
-		row->SetField(new BStringField(ShortId(commit).c_str()), kCommitColumn);
-		row->SetField(new BStringField(summary.empty() ? info.summary.c_str() : summary.c_str()), kSummaryColumn);
-		row->SetField(new BStringField(info.author.c_str()), kAuthorColumn);
-		row->SetField(new BStringField(FormatTime(info.time).c_str()), kDateColumn);
-		for (int32 column : {kAddedColumn, kDeletedColumn, kFilesColumn}) {
-			row->SetField(new StatsField(statsCommit), column);
-		}
-		row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
-		newRows.AddItem(row);
-		return row;
-	};
-
-	std::vector<CommitRow*> rows;
 	if (fEdit != nullptr) {
 		const std::vector<EditStep> &steps = fEdit->Steps();
 		const std::vector<StepResult> &results = fEdit->Results();
 		for (size_t i = steps.size(); i-- > 0;) {
 			const git_oid statsCommit = results[i].state == StepState::Rewritten ? results[i].commit : steps[i].commit;
-			rows.push_back(addRow(steps[i].commit, static_cast<int32>(i), StateText(steps[i], results[i]),
+			newRows.AddItem(MakeRow(steps[i].commit, static_cast<int32>(i), StateText(steps[i], results[i]),
 				FirstLine(fEdit->Message(i)), statsCommit));
 		}
 		if (fEdit->Start().has_value()) {
 			const git_oid start = *fEdit->Start();
-			rows.push_back(addRow(start, -1, fEdit->Onto().has_value() ? "new base" : "not editable", std::string(),
+			newRows.AddItem(MakeRow(start, -1, fEdit->Onto().has_value() ? "new base" : "not editable", std::string(),
 				start));
 		}
+		fList->AddRows(&newRows, -1, nullptr);
+	} else if (fTree) {
+		AddLine(nullptr, fCommits, std::vector<git_oid>(), false);
 	} else {
 		for (const CommitInfo &commit : fCommits) {
-			rows.push_back(addRow(commit.id, -1, std::string(), std::string(), commit.id, &commit));
+			newRows.AddItem(MakeRow(commit.id, -1, std::string(), std::string(), commit.id, &commit));
 		}
+		fList->AddRows(&newRows, -1, nullptr);
 	}
-	fList->AddRows(&newRows, -1, nullptr);
-	for (CommitRow *row : rows) {
-		if (selected.count(OidString(row->commit)) > 0) {
+	// The selection is kept for the rows that are shown.
+	ForEachRow([this, &selected](BRow *row) {
+		const CommitRow *commitRow = dynamic_cast<CommitRow*>(row);
+		if (commitRow == nullptr || selected.count(OidString(commitRow->commit)) == 0) {
+			return;
+		}
+		// Visible: each row above it is expanded (false for a top row).
+		BRow *parent = nullptr;
+		bool visible = false;
+		fList->FindParent(row, &parent, &visible);
+		if (visible) {
 			fList->AddToSelection(row);
 		}
-	}
+	});
 	UpdateControls();
+}
+
+
+CommitRow *HistoryWindow::MakeRow(const git_oid &commit, int32 step, const std::string &state,
+	const std::string &summary, const git_oid &statsCommit, const CommitInfo *known)
+{
+	CommitRow *row = new CommitRow(commit, step, statsCommit);
+	CommitInfo info;
+	if (known != nullptr) {
+		info = *known;
+	} else {
+		try {
+			info = ReadCommit(fRepository.get(), commit);
+		} catch (const GitError &e) {
+		}
+	}
+	std::string labels;
+	const auto found = fLabels.find(OidString(statsCommit));
+	if (found != fLabels.end()) {
+		const std::vector<std::string> &names = found->second;
+		for (size_t i = 0; i < names.size() && i < kShownLabels; i++) {
+			labels += (i > 0 ? ", " : "") + names[i];
+		}
+		if (names.size() > kShownLabels) {
+			labels += " +" + std::to_string(names.size() - kShownLabels);
+		}
+	}
+	// BRow takes fields in the order of their indexes only.
+	row->SetField(new BStringField(state.c_str()), kStateColumn);
+	row->SetField(new BStringField(ShortId(commit).c_str()), kCommitColumn);
+	row->SetField(new BStringField(summary.empty() ? info.summary.c_str() : summary.c_str()), kSummaryColumn);
+	row->SetField(new BStringField(info.author.c_str()), kAuthorColumn);
+	row->SetField(new BStringField(FormatTime(info.time).c_str()), kDateColumn);
+	for (int32 column : {kAddedColumn, kDeletedColumn, kFilesColumn}) {
+		row->SetField(new StatsField(statsCommit), column);
+	}
+	row->SetField(new BStringField(labels.c_str()), kLabelsColumn);
+	return row;
+}
+
+
+// Fields for a row that is not a commit; BRow takes them in the order of
+// their indexes only, and each column needs one of its type.
+static void SetTextFields(BRow *row, const std::string &summary, const std::string &commit = std::string())
+{
+	row->SetField(new BStringField(""), kStateColumn);
+	row->SetField(new BStringField(commit.c_str()), kCommitColumn);
+	row->SetField(new BStringField(summary.c_str()), kSummaryColumn);
+	row->SetField(new BStringField(""), kAuthorColumn);
+	row->SetField(new BStringField(""), kDateColumn);
+	for (int32 column : {kAddedColumn, kDeletedColumn, kFilesColumn}) {
+		row->SetField(new StatsField(), column);
+	}
+	row->SetField(new BStringField(""), kLabelsColumn);
+}
+
+
+static NoteRow *MakeNote(const std::string &text)
+{
+	NoteRow *row = new NoteRow();
+	SetTextFields(row, text);
+	return row;
+}
+
+
+void HistoryWindow::AddChildRows(BList &rows, BRow *parent)
+{
+	if (rows.IsEmpty()) {
+		return;
+	}
+	if (parent != nullptr && fList->CountRows(parent) == 0) {
+		fList->AddRow(static_cast<BRow*>(rows.RemoveItem(static_cast<int32>(0))), parent);
+		if (rows.IsEmpty()) {
+			return;
+		}
+	}
+	fList->AddRows(&rows, -1, parent);
+}
+
+
+void HistoryWindow::AddLine(BRow *parent, const std::vector<CommitInfo> &commits, const std::vector<git_oid> &hidden,
+	bool truncated)
+{
+	BList rows;
+	std::vector<CommitRow*> merges;
+	for (const CommitInfo &commit : commits) {
+		CommitRow *row = MakeRow(commit.id, -1, std::string(), std::string(), commit.id, &commit);
+		if (commit.parents > 1) {
+			row->merge = true;
+			row->hidden = hidden;
+			merges.push_back(row);
+		}
+		rows.AddItem(row);
+	}
+	if (parent != nullptr && commits.empty()) {
+		rows.AddItem(MakeNote("No commits of its own: the other parents have them"));
+	}
+	if (truncated) {
+		rows.AddItem(MakeNote("Older commits are not shown"));
+	}
+	AddChildRows(rows, parent);
+	for (CommitRow *merge : merges) {
+		AddMergeRows(merge);
+	}
+}
+
+
+void HistoryWindow::AddMergeRows(CommitRow *row)
+{
+	const std::string key = OidString(row->commit);
+	const auto found = fBranches.find(key);
+	if (found == fBranches.end()) {
+		fList->AddRow(MakeNote("Reading" B_UTF8_ELLIPSIS), row);
+	} else if (!found->second.error.empty()) {
+		fList->AddRow(MakeNote(found->second.error), row);
+	} else if (found->second.branches.size() == 1) {
+		const MergedBranch &branch = found->second.branches[0];
+		AddLine(row, branch.commits, branch.hidden, branch.truncated);
+	} else {
+		// An octopus merge: a row for each parent after the first.
+		const std::vector<MergedBranch> &branches = found->second.branches;
+		for (const MergedBranch &branch : branches) {
+			ParentRow *parentRow = new ParentRow(row->commit, branch.parent);
+			const std::string text = "Parent " + std::to_string(branch.parent + 1) + " of "
+				+ std::to_string(branches.size() + 1) + ": " + std::to_string(branch.commits.size())
+				+ (branch.truncated ? "+" : "") + (branch.commits.size() == 1 ? " commit" : " commits");
+			SetTextFields(parentRow, text, ShortId(branch.tip));
+			fList->AddRow(parentRow, row);
+			AddLine(parentRow, branch.commits, branch.hidden, branch.truncated);
+			if (fExpanded.count(RowKey(parentRow)) > 0) {
+				fList->ExpandOrCollapse(parentRow, true);
+			}
+		}
+	}
+	// Expanding a merge whose branches are not read yet reads them.
+	if (fExpanded.count(key) > 0) {
+		fList->ExpandOrCollapse(row, true);
+	}
+}
+
+
+std::string HistoryWindow::RowKey(BRow *row) const
+{
+	if (fEdit != nullptr) {
+		return std::string();
+	}
+	if (const CommitRow *commitRow = dynamic_cast<CommitRow*>(row)) {
+		return commitRow->merge ? OidString(commitRow->commit) : std::string();
+	}
+	if (const ParentRow *parentRow = dynamic_cast<ParentRow*>(row)) {
+		return OidString(parentRow->merge) + "/" + std::to_string(parentRow->parent);
+	}
+	return std::string();
+}
+
+
+void HistoryWindow::RowExpanded(BRow *row, bool expanded)
+{
+	const std::string key = RowKey(row);
+	if (key.empty()) {
+		return;
+	}
+	if (!expanded) {
+		fExpanded.erase(key);
+		return;
+	}
+	fExpanded.insert(key);
+	if (const CommitRow *commitRow = dynamic_cast<CommitRow*>(row)) {
+		LoadBranches(commitRow->commit, commitRow->hidden);
+	}
+}
+
+
+void HistoryWindow::LoadBranches(const git_oid &merge, const std::vector<git_oid> &hidden)
+{
+	const std::string key = OidString(merge);
+	if (fBranches.count(key) > 0 || !fLoadingBranches.insert(key).second) {
+		return;
+	}
+	std::thread([path = fRepositoryPath, merge, hidden, generation = fGeneration, inbox = fInbox,
+		target = BMessenger(this)]() {
+		BranchesLoad load;
+		load.generation = generation;
+		load.merge = OidString(merge);
+		try {
+			RepositoryPtr repository = OpenRepository(path);
+			load.result.branches = MergedBranches(repository.get(), merge, hidden, kHistoryLimit);
+		} catch (const std::exception &e) {
+			load.result.error = e.what();
+		}
+		{
+			std::lock_guard<std::mutex> lock(inbox->lock);
+			inbox->loads.push_back(std::move(load));
+		}
+		target.SendMessage(kMsgBranchesLoaded);
+	}).detach();
+}
+
+
+// Replaces the placeholder under each merge read.
+void HistoryWindow::BranchesLoaded()
+{
+	std::vector<BranchesLoad> loads;
+	{
+		std::lock_guard<std::mutex> lock(fInbox->lock);
+		loads.swap(fInbox->loads);
+	}
+	for (BranchesLoad &load : loads) {
+		if (load.generation != fGeneration) {
+			continue;
+		}
+		fLoadingBranches.erase(load.merge);
+		fBranches[load.merge] = std::move(load.result);
+		if (fEdit != nullptr || !fTree) {
+			continue;
+		}
+		CommitRow *mergeRow = nullptr;
+		ForEachRow([&load, &mergeRow](BRow *row) {
+			CommitRow *commitRow = dynamic_cast<CommitRow*>(row);
+			if (mergeRow == nullptr && commitRow != nullptr && commitRow->merge
+				&& OidString(commitRow->commit) == load.merge) {
+				mergeRow = commitRow;
+			}
+		});
+		if (mergeRow == nullptr) {
+			continue;
+		}
+		// The new rows go in before the placeholder is removed: a row without
+		// rows loses its latch.
+		std::vector<BRow*> old;
+		for (int32 i = 0; i < fList->CountRows(mergeRow); i++) {
+			old.push_back(fList->RowAt(i, mergeRow));
+		}
+		AddMergeRows(mergeRow);
+		for (BRow *row : old) {
+			fList->RemoveRow(row);
+			delete row;
+		}
+	}
+}
+
+
+void HistoryWindow::ForEachRow(const std::function<void(BRow *row)> &function, BRow *parent) const
+{
+	const int32 count = fList->CountRows(parent);
+	for (int32 i = 0; i < count; i++) {
+		BRow *row = const_cast<CommitList*>(fList)->RowAt(i, parent);
+		function(row);
+		if (fList->CountRows(row) > 0) {
+			ForEachRow(function, row);
+		}
+	}
 }
 
 
@@ -677,6 +973,7 @@ void HistoryWindow::UpdateControls()
 	const bool isBranch = fSnapshot.FindBranch(fSpec) != nullptr;
 	fEditMode->SetEnabled(isBranch);
 	const bool editing = fEdit != nullptr;
+	fTreeMode->SetEnabled(!editing);
 	const std::vector<size_t> steps = SelectedSteps();
 	fShowChanges->SetEnabled(SelectedCommits().size() == 1);
 	fRemove->SetEnabled(editing && !steps.empty());
@@ -697,8 +994,11 @@ void HistoryWindow::UpdateControls()
 
 	std::string status;
 	if (!editing) {
-		status = std::to_string(fCommits.size()) + " commits"
+		status = std::to_string(fCommits.size()) + (fTree ? " commits on the first-parent line" : " commits")
 			+ (fCommits.size() >= kHistoryLimit ? " (the newest " + std::to_string(kHistoryLimit) + ")" : "");
+		if (fTree) {
+			status += "; merges expand to the commits they bring in";
+		}
 		if (isBranch) {
 			status += ". Enable Edit to reorder (drag), remove, combine and reword commits.";
 		}
@@ -1167,12 +1467,12 @@ void HistoryWindow::StatsReady(BMessage *message)
 		return;
 	}
 	const git_oid *commit = static_cast<const git_oid*>(data);
-	for (int32 i = 0; i < fList->CountRows(); i++) {
-		CommitRow *row = dynamic_cast<CommitRow*>(fList->RowAt(i));
-		if (row != nullptr && git_oid_equal(&row->statsCommit, commit)) {
+	ForEachRow([this, commit](BRow *row) {
+		CommitRow *commitRow = dynamic_cast<CommitRow*>(row);
+		if (commitRow != nullptr && git_oid_equal(&commitRow->statsCommit, commit)) {
 			fList->InvalidateRow(row);
 		}
-	}
+	});
 }
 
 
@@ -1210,6 +1510,16 @@ void HistoryWindow::MessageReceived(BMessage *message)
 		}
 		case kMsgEditMode:
 			SetEditMode(fEditMode->Value() == B_CONTROL_ON);
+			break;
+		case kMsgTreeMode:
+			// Off in edit mode, so there are no edits to keep.
+			fTree = fTreeMode->Value() == B_CONTROL_ON;
+			if (fEdit == nullptr) {
+				LoadHistory(fSpec, false);
+			}
+			break;
+		case kMsgBranchesLoaded:
+			BranchesLoaded();
 			break;
 		case kMsgCommitSelected:
 			UpdateControls();

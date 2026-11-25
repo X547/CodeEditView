@@ -22,6 +22,25 @@ struct CommitInfo {
 	std::string author;
 	// Seconds since the epoch, of the committer.
 	int64_t time {};
+	// More than one for a merge.
+	size_t parents {};
+};
+
+
+// The commits a merge brings in through one of its parents after the first.
+struct MergedBranch {
+	// The parent and its position among the merge's parents (1 for the
+	// second).
+	git_oid tip {};
+	size_t parent {};
+	// The commits shown elsewhere: those reachable from these. The merges
+	// among commits bring in their branches without them too.
+	std::vector<git_oid> hidden;
+	// Along the first parents from tip, newest first. The other commits the
+	// parent brings in come in through the merges among them.
+	std::vector<CommitInfo> commits;
+	// There are more than the limit.
+	bool truncated {};
 };
 
 
@@ -161,6 +180,15 @@ std::string Describe(git_repository *repository, const git_oid &id);
 git_oid ResolveCommit(git_repository *repository, const std::string &spec);
 // Commits reachable from start, newest first.
 std::vector<CommitInfo> History(git_repository *repository, const git_oid &start, size_t limit);
+// Commits along the first parents from start, newest first.
+std::vector<CommitInfo> FirstParentHistory(git_repository *repository, const git_oid &start, size_t limit);
+// What each parent of a merge after the first brings in: the commits that
+// neither the parents before it nor hidden reach (hidden: those shown
+// elsewhere; empty for a merge on the first-parent line of the history).
+// The branches are in the order of the parents, with at most limit commits
+// each.
+std::vector<MergedBranch> MergedBranches(git_repository *repository, const git_oid &merge,
+	const std::vector<git_oid> &hidden, size_t limit);
 
 // Validity of a branch or tag name ("refs/heads/" + name).
 bool IsValidReferenceName(const std::string &fullName);
